@@ -652,13 +652,17 @@ func summarizeCuriaArtifacts(items []domain.ArtifactEnvelope) *CuriaSummary {
 	var latestDebate *artifacts.DebateLogPayload
 	var latestDecision *artifacts.DecisionPackPayload
 	for _, item := range items {
-		if payload, ok := artifacts.DebateLogFromEnvelope(item); ok {
-			value := payload
-			latestDebate = &value
-		}
-		if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
-			value := payload
-			latestDecision = &value
+		switch item.Kind {
+		case domain.ArtifactKindDebateLog:
+			if payload, ok := artifacts.DebateLogFromEnvelope(item); ok {
+				value := payload
+				latestDebate = &value
+			}
+		case domain.ArtifactKindDecisionPack:
+			if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+				value := payload
+				latestDecision = &value
+			}
 		}
 	}
 	if latestDebate == nil && latestDecision == nil {

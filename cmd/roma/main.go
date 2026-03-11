@@ -949,13 +949,17 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 	var latestDecision *artifacts.DecisionPackPayload
 	for _, artifact := range resp.Artifacts {
 		counts[artifact.Kind]++
-		if payload, ok := artifacts.DebateLogFromEnvelope(artifact); ok {
-			item := payload
-			latestDebate = &item
-		}
-		if payload, ok := artifacts.DecisionPackFromEnvelope(artifact); ok {
-			item := payload
-			latestDecision = &item
+		switch artifact.Kind {
+		case domain.ArtifactKindDebateLog:
+			if payload, ok := artifacts.DebateLogFromEnvelope(artifact); ok {
+				item := payload
+				latestDebate = &item
+			}
+		case domain.ArtifactKindDecisionPack:
+			if payload, ok := artifacts.DecisionPackFromEnvelope(artifact); ok {
+				item := payload
+				latestDecision = &item
+			}
 		}
 	}
 	fmt.Printf("session=%s\n", resp.Session.ID)
@@ -2110,7 +2114,46 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 			failed++
 		}
 	}
-	return fmt.Sprintf("nodes=%d ok=%d run=%d wait=%d fail=%d", total, succeeded, running, waiting, failed)
+	summary := fmt.Sprintf("nodes=%d ok=%d run=%d wait=%d fail=%d", total, succeeded, running, waiting, failed)
+	artifactStore := preferredArtifactStore(wd)
+	artifactsForSession, err := artifactStore.List(ctx, req.SessionID)
+	if err != nil || len(artifactsForSession) == 0 {
+		return summary
+	}
+	if curia := queueCuriaSuffix(artifactsForSession); curia != "" {
+		return summary + " " + curia
+	}
+	return summary
+}
+
+func queueCuriaSuffix(items []domain.ArtifactEnvelope) string {
+	var latestDebate *artifacts.DebateLogPayload
+	var latestDecision *artifacts.DecisionPackPayload
+	for _, envelope := range items {
+		switch envelope.Kind {
+		case domain.ArtifactKindDebateLog:
+			if payload, ok := artifacts.DebateLogFromEnvelope(envelope); ok {
+				value := payload
+				latestDebate = &value
+			}
+		case domain.ArtifactKindDecisionPack:
+			if payload, ok := artifacts.DecisionPackFromEnvelope(envelope); ok {
+				value := payload
+				latestDecision = &value
+			}
+		}
+	}
+	if latestDebate == nil && latestDecision == nil {
+		return ""
+	}
+	parts := []string{"curia"}
+	if latestDecision != nil && latestDecision.WinningMode != "" {
+		parts = append(parts, "mode="+latestDecision.WinningMode)
+	}
+	if latestDebate != nil && latestDebate.DisputeClass != "" && latestDebate.DisputeClass != "none" {
+		parts = append(parts, "dispute="+latestDebate.DisputeClass)
+	}
+	return strings.Join(parts, " ")
 }
 
 func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subcommand string, subArg string, err error) {

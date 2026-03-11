@@ -134,6 +134,8 @@
   - Curia decision packs now persist `risk_flags`, `review_questions`, and `candidate_summaries`
   - `roma sessions curia <session_id>` and API inspection now surface those arbitration details directly instead of leaving them buried in raw artifacts
   - Curia decision packs now also persist `reviewer_breakdown`, so reviewer weight and veto impact are directly visible in CLI/API inspection
+  - `roma queue list` now appends Curia mode/dispute summaries for Curia-backed jobs instead of forcing users into `queue inspect`
+  - Curia summary readers now filter by `artifact.Kind`, fixing a zero-value overwrite bug where later non-matching artifacts could erase valid debate/decision payloads
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`
