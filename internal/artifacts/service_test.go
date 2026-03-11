@@ -209,6 +209,9 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 			{ProposalID: "prop_a", Summary: "A", RawScore: 20, WeightedScore: 54, VetoCount: 0},
 			{ProposalID: "prop_b", Summary: "B", RawScore: 18, WeightedScore: 36, VetoCount: 1},
 		},
+		ReviewerBreakdown: []CuriaReviewContribution{
+			{ReviewerID: "codex-cli", TargetProposalID: "prop_a", RawScore: 20, ReviewerWeight: 3, WeightedScore: 54, Veto: false},
+		},
 		Scoreboard: scoreboard,
 	})
 	if err != nil {
@@ -229,5 +232,8 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	}
 	if len(decisionPayload.ReviewQuestions) != 1 || len(decisionPayload.RiskFlags) != 2 {
 		t.Fatalf("decision refinement = %#v, want risk flags and review questions", decisionPayload)
+	}
+	if len(decisionPayload.ReviewerBreakdown) != 1 || decisionPayload.ReviewerBreakdown[0].ReviewerID != "codex-cli" {
+		t.Fatalf("reviewer breakdown = %#v, want reviewer contribution", decisionPayload.ReviewerBreakdown)
 	}
 }

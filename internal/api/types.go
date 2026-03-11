@@ -115,17 +115,18 @@ type CuriaScoreSummary struct {
 }
 
 type CuriaSummary struct {
-	Dispute             bool                              `json:"dispute"`
-	DisputeClass        string                            `json:"dispute_class,omitempty"`
-	CriticalVeto        bool                              `json:"critical_veto"`
-	TopScoreGap         int                               `json:"top_score_gap"`
-	DisputeReasons      []string                          `json:"dispute_reasons,omitempty"`
-	WinningMode         string                            `json:"winning_mode,omitempty"`
-	SelectedProposalIDs []string                          `json:"selected_proposal_ids,omitempty"`
-	RiskFlags           []string                          `json:"risk_flags,omitempty"`
-	ReviewQuestions     []string                          `json:"review_questions,omitempty"`
-	CandidateSummaries  []artifacts.CuriaCandidateSummary `json:"candidate_summaries,omitempty"`
-	Scoreboard          []CuriaScoreSummary               `json:"scoreboard,omitempty"`
+	Dispute             bool                                `json:"dispute"`
+	DisputeClass        string                              `json:"dispute_class,omitempty"`
+	CriticalVeto        bool                                `json:"critical_veto"`
+	TopScoreGap         int                                 `json:"top_score_gap"`
+	DisputeReasons      []string                            `json:"dispute_reasons,omitempty"`
+	WinningMode         string                              `json:"winning_mode,omitempty"`
+	SelectedProposalIDs []string                            `json:"selected_proposal_ids,omitempty"`
+	RiskFlags           []string                            `json:"risk_flags,omitempty"`
+	ReviewQuestions     []string                            `json:"review_questions,omitempty"`
+	CandidateSummaries  []artifacts.CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
+	ReviewerBreakdown   []artifacts.CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
+	Scoreboard          []CuriaScoreSummary                 `json:"scoreboard,omitempty"`
 }
 
 // QueueInspectResponse expands a queued job into its execution records.

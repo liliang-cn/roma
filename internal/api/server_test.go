@@ -1291,6 +1291,9 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	if len(sessionResp.Curia.CandidateSummaries) == 0 || len(sessionResp.Curia.ReviewQuestions) == 0 {
 		t.Fatalf("curia summary = %#v, want decision refinement details", sessionResp.Curia)
 	}
+	if len(sessionResp.Curia.ReviewerBreakdown) == 0 {
+		t.Fatalf("curia summary = %#v, want reviewer contribution details", sessionResp.Curia)
+	}
 }
 
 func initAPIGitRepo(t *testing.T, dir string) {

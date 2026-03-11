@@ -133,6 +133,7 @@
   - Curia dispute state is now classified explicitly (`none`, `close_score`, `critical_veto`, `close_score+critical_veto`) instead of only booleans
   - Curia decision packs now persist `risk_flags`, `review_questions`, and `candidate_summaries`
   - `roma sessions curia <session_id>` and API inspection now surface those arbitration details directly instead of leaving them buried in raw artifacts
+  - Curia decision packs now also persist `reviewer_breakdown`, so reviewer weight and veto impact are directly visible in CLI/API inspection
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`

@@ -74,4 +74,21 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 	if len(flags) < 2 {
 		t.Fatalf("risk flags = %#v, want dispute and design risk flags", flags)
 	}
+	ballots := []ballotEnvelope{
+		{
+			envelope: domain.ArtifactEnvelope{Producer: domain.Producer{AgentID: "codex-cli"}},
+			ballot: artifacts.BallotPayload{
+				TargetProposalID: "prop_a",
+				WeightedScore:    54,
+				Veto:             false,
+				Scores: artifacts.BallotScores{
+					Correctness: 4, Safety: 4, Maintainability: 4, ScopeControl: 4, Testability: 4,
+				},
+			},
+		},
+	}
+	breakdown := buildReviewerBreakdown(ballots, []domain.AgentProfile{{ID: "codex-cli"}})
+	if len(breakdown) != 1 || breakdown[0].ReviewerWeight != 3 || breakdown[0].RawScore != 20 {
+		t.Fatalf("reviewer breakdown = %#v, want weighted reviewer contribution", breakdown)
+	}
 }

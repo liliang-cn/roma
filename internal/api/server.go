@@ -687,6 +687,7 @@ func summarizeCuriaArtifacts(items []domain.ArtifactEnvelope) *CuriaSummary {
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
 		out.CandidateSummaries = append([]artifacts.CuriaCandidateSummary(nil), latestDecision.CandidateSummaries...)
+		out.ReviewerBreakdown = append([]artifacts.CuriaReviewContribution(nil), latestDecision.ReviewerBreakdown...)
 		if len(out.Scoreboard) == 0 {
 			for _, item := range latestDecision.Scoreboard {
 				out.Scoreboard = append(out.Scoreboard, CuriaScoreSummary{

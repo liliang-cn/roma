@@ -1002,6 +1002,9 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		for _, item := range latestDecision.CandidateSummaries {
 			fmt.Printf("candidate[%s]=weighted:%d raw:%d veto:%d summary:%s\n", item.ProposalID, item.WeightedScore, item.RawScore, item.VetoCount, item.Summary)
 		}
+		for _, item := range latestDecision.ReviewerBreakdown {
+			fmt.Printf("reviewer[%s]=proposal:%s raw:%d weight:%d weighted:%d veto:%t\n", item.ReviewerID, item.TargetProposalID, item.RawScore, item.ReviewerWeight, item.WeightedScore, item.Veto)
+		}
 	}
 }
 

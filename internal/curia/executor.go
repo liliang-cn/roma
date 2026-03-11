@@ -98,6 +98,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		RiskFlags:           append([]string(nil), winner.riskFlags...),
 		ReviewQuestions:     append([]string(nil), winner.reviewQuestions...),
 		CandidateSummaries:  append([]artifacts.CuriaCandidateSummary(nil), winner.candidateSummaries...),
+		ReviewerBreakdown:   append([]artifacts.CuriaReviewContribution(nil), winner.reviewerBreakdown...),
 		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
 	})
 	if err != nil {
@@ -133,6 +134,7 @@ type winnerSelection struct {
 	riskFlags          []string
 	reviewQuestions    []string
 	candidateSummaries []artifacts.CuriaCandidateSummary
+	reviewerBreakdown  []artifacts.CuriaReviewContribution
 	dispute            disputeResult
 }
 
@@ -304,6 +306,7 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 		riskFlags:          buildRiskFlags(selected.proposal, dispute),
 		reviewQuestions:    buildReviewQuestions(selected.proposal, dispute),
 		candidateSummaries: buildCandidateSummaries(proposals, dispute.Scoreboard),
+		reviewerBreakdown:  buildReviewerBreakdown(ballotResults, req.Senators),
 		dispute:            dispute,
 	}, nil
 }
@@ -374,6 +377,31 @@ func buildReviewQuestions(proposal artifacts.ProposalPayload, dispute disputeRes
 		questions = append(questions, "What validation should happen before this Curia execution plan is applied?")
 	}
 	return questions
+}
+
+func buildReviewerBreakdown(ballots []ballotEnvelope, senators []domain.AgentProfile) []artifacts.CuriaReviewContribution {
+	weights := make(map[string]int, len(senators))
+	for _, senator := range senators {
+		weights[senator.ID] = reviewerWeight(senator)
+	}
+	out := make([]artifacts.CuriaReviewContribution, 0, len(ballots))
+	for _, ballot := range ballots {
+		reviewerID := ballot.envelope.Producer.AgentID
+		raw := ballot.ballot.Scores.Correctness +
+			ballot.ballot.Scores.Safety +
+			ballot.ballot.Scores.Maintainability +
+			ballot.ballot.Scores.ScopeControl +
+			ballot.ballot.Scores.Testability
+		out = append(out, artifacts.CuriaReviewContribution{
+			ReviewerID:       reviewerID,
+			TargetProposalID: ballot.ballot.TargetProposalID,
+			RawScore:         raw,
+			ReviewerWeight:   weights[reviewerID],
+			WeightedScore:    ballot.ballot.WeightedScore,
+			Veto:             ballot.ballot.Veto,
+		})
+	}
+	return out
 }
 
 func scatterPrompt(req ExecuteRequest, senator domain.AgentProfile) string {
