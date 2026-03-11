@@ -175,6 +175,11 @@
     - a fully automated Curia arbitration run
     - a structured merge-conflict preview with remediation guidance
   - conflict UX is materially better once `conflict_paths` are first-class; callers no longer have to regex `conflict_detail` to know which files are colliding
+  - conflict UX improves again when preview/apply carry `conflict_context` snippets; callers can now inspect the actual diff section for each conflicted path instead of only a flat path list
+  - Curia reviewer reputation is now visible in session/queue inspection summaries, not only persisted on disk
+  - Curia reputation now also has a dedicated inspection path:
+    - daemon API `/curia/reputation`
+    - CLI `roma curia reputation [--reviewer <agent_id>]`
   - arbitration is human-first
   - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.
@@ -187,3 +192,6 @@
   - `TestServerCuriaDecisionFlowProducesPlanInboxApproval`
   - it proves `proposal -> ballot -> debate_log -> decision_pack -> execution_plan -> plans inbox`
   - this is still a Curia dispute demo, not automatic graph-node file-conflict escalation
+- the concurrent DAG soak baseline is stronger now:
+  - repeated graph runs already existed
+  - parallel multi-session dispatcher soak now also verifies lease drain and workspace reclaim invariants under concurrent session execution

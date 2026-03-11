@@ -3,10 +3,12 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,6 +365,102 @@ func TestDispatcherRepeatedConcurrentSoakMaintainsLeaseAndWorkspaceInvariants(t 
 		sessionID := "sess_repeat_" + strconv.Itoa(round)
 		for i := 0; i < nodesPerRun; i++ {
 			taskID := "task_" + strconv.Itoa(round) + "_" + strconv.Itoa(i)
+			item, err := manager.Get(context.Background(), sessionID, taskID)
+			if err != nil {
+				t.Fatalf("Get(%s,%s) error = %v", sessionID, taskID, err)
+			}
+			if item.Status != "reclaimed" {
+				t.Fatalf("workspace %s/%s status = %q, want reclaimed", sessionID, taskID, item.Status)
+			}
+		}
+	}
+}
+
+func TestDispatcherParallelSessionsSoakMaintainsLeaseAndWorkspaceInvariants(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initDispatcherGitRepo(t, workDir)
+
+	mem := store.NewMemoryStore()
+	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherSlowAdapter{}), mem, mem)
+	manager := workspacepkg.NewManager(workDir, mem)
+
+	const (
+		sessionCount = 3
+		nodesPerRun  = 4
+	)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, sessionCount)
+	for session := 0; session < sessionCount; session++ {
+		wg.Add(1)
+		go func(session int) {
+			defer wg.Done()
+			sessionID := "sess_parallel_" + strconv.Itoa(session)
+			assignments := make([]NodeAssignment, 0, nodesPerRun)
+			for node := 0; node < nodesPerRun; node++ {
+				id := "task_" + strconv.Itoa(session) + "_" + strconv.Itoa(node)
+				assignments = append(assignments, NodeAssignment{
+					Node:    domain.TaskNodeSpec{ID: id, Title: "Node " + id, Strategy: domain.TaskStrategyDirect},
+					Profile: domain.AgentProfile{ID: "agent-" + id, DisplayName: "Agent " + id, Command: "agent"},
+				})
+			}
+			result, err := dispatcher.Execute(context.Background(), sessionID, workDir, "parallel session soak", assignments)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if len(result.Order) != nodesPerRun {
+				errCh <- fmt.Errorf("session %s order len = %d, want %d", sessionID, len(result.Order), nodesPerRun)
+			}
+		}(session)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("parallel session soak error = %v", err)
+		}
+	}
+
+	leaseStore, err := NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	active, err := leaseStore.ListByStatus(context.Background(), LeaseStatusActive)
+	if err != nil {
+		t.Fatalf("ListByStatus(active) error = %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active lease count = %d, want 0", len(active))
+	}
+
+	workspaces, err := manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var relevant int
+	for _, item := range workspaces {
+		if !strings.HasPrefix(item.SessionID, "sess_parallel_") {
+			continue
+		}
+		relevant++
+		if item.Status != "released" && item.Status != "merged" {
+			t.Fatalf("workspace %s/%s status = %q, want released/merged", item.SessionID, item.TaskID, item.Status)
+		}
+	}
+	if relevant != sessionCount*nodesPerRun {
+		t.Fatalf("workspace count = %d, want %d", relevant, sessionCount*nodesPerRun)
+	}
+
+	if err := manager.ReclaimStale(context.Background()); err != nil {
+		t.Fatalf("ReclaimStale() error = %v", err)
+	}
+	for session := 0; session < sessionCount; session++ {
+		sessionID := "sess_parallel_" + strconv.Itoa(session)
+		for node := 0; node < nodesPerRun; node++ {
+			taskID := "task_" + strconv.Itoa(session) + "_" + strconv.Itoa(node)
 			item, err := manager.Get(context.Background(), sessionID, taskID)
 			if err != nil {
 				t.Fatalf("Get(%s,%s) error = %v", sessionID, taskID, err)

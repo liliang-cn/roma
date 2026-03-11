@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -56,6 +57,44 @@ func (s *ReputationStore) EffectiveWeight(ctx context.Context, profile domain.Ag
 		return base
 	}
 	return record.EffectiveWeight
+}
+
+func (s *ReputationStore) Get(ctx context.Context, agentID string) (ReputationRecord, bool, error) {
+	_ = ctx
+	if s == nil {
+		return ReputationRecord{}, false, nil
+	}
+	records, err := s.load()
+	if err != nil {
+		return ReputationRecord{}, false, err
+	}
+	record, ok := records[agentID]
+	return record, ok, nil
+}
+
+func (s *ReputationStore) List(ctx context.Context) ([]ReputationRecord, error) {
+	_ = ctx
+	if s == nil {
+		return nil, nil
+	}
+	records, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ReputationRecord, 0, len(records))
+	for _, record := range records {
+		out = append(out, record)
+	}
+	slices.SortFunc(out, func(a, b ReputationRecord) int {
+		if a.AgentID < b.AgentID {
+			return -1
+		}
+		if a.AgentID > b.AgentID {
+			return 1
+		}
+		return 0
+	})
+	return out, nil
 }
 
 func (s *ReputationStore) RecordOutcome(ctx context.Context, senators []domain.AgentProfile, ballots []ballotEnvelope, selectedIDs []string, arbitrated bool) error {

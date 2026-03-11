@@ -14,6 +14,7 @@ import (
 	"github.com/liliang/roma/internal/agents"
 	"github.com/liliang/roma/internal/api"
 	"github.com/liliang/roma/internal/artifacts"
+	"github.com/liliang/roma/internal/curia"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
@@ -54,6 +55,8 @@ func run(ctx context.Context, args []string) error {
 		return runAgents(ctx, registry, args[1:])
 	case "artifacts":
 		return runArtifacts(ctx, args[1:])
+	case "curia":
+		return runCuria(ctx, args[1:])
 	case "graph":
 		return runGraph(ctx, registry, args[1:])
 	case "events":
@@ -244,6 +247,60 @@ func runGraph(ctx context.Context, registry *agents.Registry, args []string) err
 	return svc.RunGraph(ctx, graphReq, os.Stdout)
 }
 
+func runCuria(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "reputation" {
+		return fmt.Errorf("unknown curia subcommand")
+	}
+	reviewerID := ""
+	for i := 1; i < len(args); i++ {
+		switch {
+		case args[i] == "--reviewer":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--reviewer requires a value")
+			}
+			reviewerID = args[i]
+		case strings.HasPrefix(args[i], "--reviewer="):
+			reviewerID = strings.TrimPrefix(args[i], "--reviewer=")
+		default:
+			return fmt.Errorf("unknown curia reputation argument %q", args[i])
+		}
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	client := api.NewClient(wd)
+	var items []curia.ReputationRecord
+	if client.Available() {
+		items, err = client.CuriaReputation(ctx, reviewerID)
+		if err != nil {
+			return err
+		}
+	} else {
+		store := curia.NewReputationStore(wd)
+		items, err = store.List(ctx)
+		if err != nil {
+			return err
+		}
+		if reviewerID != "" {
+			filtered := make([]curia.ReputationRecord, 0, 1)
+			for _, item := range items {
+				if item.AgentID == reviewerID {
+					filtered = append(filtered, item)
+				}
+			}
+			items = filtered
+		}
+	}
+	raw, err := json.MarshalIndent(api.CuriaReputationResponse{Items: items}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal curia reputation: %w", err)
+	}
+	fmt.Println(string(raw))
+	return nil
+}
+
 func runSubmit(ctx context.Context, args []string) error {
 	req, err := parseRunArgs(args)
 	if err != nil {
@@ -422,6 +479,7 @@ func runQueue(ctx context.Context, args []string) error {
 			artifactStore := preferredArtifactStore(wd)
 			if items, err := artifactStore.List(ctx, req.SessionID); err == nil {
 				resp.Artifacts = items
+				resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
 			}
 			eventStore := preferredEventStore(wd)
 			if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
@@ -870,6 +928,7 @@ func runSessions(ctx context.Context, args []string) error {
 		artifactStore := preferredArtifactStore(wd)
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
+			resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
 		}
 		manager := workspacepkg.NewManager(wd, eventStore)
 		if items, err := manager.List(ctx); err == nil {
@@ -915,6 +974,7 @@ func runSessions(ctx context.Context, args []string) error {
 		artifactStore := preferredArtifactStore(wd)
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
+			resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
 		}
 		manager := workspacepkg.NewManager(wd, eventStore)
 		if items, err := manager.List(ctx); err == nil {
@@ -1017,7 +1077,117 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		for _, item := range latestDecision.ReviewerBreakdown {
 			fmt.Printf("reviewer[%s]=proposal:%s raw:%d weight:%d weighted:%d veto:%t\n", item.ReviewerID, item.TargetProposalID, item.RawScore, item.ReviewerWeight, item.WeightedScore, item.Veto)
 		}
+		weights := []api.CuriaReviewerSummary(nil)
+		if resp.Curia != nil {
+			weights = resp.Curia.ReviewerWeights
+		}
+		for _, item := range weights {
+			fmt.Printf("reputation[%s]=weight:%d reviews:%d aligned:%d vetoes:%d arbitrations:%d\n", item.ReviewerID, item.EffectiveWeight, item.ReviewCount, item.AlignmentCount, item.VetoCount, item.ArbitrationCount)
+		}
 	}
+}
+
+func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope) *api.CuriaSummary {
+	var latestDebate *artifacts.DebateLogPayload
+	var latestDecision *artifacts.DecisionPackPayload
+	for _, item := range items {
+		switch item.Kind {
+		case domain.ArtifactKindDebateLog:
+			if payload, ok := artifacts.DebateLogFromEnvelope(item); ok {
+				value := payload
+				latestDebate = &value
+			}
+		case domain.ArtifactKindDecisionPack:
+			if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+				value := payload
+				latestDecision = &value
+			}
+		}
+	}
+	if latestDebate == nil && latestDecision == nil {
+		return nil
+	}
+	out := &api.CuriaSummary{}
+	if latestDebate != nil {
+		out.Dispute = latestDebate.DisputeDetected
+		out.DisputeClass = latestDebate.DisputeClass
+		out.CriticalVeto = latestDebate.CriticalVeto
+		out.TopScoreGap = latestDebate.TopScoreGap
+		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
+		for _, item := range latestDebate.Scoreboard {
+			out.Scoreboard = append(out.Scoreboard, api.CuriaScoreSummary{
+				ProposalID:    item.ProposalID,
+				RawScore:      item.RawScore,
+				WeightedScore: item.WeightedScore,
+				VetoCount:     item.VetoCount,
+				ReviewerCount: item.ReviewerCount,
+			})
+		}
+	}
+	if latestDecision != nil {
+		out.WinningMode = latestDecision.WinningMode
+		out.Arbitrated = latestDecision.Arbitrated
+		out.ArbitratorID = latestDecision.ArbitratorID
+		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
+		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
+		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
+		out.CandidateSummaries = append([]artifacts.CuriaCandidateSummary(nil), latestDecision.CandidateSummaries...)
+		out.ReviewerBreakdown = append([]artifacts.CuriaReviewContribution(nil), latestDecision.ReviewerBreakdown...)
+		out.ReviewerWeights = summarizeCuriaReviewerWeightsCLI(workDir, latestDecision.ReviewerBreakdown)
+		if len(out.Scoreboard) == 0 {
+			for _, item := range latestDecision.Scoreboard {
+				out.Scoreboard = append(out.Scoreboard, api.CuriaScoreSummary{
+					ProposalID:    item.ProposalID,
+					RawScore:      item.RawScore,
+					WeightedScore: item.WeightedScore,
+					VetoCount:     item.VetoCount,
+					ReviewerCount: item.ReviewerCount,
+				})
+			}
+		}
+	}
+	return out
+}
+
+func summarizeCuriaReviewerWeightsCLI(workDir string, items []artifacts.CuriaReviewContribution) []api.CuriaReviewerSummary {
+	if workDir == "" || len(items) == 0 {
+		return nil
+	}
+	store := curia.NewReputationStore(workDir)
+	if store == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]api.CuriaReviewerSummary, 0, len(items))
+	for _, item := range items {
+		if item.ReviewerID == "" {
+			continue
+		}
+		if _, ok := seen[item.ReviewerID]; ok {
+			continue
+		}
+		seen[item.ReviewerID] = struct{}{}
+		record, ok, err := store.Get(context.Background(), item.ReviewerID)
+		if err != nil {
+			continue
+		}
+		if ok {
+			out = append(out, api.CuriaReviewerSummary{
+				ReviewerID:       item.ReviewerID,
+				EffectiveWeight:  record.EffectiveWeight,
+				ReviewCount:      record.ReviewCount,
+				AlignmentCount:   record.AlignmentCount,
+				VetoCount:        record.VetoCount,
+				ArbitrationCount: record.ArbitrationCount,
+			})
+			continue
+		}
+		out = append(out, api.CuriaReviewerSummary{
+			ReviewerID:      item.ReviewerID,
+			EffectiveWeight: store.EffectiveWeight(context.Background(), domain.AgentProfile{ID: item.ReviewerID}),
+		})
+	}
+	return out
 }
 
 func summarizePlanActions(items []events.Record) []api.PlanActionSummary {
@@ -1052,6 +1222,12 @@ func summarizePlanActions(items []events.Record) []api.PlanActionSummary {
 		if value, ok := item.Payload["conflict_detail"].(string); ok {
 			summary.ConflictDetail = value
 		}
+		if values, ok := payloadStrings(item.Payload, "conflict_paths"); ok {
+			summary.ConflictPaths = values
+		}
+		if items, ok := payloadConflictContext(item.Payload, "conflict_context"); ok {
+			summary.ConflictContext = items
+		}
 		out = append(out, summary)
 	}
 	return out
@@ -1077,6 +1253,37 @@ func payloadStrings(payload map[string]any, key string) ([]string, bool) {
 			}
 		}
 		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func payloadConflictContext(payload map[string]any, key string) ([]workspacepkg.ConflictSnippet, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []workspacepkg.ConflictSnippet:
+		return append([]workspacepkg.ConflictSnippet(nil), typed...), true
+	case []any:
+		out := make([]workspacepkg.ConflictSnippet, 0, len(typed))
+		for _, item := range typed {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			path, _ := entry["path"].(string)
+			snippet, _ := entry["snippet"].(string)
+			if path == "" && snippet == "" {
+				continue
+			}
+			out = append(out, workspacepkg.ConflictSnippet{Path: path, Snippet: snippet})
+		}
+		return out, len(out) > 0
 	default:
 		return nil, false
 	}
@@ -2057,6 +2264,7 @@ func printUsage() {
 	fmt.Println("  roma artifacts list --session <session_id> --kind proposal")
 	fmt.Println("  roma artifacts show <artifact_id>")
 	fmt.Println("  roma approve <job_id>")
+	fmt.Println("  roma curia reputation [--reviewer <agent_id>]")
 	fmt.Println("  roma events list [--session <session_id>] [--task <task_id>] [--type <event_type>]")
 	fmt.Println("  roma events show <event_id>")
 	fmt.Println("  roma graph run --file examples/relay-graph.json")

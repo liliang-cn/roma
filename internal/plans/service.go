@@ -25,23 +25,24 @@ type ApplyOptions struct {
 }
 
 type ApplyResult struct {
-	ArtifactID      string                    `json:"artifact_id"`
-	SessionID       string                    `json:"session_id"`
-	TaskID          string                    `json:"task_id"`
-	Workspace       workspacepkg.Prepared     `json:"workspace"`
-	Preview         workspacepkg.MergePreview `json:"preview"`
-	ChangedPaths    []string                  `json:"changed_paths"`
-	PatchBytes      int                       `json:"patch_bytes"`
-	DryRun          bool                      `json:"dry_run"`
-	Applied         bool                      `json:"applied"`
-	RolledBack      bool                      `json:"rolled_back"`
-	RollbackHint    string                    `json:"rollback_hint,omitempty"`
-	RequiredChecks  []string                  `json:"required_checks,omitempty"`
-	Violations      []string                  `json:"violations,omitempty"`
-	Conflict        bool                      `json:"conflict"`
-	ConflictDetail  string                    `json:"conflict_detail,omitempty"`
-	ConflictPaths   []string                  `json:"conflict_paths,omitempty"`
-	RemediationHint string                    `json:"remediation_hint,omitempty"`
+	ArtifactID      string                         `json:"artifact_id"`
+	SessionID       string                         `json:"session_id"`
+	TaskID          string                         `json:"task_id"`
+	Workspace       workspacepkg.Prepared          `json:"workspace"`
+	Preview         workspacepkg.MergePreview      `json:"preview"`
+	ChangedPaths    []string                       `json:"changed_paths"`
+	PatchBytes      int                            `json:"patch_bytes"`
+	DryRun          bool                           `json:"dry_run"`
+	Applied         bool                           `json:"applied"`
+	RolledBack      bool                           `json:"rolled_back"`
+	RollbackHint    string                         `json:"rollback_hint,omitempty"`
+	RequiredChecks  []string                       `json:"required_checks,omitempty"`
+	Violations      []string                       `json:"violations,omitempty"`
+	Conflict        bool                           `json:"conflict"`
+	ConflictDetail  string                         `json:"conflict_detail,omitempty"`
+	ConflictPaths   []string                       `json:"conflict_paths,omitempty"`
+	ConflictContext []workspacepkg.ConflictSnippet `json:"conflict_context,omitempty"`
+	RemediationHint string                         `json:"remediation_hint,omitempty"`
 }
 
 type Service struct {
@@ -51,24 +52,25 @@ type Service struct {
 }
 
 type InboxEntry struct {
-	ArtifactID            string   `json:"artifact_id"`
-	SessionID             string   `json:"session_id"`
-	TaskID                string   `json:"task_id"`
-	Goal                  string   `json:"goal,omitempty"`
-	Status                string   `json:"status"`
-	HumanApprovalRequired bool     `json:"human_approval_required"`
-	ExpectedFiles         []string `json:"expected_files,omitempty"`
-	ForbiddenPaths        []string `json:"forbidden_paths,omitempty"`
-	LastEventType         string   `json:"last_event_type,omitempty"`
-	LastReason            string   `json:"last_reason,omitempty"`
-	LastOccurredAt        string   `json:"last_occurred_at,omitempty"`
-	LastApproval          string   `json:"last_approval,omitempty"`
-	LastApprovalAt        string   `json:"last_approval_at,omitempty"`
-	Violations            []string `json:"violations,omitempty"`
-	Conflict              bool     `json:"conflict,omitempty"`
-	ConflictDetail        string   `json:"conflict_detail,omitempty"`
-	ConflictPaths         []string `json:"conflict_paths,omitempty"`
-	RemediationHint       string   `json:"remediation_hint,omitempty"`
+	ArtifactID            string                         `json:"artifact_id"`
+	SessionID             string                         `json:"session_id"`
+	TaskID                string                         `json:"task_id"`
+	Goal                  string                         `json:"goal,omitempty"`
+	Status                string                         `json:"status"`
+	HumanApprovalRequired bool                           `json:"human_approval_required"`
+	ExpectedFiles         []string                       `json:"expected_files,omitempty"`
+	ForbiddenPaths        []string                       `json:"forbidden_paths,omitempty"`
+	LastEventType         string                         `json:"last_event_type,omitempty"`
+	LastReason            string                         `json:"last_reason,omitempty"`
+	LastOccurredAt        string                         `json:"last_occurred_at,omitempty"`
+	LastApproval          string                         `json:"last_approval,omitempty"`
+	LastApprovalAt        string                         `json:"last_approval_at,omitempty"`
+	Violations            []string                       `json:"violations,omitempty"`
+	Conflict              bool                           `json:"conflict,omitempty"`
+	ConflictDetail        string                         `json:"conflict_detail,omitempty"`
+	ConflictPaths         []string                       `json:"conflict_paths,omitempty"`
+	ConflictContext       []workspacepkg.ConflictSnippet `json:"conflict_context,omitempty"`
+	RemediationHint       string                         `json:"remediation_hint,omitempty"`
 }
 
 type ErrorKind string
@@ -157,6 +159,9 @@ func (s *Service) Inbox(ctx context.Context, sessionID string) ([]InboxEntry, er
 			}
 			if values, ok := payloadStrings(latest.Payload, "conflict_paths"); ok {
 				entry.ConflictPaths = values
+			}
+			if items, ok := payloadConflictContext(latest.Payload, "conflict_context"); ok {
+				entry.ConflictContext = items
 			}
 			if value, ok := latest.Payload["remediation_hint"].(string); ok {
 				entry.RemediationHint = value
@@ -307,6 +312,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 			result.Conflict = true
 			result.ConflictDetail = preview.ConflictDetail
 			result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
+			result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 			result.RemediationHint = "Rebase or refresh the isolated workspace, then rerun plan preview before applying."
 		} else if len(result.ChangedPaths) == 0 {
 			result.RemediationHint = "No diff detected in the workspace; confirm the task actually produced changes."
@@ -322,6 +328,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.Conflict = true
 		result.ConflictDetail = preview.ConflictDetail
 		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
+		result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 		result.RemediationHint = "Resolve the merge conflict in the worktree or regenerate the plan against the latest base."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: preview.ConflictDetail}
 		if recordEvents {
@@ -333,6 +340,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.Conflict = true
 		result.ConflictDetail = err.Error()
 		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
+		result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 		result.RemediationHint = "Inspect the worktree patch, update the base branch, and retry plan preview."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: err.Error()}
 		if recordEvents {
@@ -499,6 +507,9 @@ func (s *Service) appendEvent(ctx context.Context, eventType events.Type, result
 		payload["conflict"] = true
 		payload["conflict_detail"] = result.ConflictDetail
 		payload["conflict_paths"] = result.ConflictPaths
+		if len(result.ConflictContext) > 0 {
+			payload["conflict_context"] = result.ConflictContext
+		}
 	}
 	if result.RemediationHint != "" {
 		payload["remediation_hint"] = result.RemediationHint
@@ -649,6 +660,37 @@ func payloadStrings(payload map[string]any, key string) ([]string, bool) {
 			}
 		}
 		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func payloadConflictContext(payload map[string]any, key string) ([]workspacepkg.ConflictSnippet, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []workspacepkg.ConflictSnippet:
+		return append([]workspacepkg.ConflictSnippet(nil), typed...), true
+	case []any:
+		out := make([]workspacepkg.ConflictSnippet, 0, len(typed))
+		for _, item := range typed {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			path, _ := entry["path"].(string)
+			snippet, _ := entry["snippet"].(string)
+			if path == "" && snippet == "" {
+				continue
+			}
+			out = append(out, workspacepkg.ConflictSnippet{Path: path, Snippet: snippet})
+		}
+		return out, len(out) > 0
 	default:
 		return nil, false
 	}

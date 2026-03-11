@@ -183,6 +183,12 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	if len(result.ConflictPaths) != 1 || result.ConflictPaths[0] != "README.md" {
 		t.Fatalf("result = %#v, want README conflict path", result)
 	}
+	if len(result.ConflictContext) != 1 || result.ConflictContext[0].Path != "README.md" {
+		t.Fatalf("result = %#v, want README conflict context", result)
+	}
+	if !strings.Contains(result.ConflictContext[0].Snippet, "diff --git") {
+		t.Fatalf("conflict snippet = %q, want unified diff context", result.ConflictContext[0].Snippet)
+	}
 	if result.RemediationHint == "" {
 		t.Fatalf("result = %#v, want remediation hint", result)
 	}

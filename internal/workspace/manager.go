@@ -43,12 +43,18 @@ type Prepared struct {
 }
 
 type MergePreview struct {
-	CanApply       bool     `json:"can_apply"`
-	Conflict       bool     `json:"conflict"`
-	ConflictDetail string   `json:"conflict_detail,omitempty"`
-	ConflictPaths  []string `json:"conflict_paths,omitempty"`
-	ChangedPaths   []string `json:"changed_paths,omitempty"`
-	PatchBytes     int      `json:"patch_bytes"`
+	CanApply        bool              `json:"can_apply"`
+	Conflict        bool              `json:"conflict"`
+	ConflictDetail  string            `json:"conflict_detail,omitempty"`
+	ConflictPaths   []string          `json:"conflict_paths,omitempty"`
+	ConflictContext []ConflictSnippet `json:"conflict_context,omitempty"`
+	ChangedPaths    []string          `json:"changed_paths,omitempty"`
+	PatchBytes      int               `json:"patch_bytes"`
+}
+
+type ConflictSnippet struct {
+	Path    string `json:"path"`
+	Snippet string `json:"snippet"`
 }
 
 // Manager resolves per-task workspace directories and persists workspace metadata.
@@ -274,6 +280,7 @@ func (m *Manager) PreviewMerge(ctx context.Context, prepared Prepared) (MergePre
 		preview.Conflict = true
 		preview.ConflictDetail = strings.TrimSpace(string(output))
 		preview.ConflictPaths = append([]string(nil), changedPaths...)
+		preview.ConflictContext = buildConflictContext(string(patch), preview.ConflictPaths)
 		if preview.ConflictDetail == "" {
 			preview.ConflictDetail = err.Error()
 		}
@@ -460,6 +467,61 @@ func sanitizeFallback(err error) string {
 		return "git_worktree_failed"
 	}
 	return text
+}
+
+func buildConflictContext(patch string, conflictPaths []string) []ConflictSnippet {
+	if strings.TrimSpace(patch) == "" || len(conflictPaths) == 0 {
+		return nil
+	}
+	sections := splitPatchByPath(patch)
+	out := make([]ConflictSnippet, 0, len(conflictPaths))
+	for _, path := range conflictPaths {
+		snippet, ok := sections[normalizePatchPath(path)]
+		if !ok || strings.TrimSpace(snippet) == "" {
+			continue
+		}
+		lines := strings.Split(strings.TrimSpace(snippet), "\n")
+		if len(lines) > 24 {
+			lines = append(lines[:24], "...(truncated)")
+		}
+		out = append(out, ConflictSnippet{
+			Path:    path,
+			Snippet: strings.Join(lines, "\n"),
+		})
+	}
+	return out
+}
+
+func splitPatchByPath(patch string) map[string]string {
+	out := map[string]string{}
+	var currentPath string
+	var current []string
+	flush := func() {
+		if currentPath == "" || len(current) == 0 {
+			return
+		}
+		out[currentPath] = strings.Join(current, "\n")
+	}
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			current = current[:0]
+			currentPath = ""
+			parts := strings.Fields(line)
+			if len(parts) >= 4 && strings.HasPrefix(parts[3], "b/") {
+				currentPath = normalizePatchPath(strings.TrimPrefix(parts[3], "b/"))
+			}
+		}
+		if currentPath != "" {
+			current = append(current, line)
+		}
+	}
+	flush()
+	return out
+}
+
+func normalizePatchPath(path string) string {
+	return strings.ReplaceAll(filepath.Clean(path), "\\", "/")
 }
 
 func loadPrepared(path string) (Prepared, error) {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/liliang/roma/internal/artifacts"
+	"github.com/liliang/roma/internal/curia"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
@@ -96,17 +97,18 @@ type StatusResponse struct {
 
 // PlanActionSummary condenses execution-plan audit events into one inspectable view.
 type PlanActionSummary struct {
-	ArtifactID     string   `json:"artifact_id"`
-	TaskID         string   `json:"task_id,omitempty"`
-	EventType      string   `json:"event_type"`
-	Reason         string   `json:"reason,omitempty"`
-	ChangedPaths   []string `json:"changed_paths,omitempty"`
-	Violations     []string `json:"violations,omitempty"`
-	Conflict       bool     `json:"conflict,omitempty"`
-	ConflictDetail string   `json:"conflict_detail,omitempty"`
-	ConflictPaths  []string `json:"conflict_paths,omitempty"`
-	RequiredChecks []string `json:"required_checks,omitempty"`
-	OccurredAt     string   `json:"occurred_at"`
+	ArtifactID      string                      `json:"artifact_id"`
+	TaskID          string                      `json:"task_id,omitempty"`
+	EventType       string                      `json:"event_type"`
+	Reason          string                      `json:"reason,omitempty"`
+	ChangedPaths    []string                    `json:"changed_paths,omitempty"`
+	Violations      []string                    `json:"violations,omitempty"`
+	Conflict        bool                        `json:"conflict,omitempty"`
+	ConflictDetail  string                      `json:"conflict_detail,omitempty"`
+	ConflictPaths   []string                    `json:"conflict_paths,omitempty"`
+	ConflictContext []workspace.ConflictSnippet `json:"conflict_context,omitempty"`
+	RequiredChecks  []string                    `json:"required_checks,omitempty"`
+	OccurredAt      string                      `json:"occurred_at"`
 }
 
 type CuriaScoreSummary struct {
@@ -115,6 +117,15 @@ type CuriaScoreSummary struct {
 	WeightedScore int    `json:"weighted_score"`
 	VetoCount     int    `json:"veto_count"`
 	ReviewerCount int    `json:"reviewer_count"`
+}
+
+type CuriaReviewerSummary struct {
+	ReviewerID       string `json:"reviewer_id"`
+	EffectiveWeight  int    `json:"effective_weight"`
+	ReviewCount      int    `json:"review_count,omitempty"`
+	AlignmentCount   int    `json:"alignment_count,omitempty"`
+	VetoCount        int    `json:"veto_count,omitempty"`
+	ArbitrationCount int    `json:"arbitration_count,omitempty"`
 }
 
 type CuriaSummary struct {
@@ -131,6 +142,7 @@ type CuriaSummary struct {
 	ReviewQuestions     []string                            `json:"review_questions,omitempty"`
 	CandidateSummaries  []artifacts.CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
 	ReviewerBreakdown   []artifacts.CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
+	ReviewerWeights     []CuriaReviewerSummary              `json:"reviewer_weights,omitempty"`
 	Scoreboard          []CuriaScoreSummary                 `json:"scoreboard,omitempty"`
 }
 
@@ -182,26 +194,31 @@ type PlanInspectResponse struct {
 }
 
 type PlanInboxEntry struct {
-	ArtifactID            string   `json:"artifact_id"`
-	SessionID             string   `json:"session_id"`
-	TaskID                string   `json:"task_id"`
-	Goal                  string   `json:"goal,omitempty"`
-	Status                string   `json:"status"`
-	HumanApprovalRequired bool     `json:"human_approval_required"`
-	ExpectedFiles         []string `json:"expected_files,omitempty"`
-	ForbiddenPaths        []string `json:"forbidden_paths,omitempty"`
-	LastEventType         string   `json:"last_event_type,omitempty"`
-	LastReason            string   `json:"last_reason,omitempty"`
-	LastOccurredAt        string   `json:"last_occurred_at,omitempty"`
-	Violations            []string `json:"violations,omitempty"`
-	Conflict              bool     `json:"conflict,omitempty"`
-	ConflictDetail        string   `json:"conflict_detail,omitempty"`
-	ConflictPaths         []string `json:"conflict_paths,omitempty"`
-	RemediationHint       string   `json:"remediation_hint,omitempty"`
+	ArtifactID            string                      `json:"artifact_id"`
+	SessionID             string                      `json:"session_id"`
+	TaskID                string                      `json:"task_id"`
+	Goal                  string                      `json:"goal,omitempty"`
+	Status                string                      `json:"status"`
+	HumanApprovalRequired bool                        `json:"human_approval_required"`
+	ExpectedFiles         []string                    `json:"expected_files,omitempty"`
+	ForbiddenPaths        []string                    `json:"forbidden_paths,omitempty"`
+	LastEventType         string                      `json:"last_event_type,omitempty"`
+	LastReason            string                      `json:"last_reason,omitempty"`
+	LastOccurredAt        string                      `json:"last_occurred_at,omitempty"`
+	Violations            []string                    `json:"violations,omitempty"`
+	Conflict              bool                        `json:"conflict,omitempty"`
+	ConflictDetail        string                      `json:"conflict_detail,omitempty"`
+	ConflictPaths         []string                    `json:"conflict_paths,omitempty"`
+	ConflictContext       []workspace.ConflictSnippet `json:"conflict_context,omitempty"`
+	RemediationHint       string                      `json:"remediation_hint,omitempty"`
 }
 
 type PlanInboxResponse struct {
 	Items []PlanInboxEntry `json:"items"`
+}
+
+type CuriaReputationResponse struct {
+	Items []curia.ReputationRecord `json:"items"`
 }
 
 type PlanDecisionRequest struct {

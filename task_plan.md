@@ -159,6 +159,7 @@ Status: in_progress
 - [x] Persist Curia intermediate artifacts alongside the node's primary execution-plan artifact
 - [x] Add CLI examples and inspection shortcuts specialized for Curia sessions
 - [x] Add first dispute-detection signals and formalize `winning_mode` beyond hard-coded accept-only output
+- [x] Surface reviewer weight / reputation truth through Curia session and inspection summaries
 
 ### Phase 18: ExecutionPlan Closure
 Status: in_progress
@@ -171,6 +172,7 @@ Status: in_progress
 - [x] Emit dedicated plan-apply / plan-rollback / apply-rejected events for replay and audit
 - [x] Return structured merge/apply conflict and validation details from the plan service
 - [x] Make `dry-run` perform real merge preview instead of static path checks only
+- [x] Return conflict-context snippets alongside conflict paths during plan preview and apply failures
 
 ## Risks
 
@@ -187,7 +189,7 @@ Status: in_progress
 
 ## Next Immediate Steps
 
-1. Continue Curia arbitration refinement on top of the new weighted ballots, dispute signals, and winning modes.
-2. Tighten merge conflict UX further on top of the new preview demo, especially around human-readable conflict context and remediation.
-3. Surface Curia scoreboard / reviewer-weight truth more clearly in CLI and inspection paths.
-4. Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.
+1. Continue Curia arbitration refinement on top of the new weighted ballots, dispute signals, Augustus path, and winning modes.
+2. Tighten merge conflict UX further on top of the new conflict snippets, especially around per-hunk resolution summaries and remediation.
+3. Extend Curia reputation visibility from the new dedicated CLI/API endpoint into richer historical and per-session drill-down views.
+4. Extend the concurrent DAG soak baseline toward larger parallel session counts, repeated runs, and restart-focused lease/workspace assertions.

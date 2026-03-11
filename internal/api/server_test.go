@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/liliang/roma/internal/artifacts"
+	"github.com/liliang/roma/internal/curia"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
@@ -1293,6 +1294,52 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	}
 	if len(sessionResp.Curia.ReviewerBreakdown) == 0 {
 		t.Fatalf("curia summary = %#v, want reviewer contribution details", sessionResp.Curia)
+	}
+	if len(sessionResp.Curia.ReviewerWeights) == 0 || sessionResp.Curia.ReviewerWeights[0].EffectiveWeight <= 0 {
+		t.Fatalf("curia summary = %#v, want reviewer reputation details", sessionResp.Curia)
+	}
+}
+
+func TestServerCuriaReputationEndpoint(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	reputationPath := filepath.Join(workDir, ".roma", "curia-reputation.json")
+	if err := os.MkdirAll(filepath.Dir(reputationPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	raw, err := json.MarshalIndent(map[string]curia.ReputationRecord{
+		"codex-cli": {
+			AgentID:         "codex-cli",
+			EffectiveWeight: 4,
+			ReviewCount:     3,
+			AlignmentCount:  2,
+			VetoCount:       1,
+		},
+	}, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.WriteFile(reputationPath, raw, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/curia/reputation?reviewer=codex-cli", nil)
+	server.handleCuriaReputation(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var resp CuriaReputationResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].AgentID != "codex-cli" || resp.Items[0].EffectiveWeight != 4 {
+		t.Fatalf("response = %#v, want codex-cli reputation record", resp)
 	}
 }
 

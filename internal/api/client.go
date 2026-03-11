@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/liliang/roma/internal/curia"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
@@ -174,6 +175,32 @@ func (c *Client) QueueInspect(ctx context.Context, id string) (QueueInspectRespo
 		return QueueInspectResponse{}, fmt.Errorf("decode queue inspect response: %w", err)
 	}
 	return out, nil
+}
+
+func (c *Client) CuriaReputation(ctx context.Context, reviewerID string) ([]curia.ReputationRecord, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	url := baseURL + "/curia/reputation"
+	if reviewerID != "" {
+		url += "?reviewer=" + reviewerID
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create curia reputation request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("curia reputation request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out CuriaReputationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode curia reputation response: %w", err)
+	}
+	return out.Items, nil
 }
 
 func (c *Client) PlanInspect(ctx context.Context, id string) (domain.ArtifactEnvelope, error) {

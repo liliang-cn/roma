@@ -232,6 +232,25 @@
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma status`
 - `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
 - `env GOCACHE=/tmp/go-build-cache-roma go test -count=1 ./internal/api ./internal/scheduler ./internal/syncdb`
+- Surfaced Curia reviewer reputation in inspection:
+  - API/session/queue Curia summaries now include `reviewer_weights`
+  - CLI fallback session/queue inspection now computes the same Curia summary instead of leaving `curia` empty
+- Improved merge conflict UX again:
+  - `workspace.MergePreview` now carries `conflict_context`
+  - plan preview/apply/inspect surfaces per-path diff snippets alongside `conflict_paths`
+  - plan audit events and inbox summaries now preserve that conflict context
+- Strengthened concurrent DAG soak coverage:
+  - added a parallel multi-session dispatcher soak test
+  - it runs multiple sessions concurrently, then asserts no active leases remain and all workspaces reclaim cleanly
+- Added dedicated Curia reputation inspection:
+  - daemon API `/curia/reputation`
+  - CLI `roma curia reputation [--reviewer <agent_id>]`
+  - same file-backed reputation state remains reused; no new database migration
+- Verified targeted and full validation after these changes:
+  - `env GOCACHE=/tmp/go-build-cache-roma go test -count=1 ./internal/plans ./internal/api ./internal/scheduler ./cmd/roma`
+  - `env GOCACHE=/tmp/go-build-cache-roma go test -count=1 ./internal/curia ./internal/workspace`
+  - `env GOCACHE=/tmp/go-build-cache-roma go test -count=1 ./...`
+  - `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
 
 ## Current Focus
 
