@@ -174,6 +174,7 @@
   - the new demos make two key paths concrete instead of purely architectural:
     - a fully automated Curia arbitration run
     - a structured merge-conflict preview with remediation guidance
+  - conflict UX is materially better once `conflict_paths` are first-class; callers no longer have to regex `conflict_detail` to know which files are colliding
   - arbitration is human-first
   - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.

@@ -104,6 +104,7 @@ type PlanActionSummary struct {
 	Violations     []string `json:"violations,omitempty"`
 	Conflict       bool     `json:"conflict,omitempty"`
 	ConflictDetail string   `json:"conflict_detail,omitempty"`
+	ConflictPaths  []string `json:"conflict_paths,omitempty"`
 	RequiredChecks []string `json:"required_checks,omitempty"`
 	OccurredAt     string   `json:"occurred_at"`
 }
@@ -195,6 +196,7 @@ type PlanInboxEntry struct {
 	Violations            []string `json:"violations,omitempty"`
 	Conflict              bool     `json:"conflict,omitempty"`
 	ConflictDetail        string   `json:"conflict_detail,omitempty"`
+	ConflictPaths         []string `json:"conflict_paths,omitempty"`
 	RemediationHint       string   `json:"remediation_hint,omitempty"`
 }
 

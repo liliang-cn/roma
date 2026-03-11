@@ -46,6 +46,7 @@ type MergePreview struct {
 	CanApply       bool     `json:"can_apply"`
 	Conflict       bool     `json:"conflict"`
 	ConflictDetail string   `json:"conflict_detail,omitempty"`
+	ConflictPaths  []string `json:"conflict_paths,omitempty"`
 	ChangedPaths   []string `json:"changed_paths,omitempty"`
 	PatchBytes     int      `json:"patch_bytes"`
 }
@@ -272,6 +273,7 @@ func (m *Manager) PreviewMerge(ctx context.Context, prepared Prepared) (MergePre
 		preview.CanApply = false
 		preview.Conflict = true
 		preview.ConflictDetail = strings.TrimSpace(string(output))
+		preview.ConflictPaths = append([]string(nil), changedPaths...)
 		if preview.ConflictDetail == "" {
 			preview.ConflictDetail = err.Error()
 		}

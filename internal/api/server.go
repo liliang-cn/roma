@@ -453,6 +453,7 @@ func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
 			Violations:            item.Violations,
 			Conflict:              item.Conflict,
 			ConflictDetail:        item.ConflictDetail,
+			ConflictPaths:         item.ConflictPaths,
 			RemediationHint:       item.RemediationHint,
 		})
 	}
@@ -619,6 +620,9 @@ func summarizePlanActions(items []events.Record) []PlanActionSummary {
 		}
 		if value, ok := item.Payload["conflict_detail"].(string); ok {
 			summary.ConflictDetail = value
+		}
+		if values, ok := stringSlicePayload(item.Payload, "conflict_paths"); ok {
+			summary.ConflictPaths = values
 		}
 		out = append(out, summary)
 	}

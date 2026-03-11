@@ -40,6 +40,7 @@ type ApplyResult struct {
 	Violations      []string                  `json:"violations,omitempty"`
 	Conflict        bool                      `json:"conflict"`
 	ConflictDetail  string                    `json:"conflict_detail,omitempty"`
+	ConflictPaths   []string                  `json:"conflict_paths,omitempty"`
 	RemediationHint string                    `json:"remediation_hint,omitempty"`
 }
 
@@ -66,6 +67,7 @@ type InboxEntry struct {
 	Violations            []string `json:"violations,omitempty"`
 	Conflict              bool     `json:"conflict,omitempty"`
 	ConflictDetail        string   `json:"conflict_detail,omitempty"`
+	ConflictPaths         []string `json:"conflict_paths,omitempty"`
 	RemediationHint       string   `json:"remediation_hint,omitempty"`
 }
 
@@ -152,6 +154,9 @@ func (s *Service) Inbox(ctx context.Context, sessionID string) ([]InboxEntry, er
 			}
 			if value, ok := latest.Payload["conflict_detail"].(string); ok {
 				entry.ConflictDetail = value
+			}
+			if values, ok := payloadStrings(latest.Payload, "conflict_paths"); ok {
+				entry.ConflictPaths = values
 			}
 			if value, ok := latest.Payload["remediation_hint"].(string); ok {
 				entry.RemediationHint = value
@@ -301,6 +306,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 		if preview.Conflict {
 			result.Conflict = true
 			result.ConflictDetail = preview.ConflictDetail
+			result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 			result.RemediationHint = "Rebase or refresh the isolated workspace, then rerun plan preview before applying."
 		} else if len(result.ChangedPaths) == 0 {
 			result.RemediationHint = "No diff detected in the workspace; confirm the task actually produced changes."
@@ -315,6 +321,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if preview.Conflict {
 		result.Conflict = true
 		result.ConflictDetail = preview.ConflictDetail
+		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 		result.RemediationHint = "Resolve the merge conflict in the worktree or regenerate the plan against the latest base."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: preview.ConflictDetail}
 		if recordEvents {
@@ -325,6 +332,7 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if err := s.workspaces.MergeBack(ctx, prepared); err != nil {
 		result.Conflict = true
 		result.ConflictDetail = err.Error()
+		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 		result.RemediationHint = "Inspect the worktree patch, update the base branch, and retry plan preview."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: err.Error()}
 		if recordEvents {
@@ -490,6 +498,7 @@ func (s *Service) appendEvent(ctx context.Context, eventType events.Type, result
 	if result.Conflict {
 		payload["conflict"] = true
 		payload["conflict_detail"] = result.ConflictDetail
+		payload["conflict_paths"] = result.ConflictPaths
 	}
 	if result.RemediationHint != "" {
 		payload["remediation_hint"] = result.RemediationHint

@@ -142,6 +142,7 @@
   - added runnable demos:
     - `go run ./examples/curia_augustus_demo`
     - `go run ./examples/plan_conflict_demo`
+  - merge conflict preview now carries `conflict_paths` through workspace preview, plan preview/apply results, plan inbox, and inspection summaries
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`
