@@ -37,8 +37,8 @@ func TestWeightedBallotScoreUsesReviewerReputation(t *testing.T) {
 		},
 	}
 
-	high := weightedBallotScore(ballot, domain.AgentProfile{ID: "codex-cli"})
-	low := weightedBallotScore(ballot, domain.AgentProfile{ID: "copilot-cli"})
+	high := weightedBallotScore(ballot, reviewerWeight(domain.AgentProfile{ID: "codex-cli"}))
+	low := weightedBallotScore(ballot, reviewerWeight(domain.AgentProfile{ID: "copilot-cli"}))
 	if high <= low {
 		t.Fatalf("weighted scores = high:%d low:%d, want high > low", high, low)
 	}

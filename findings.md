@@ -169,6 +169,11 @@
   - decision packs now also carry `risk_flags`, `review_questions`, and `candidate_summaries`, which makes the current human-first arbitration output reviewable without reopening every proposal and ballot manually
   - decision packs now also carry a `reviewer_breakdown`, making it explicit which reviewer weighted which proposal and where veto pressure came from
   - Curia summary readers must filter by `artifact.Kind`; decoding every artifact as every Curia payload type lets zero-value structs overwrite real debate/decision data in CLI/API summaries
+  - `Augustus` no longer has to be theoretical: Curia can now run a dedicated arbitrator agent when `arbitration_mode=augustus`, and the resulting decision pack records whether arbitration was automatic plus which arbitrator produced it
+  - reviewer reputation can be persisted without another database migration; a file-backed `.roma/curia-reputation.json` is enough to carry forward effective reviewer weights between Curia runs
+  - the new demos make two key paths concrete instead of purely architectural:
+    - a fully automated Curia arbitration run
+    - a structured merge-conflict preview with remediation guidance
   - arbitration is human-first
   - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.

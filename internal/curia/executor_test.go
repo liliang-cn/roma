@@ -1,11 +1,51 @@
 package curia
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/liliang/roma/internal/artifacts"
 	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang/roma/internal/runtime"
 )
+
+type augustusTestAdapter struct{}
+
+func (augustusTestAdapter) Supports(domain.AgentProfile) bool { return true }
+
+func (augustusTestAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
+	script := `
+import sys
+profile = sys.argv[1]
+prompt = sys.argv[2]
+if "Augustus arbitration phase" in prompt:
+    print("winning_mode: replace")
+    print("selected_proposals: prop_task_augustus_gemini-cli")
+    print("rationale: Augustus selected the safer fallback proposal.")
+    print("risk_flags:")
+    print("- augustus_override")
+    print("review_questions:")
+    print("- Why did the original leader receive a veto?")
+elif "blind review phase" in prompt:
+    if profile == "gemini-cli":
+        print("prop_task_augustus_codex-cli is weak and veto")
+    elif profile == "copilot-cli":
+        print("prop_task_augustus_gemini-cli is the best proposal")
+    else:
+        print("prop_task_augustus_codex-cli is the best proposal")
+else:
+    if profile == "codex-cli":
+        print("Proposal A\ninternal/api/server.go\nrisk: merge conflict")
+    elif profile == "gemini-cli":
+        print("Proposal B\ninternal/api/server.go\nrisk: safer fallback")
+    else:
+        print("Proposal C\ninternal/api/server.go\nrisk: scope drift")
+`
+	return exec.CommandContext(ctx, "python3", "-c", script, req.Profile.ID, req.Prompt), nil
+}
 
 func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 	t.Parallel()
@@ -79,6 +119,7 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 			envelope: domain.ArtifactEnvelope{Producer: domain.Producer{AgentID: "codex-cli"}},
 			ballot: artifacts.BallotPayload{
 				TargetProposalID: "prop_a",
+				ReviewerWeight:   3,
 				WeightedScore:    54,
 				Veto:             false,
 				Scores: artifacts.BallotScores{
@@ -87,8 +128,89 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 			},
 		},
 	}
-	breakdown := buildReviewerBreakdown(ballots, []domain.AgentProfile{{ID: "codex-cli"}})
+	breakdown := buildReviewerBreakdown(ballots)
 	if len(breakdown) != 1 || breakdown[0].ReviewerWeight != 3 || breakdown[0].RawScore != 20 {
 		t.Fatalf("reviewer breakdown = %#v, want weighted reviewer contribution", breakdown)
+	}
+}
+
+func TestExecutorUsesAugustusArbitration(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	executor := NewExecutor(root, runtime.NewSupervisor(augustusTestAdapter{}), artifacts.NewService())
+	result, err := executor.Execute(context.Background(), ExecuteRequest{
+		SessionID:       "sess_augustus",
+		TaskID:          "task_augustus",
+		BasePrompt:      "Resolve conflicting API designs automatically",
+		WorkingDir:      root,
+		NodeTitle:       "curia arbitration demo",
+		Senators:        []domain.AgentProfile{{ID: "codex-cli"}, {ID: "gemini-cli"}, {ID: "copilot-cli"}},
+		Quorum:          2,
+		ArbitrationMode: "augustus",
+		Arbitrator:      domain.AgentProfile{ID: "claude-code"},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	plan, ok := artifacts.ExecutionPlanFromEnvelope(result.Primary)
+	if !ok {
+		t.Fatal("ExecutionPlanFromEnvelope() = false")
+	}
+	if plan.ApplyMode != "proposal_replace" {
+		t.Fatalf("apply mode = %q, want proposal_replace", plan.ApplyMode)
+	}
+	var decision artifacts.DecisionPackPayload
+	found := false
+	for _, item := range result.RelatedArtifacts {
+		if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+			decision = payload
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing decision pack")
+	}
+	if !decision.Arbitrated || decision.ArbitratorID != "claude-code" {
+		t.Fatalf("decision pack = %#v, want augustus arbitration metadata", decision)
+	}
+	if decision.WinningMode != "replace" {
+		t.Fatalf("winning mode = %q, want replace", decision.WinningMode)
+	}
+	if len(decision.SelectedProposalIDs) != 1 || decision.SelectedProposalIDs[0] != "prop_task_augustus_gemini-cli" {
+		t.Fatalf("selected proposals = %#v, want gemini replacement proposal", decision.SelectedProposalIDs)
+	}
+}
+
+func TestReputationStorePersistsReviewerWeight(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := NewReputationStore(root)
+	err := store.RecordOutcome(context.Background(),
+		[]domain.AgentProfile{{ID: "codex-cli"}},
+		[]ballotEnvelope{{
+			envelope: domain.ArtifactEnvelope{Producer: domain.Producer{AgentID: "codex-cli"}},
+			ballot: artifacts.BallotPayload{
+				TargetProposalID: "prop_a",
+				ReviewerWeight:   3,
+				WeightedScore:    54,
+				Scores: artifacts.BallotScores{
+					Correctness: 4, Safety: 4, Maintainability: 4, ScopeControl: 4, Testability: 4,
+				},
+			},
+		}},
+		[]string{"prop_a"},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("RecordOutcome() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".roma", "curia-reputation.json")); err != nil {
+		t.Fatalf("reputation file missing: %v", err)
+	}
+	weight := store.EffectiveWeight(context.Background(), domain.AgentProfile{ID: "codex-cli"})
+	if weight < 3 {
+		t.Fatalf("effective weight = %d, want >= 3", weight)
 	}
 }

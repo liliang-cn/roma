@@ -317,7 +317,7 @@ func (d *Dispatcher) executeBatch(
 				if len(senators) == 0 {
 					senators = []domain.AgentProfile{assignment.Profile}
 				}
-				curiaResult, err := curia.NewExecutor(d.supervisor, d.artifacts).Execute(ctx, curia.ExecuteRequest{
+				curiaResult, err := curia.NewExecutor(workspace.BaseDir, d.supervisor, d.artifacts).Execute(ctx, curia.ExecuteRequest{
 					SessionID:         sessionID,
 					TaskID:            assignment.Node.ID,
 					BasePrompt:        prompt,
@@ -325,6 +325,8 @@ func (d *Dispatcher) executeBatch(
 					NodeTitle:         assignment.Node.Title,
 					Senators:          senators,
 					Quorum:            assignment.CuriaQuorum,
+					ArbitrationMode:   assignment.CuriaArbitrationMode,
+					Arbitrator:        assignment.CuriaArbitrator,
 					UpstreamArtifacts: upstreamArtifactsForNode(assignment.Node, artifactsByNode),
 				})
 				if err != nil {

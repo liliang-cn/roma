@@ -211,13 +211,15 @@ func runGraph(ctx context.Context, registry *agents.Registry, args []string) err
 		nodes := make([]api.GraphSubmitNode, 0, len(graphReq.Nodes))
 		for _, node := range graphReq.Nodes {
 			nodes = append(nodes, api.GraphSubmitNode{
-				ID:           node.ID,
-				Title:        node.Title,
-				Agent:        node.Agent,
-				Strategy:     string(node.Strategy),
-				Dependencies: node.Dependencies,
-				Senators:     node.Senators,
-				Quorum:       node.Quorum,
+				ID:              node.ID,
+				Title:           node.Title,
+				Agent:           node.Agent,
+				Strategy:        string(node.Strategy),
+				Dependencies:    node.Dependencies,
+				Senators:        node.Senators,
+				Quorum:          node.Quorum,
+				ArbitrationMode: node.ArbitrationMode,
+				Arbitrator:      node.Arbitrator,
 			})
 		}
 		resp, err := client.Submit(ctx, api.SubmitRequest{
@@ -994,6 +996,12 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 	}
 	if latestDecision != nil {
 		fmt.Printf("curia_winning_mode=%s\n", latestDecision.WinningMode)
+		if latestDecision.Arbitrated {
+			fmt.Printf("curia_arbitrated=true\n")
+		}
+		if latestDecision.ArbitratorID != "" {
+			fmt.Printf("curia_arbitrator=%s\n", latestDecision.ArbitratorID)
+		}
 		if len(latestDecision.SelectedProposalIDs) > 0 {
 			fmt.Printf("curia_selected=%s\n", strings.Join(latestDecision.SelectedProposalIDs, ","))
 		}

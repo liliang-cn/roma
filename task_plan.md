@@ -188,6 +188,6 @@ Status: in_progress
 ## Next Immediate Steps
 
 1. Continue Curia arbitration refinement on top of the new weighted ballots, dispute signals, and winning modes.
-2. Surface Curia scoreboard / reviewer-weight truth more clearly in CLI and inspection paths.
-3. Tighten merge conflict UX further with explicit preview endpoints and clearer remediation hints.
+2. Tighten merge conflict UX further on top of the new preview demo, especially around human-readable conflict context and remediation.
+3. Surface Curia scoreboard / reviewer-weight truth more clearly in CLI and inspection paths.
 4. Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.

@@ -47,13 +47,15 @@ type Request struct {
 
 // GraphNode captures one submitted task-graph node in queue storage.
 type GraphNode struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Agent        string   `json:"agent"`
-	Strategy     string   `json:"strategy"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Senators     []string `json:"senators,omitempty"`
-	Quorum       int      `json:"quorum,omitempty"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Agent           string   `json:"agent"`
+	Strategy        string   `json:"strategy"`
+	Dependencies    []string `json:"dependencies,omitempty"`
+	Senators        []string `json:"senators,omitempty"`
+	Quorum          int      `json:"quorum,omitempty"`
+	ArbitrationMode string   `json:"arbitration_mode,omitempty"`
+	Arbitrator      string   `json:"arbitrator,omitempty"`
 }
 
 // GraphSpec is the serialized graph execution payload carried by a queued job.

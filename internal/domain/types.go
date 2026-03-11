@@ -119,6 +119,7 @@ type TaskNodeSpec struct {
 	Senators        []string     `json:"senators,omitempty"`
 	Quorum          int          `json:"quorum,omitempty"`
 	ArbitrationMode string       `json:"arbitration_mode,omitempty"`
+	Arbitrator      string       `json:"arbitrator,omitempty"`
 	SchemaVersion   string       `json:"schema_version"`
 	ExpectedOutputs []string     `json:"expected_outputs,omitempty"`
 }

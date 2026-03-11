@@ -95,6 +95,8 @@ type DecisionPackPayload struct {
 	DecisionPackID      string                    `json:"decision_pack_id"`
 	WinningMode         string                    `json:"winning_mode"`
 	DisputeClass        string                    `json:"dispute_class,omitempty"`
+	Arbitrated          bool                      `json:"arbitrated,omitempty"`
+	ArbitratorID        string                    `json:"arbitrator_id,omitempty"`
 	SelectedProposalIDs []string                  `json:"selected_proposal_ids"`
 	MergedRationale     string                    `json:"merged_rationale"`
 	RejectedReasons     []string                  `json:"rejected_reasons,omitempty"`
@@ -160,6 +162,10 @@ type BuildDecisionPackRequest struct {
 	RunID               string
 	WinningMode         string
 	DisputeClass        string
+	Arbitrated          bool
+	ArbitratorID        string
+	ProducerRole        domain.ProducerRole
+	ProducerAgentID     string
 	SelectedProposalIDs []string
 	ExecutionPlanID     string
 	ApprovalRequired    bool
@@ -245,6 +251,8 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		DecisionPackID:      "dp_" + req.RunID,
 		WinningMode:         req.WinningMode,
 		DisputeClass:        req.DisputeClass,
+		Arbitrated:          req.Arbitrated,
+		ArbitratorID:        req.ArbitratorID,
 		SelectedProposalIDs: append([]string(nil), req.SelectedProposalIDs...),
 		MergedRationale:     req.MergedRationale,
 		RejectedReasons:     append([]string(nil), req.RejectedReasons...),
@@ -256,7 +264,15 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		ExecutionPlanID:     req.ExecutionPlanID,
 		ApprovalRequired:    req.ApprovalRequired,
 	}
-	return s.buildCuriaEnvelope(req.SessionID, req.TaskID, "art_"+payload.DecisionPackID, domain.ArtifactKindDecisionPack, DecisionPackPayloadSchema, domain.ProducerRoleHuman, "human-arbitration", req.RunID, payload)
+	role := req.ProducerRole
+	agentID := req.ProducerAgentID
+	if role == "" {
+		role = domain.ProducerRoleHuman
+	}
+	if agentID == "" {
+		agentID = "human-arbitration"
+	}
+	return s.buildCuriaEnvelope(req.SessionID, req.TaskID, "art_"+payload.DecisionPackID, domain.ArtifactKindDecisionPack, DecisionPackPayloadSchema, role, agentID, req.RunID, payload)
 }
 
 func (s *Service) BuildExecutionPlan(_ context.Context, req BuildExecutionPlanRequest) (domain.ArtifactEnvelope, error) {

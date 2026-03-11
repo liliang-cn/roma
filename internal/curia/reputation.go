@@ -29,15 +29,15 @@ func reviewerWeight(profile domain.AgentProfile) int {
 	}
 }
 
-func weightedBallotScore(ballot artifactsBallotView, reviewer domain.AgentProfile) int {
+func weightedBallotScore(ballot artifactsBallotView, reviewerWeight int) int {
 	base := ballot.Scores.Correctness +
 		ballot.Scores.Safety +
 		ballot.Scores.Maintainability +
 		ballot.Scores.ScopeControl +
 		ballot.Scores.Testability
-	score := base * reviewerWeight(reviewer)
+	score := base * reviewerWeight
 	if ballot.Veto {
-		score -= 10 * reviewerWeight(reviewer)
+		score -= 10 * reviewerWeight
 	}
 	return score
 }

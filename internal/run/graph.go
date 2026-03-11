@@ -19,13 +19,15 @@ import (
 
 // GraphNodeRequest is the user-supplied relay graph node spec.
 type GraphNodeRequest struct {
-	ID           string              `json:"id"`
-	Title        string              `json:"title"`
-	Agent        string              `json:"agent"`
-	Strategy     domain.TaskStrategy `json:"strategy"`
-	Dependencies []string            `json:"dependencies,omitempty"`
-	Senators     []string            `json:"senators,omitempty"`
-	Quorum       int                 `json:"quorum,omitempty"`
+	ID              string              `json:"id"`
+	Title           string              `json:"title"`
+	Agent           string              `json:"agent"`
+	Strategy        domain.TaskStrategy `json:"strategy"`
+	Dependencies    []string            `json:"dependencies,omitempty"`
+	Senators        []string            `json:"senators,omitempty"`
+	Quorum          int                 `json:"quorum,omitempty"`
+	ArbitrationMode string              `json:"arbitration_mode,omitempty"`
+	Arbitrator      string              `json:"arbitrator,omitempty"`
 }
 
 // GraphRequest is a user-supplied graph execution request.
@@ -74,13 +76,15 @@ func ValidateGraphRequest(req GraphRequest) error {
 	graph := domain.TaskGraph{Nodes: make([]domain.TaskNodeSpec, 0, len(req.Nodes))}
 	for _, node := range req.Nodes {
 		graph.Nodes = append(graph.Nodes, domain.TaskNodeSpec{
-			ID:            node.ID,
-			Title:         node.Title,
-			Strategy:      node.Strategy,
-			Dependencies:  node.Dependencies,
-			Senators:      node.Senators,
-			Quorum:        node.Quorum,
-			SchemaVersion: "v1",
+			ID:              node.ID,
+			Title:           node.Title,
+			Strategy:        node.Strategy,
+			Dependencies:    node.Dependencies,
+			Senators:        node.Senators,
+			Quorum:          node.Quorum,
+			ArbitrationMode: node.ArbitrationMode,
+			Arbitrator:      node.Arbitrator,
+			SchemaVersion:   "v1",
 		})
 	}
 	return graph.Validate()
@@ -120,19 +124,23 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 		}
 		assignments = append(assignments, scheduler.NodeAssignment{
 			Node: domain.TaskNodeSpec{
-				ID:            node.ID,
-				Title:         node.Title,
-				Strategy:      node.Strategy,
-				Dependencies:  node.Dependencies,
-				Senators:      node.Senators,
-				Quorum:        node.Quorum,
-				SchemaVersion: "v1",
+				ID:              node.ID,
+				Title:           node.Title,
+				Strategy:        node.Strategy,
+				Dependencies:    node.Dependencies,
+				Senators:        node.Senators,
+				Quorum:          node.Quorum,
+				ArbitrationMode: node.ArbitrationMode,
+				Arbitrator:      node.Arbitrator,
+				SchemaVersion:   "v1",
 			},
-			Profile:       profile,
-			CuriaProfiles: resolveCuriaProfiles(ctx, s.registry, node.Senators, profile.ID),
-			CuriaQuorum:   node.Quorum,
-			Continuous:    req.Continuous,
-			MaxRounds:     req.MaxRounds,
+			Profile:              profile,
+			CuriaProfiles:        resolveCuriaProfiles(ctx, s.registry, node.Senators, profile.ID),
+			CuriaQuorum:          node.Quorum,
+			CuriaArbitrator:      resolveArbitratorProfile(ctx, s.registry, node.Arbitrator),
+			CuriaArbitrationMode: node.ArbitrationMode,
+			Continuous:           req.Continuous,
+			MaxRounds:            req.MaxRounds,
 		})
 	}
 
@@ -267,4 +275,15 @@ func resolveCuriaProfiles(ctx context.Context, registry *agents.Registry, names 
 		}
 	}
 	return out
+}
+
+func resolveArbitratorProfile(ctx context.Context, registry *agents.Registry, name string) domain.AgentProfile {
+	if name == "" {
+		return domain.AgentProfile{}
+	}
+	profile, ok := registry.Resolve(ctx, name)
+	if !ok || profile.Availability != domain.AgentAvailabilityAvailable {
+		return domain.AgentProfile{}
+	}
+	return profile
 }

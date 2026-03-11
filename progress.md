@@ -136,6 +136,12 @@
   - Curia decision packs now also persist `reviewer_breakdown`, so reviewer weight and veto impact are directly visible in CLI/API inspection
   - `roma queue list` now appends Curia mode/dispute summaries for Curia-backed jobs instead of forcing users into `queue inspect`
   - Curia summary readers now filter by `artifact.Kind`, fixing a zero-value overwrite bug where later non-matching artifacts could erase valid debate/decision payloads
+  - Curia now supports `arbitration_mode=augustus` with a dedicated arbitrator agent profile for fully automatic dispute resolution
+  - decision packs now record `arbitrated` and `arbitrator_id`, and Curia summaries surface those fields in CLI/API inspection
+  - reviewer reputation is now persisted without touching SQLite schema via `.roma/curia-reputation.json`
+  - added runnable demos:
+    - `go run ./examples/curia_augustus_demo`
+    - `go run ./examples/plan_conflict_demo`
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`

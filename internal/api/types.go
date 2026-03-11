@@ -27,13 +27,15 @@ type SubmitRequest struct {
 
 // GraphSubmitNode is one node in the inline graph submit payload.
 type GraphSubmitNode struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Agent        string   `json:"agent"`
-	Strategy     string   `json:"strategy"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Senators     []string `json:"senators,omitempty"`
-	Quorum       int      `json:"quorum,omitempty"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Agent           string   `json:"agent"`
+	Strategy        string   `json:"strategy"`
+	Dependencies    []string `json:"dependencies,omitempty"`
+	Senators        []string `json:"senators,omitempty"`
+	Quorum          int      `json:"quorum,omitempty"`
+	ArbitrationMode string   `json:"arbitration_mode,omitempty"`
+	Arbitrator      string   `json:"arbitrator,omitempty"`
 }
 
 // GraphSubmitRequest is the first-class graph submit payload.
@@ -117,6 +119,8 @@ type CuriaScoreSummary struct {
 type CuriaSummary struct {
 	Dispute             bool                                `json:"dispute"`
 	DisputeClass        string                              `json:"dispute_class,omitempty"`
+	Arbitrated          bool                                `json:"arbitrated,omitempty"`
+	ArbitratorID        string                              `json:"arbitrator_id,omitempty"`
 	CriticalVeto        bool                                `json:"critical_veto"`
 	TopScoreGap         int                                 `json:"top_score_gap"`
 	DisputeReasons      []string                            `json:"dispute_reasons,omitempty"`

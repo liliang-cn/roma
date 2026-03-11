@@ -271,13 +271,15 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 			}
 			for _, node := range req.Graph.Nodes {
 				graphReq.Nodes = append(graphReq.Nodes, run.GraphNodeRequest{
-					ID:           node.ID,
-					Title:        node.Title,
-					Agent:        node.Agent,
-					Strategy:     domain.TaskStrategy(node.Strategy),
-					Dependencies: node.Dependencies,
-					Senators:     node.Senators,
-					Quorum:       node.Quorum,
+					ID:              node.ID,
+					Title:           node.Title,
+					Agent:           node.Agent,
+					Strategy:        domain.TaskStrategy(node.Strategy),
+					Dependencies:    node.Dependencies,
+					Senators:        node.Senators,
+					Quorum:          node.Quorum,
+					ArbitrationMode: node.ArbitrationMode,
+					Arbitrator:      node.Arbitrator,
 				})
 			}
 			if runErr = run.ValidateGraphRequest(graphReq); runErr == nil {

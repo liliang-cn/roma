@@ -3,6 +3,7 @@ package curia
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,8 @@ type ExecuteRequest struct {
 	NodeTitle         string
 	Senators          []domain.AgentProfile
 	Quorum            int
+	ArbitrationMode   string
+	Arbitrator        domain.AgentProfile
 	UpstreamArtifacts []domain.ArtifactEnvelope
 }
 
@@ -30,10 +33,15 @@ type ExecuteResult struct {
 type Executor struct {
 	supervisor *runtime.Supervisor
 	artifacts  *artifacts.Service
+	reputation *ReputationStore
 }
 
-func NewExecutor(supervisor *runtime.Supervisor, artifactService *artifacts.Service) *Executor {
-	return &Executor{supervisor: supervisor, artifacts: artifactService}
+func NewExecutor(workDir string, supervisor *runtime.Supervisor, artifactService *artifacts.Service) *Executor {
+	return &Executor{
+		supervisor: supervisor,
+		artifacts:  artifactService,
+		reputation: NewReputationStore(workDir),
+	}
 }
 
 func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
@@ -51,6 +59,12 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 	proposals, winner, err := e.scatterAndReview(ctx, req, quorum)
 	if err != nil {
 		return ExecuteResult{}, err
+	}
+	if winner.dispute.Detected && req.ArbitrationMode == "augustus" {
+		winner, err = e.runAugustus(ctx, req, proposals, winner)
+		if err != nil {
+			return ExecuteResult{}, err
+		}
 	}
 	ballots := winner.ballots
 	debateLog, err := e.artifacts.BuildDebateLog(ctx, artifacts.BuildDebateLogRequest{
@@ -90,6 +104,10 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		RunID:               req.TaskID + "_decision",
 		WinningMode:         winner.winningMode,
 		DisputeClass:        winner.dispute.Class,
+		Arbitrated:          winner.arbitrated,
+		ArbitratorID:        winner.arbitratorID,
+		ProducerRole:        winner.producerRole,
+		ProducerAgentID:     winner.producerAgentID,
 		SelectedProposalIDs: append([]string(nil), winner.selectedIDs...),
 		ExecutionPlanID:     plan.ID,
 		ApprovalRequired:    true,
@@ -104,6 +122,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 	if err != nil {
 		return ExecuteResult{}, err
 	}
+	_ = e.reputation.RecordOutcome(ctx, req.Senators, winner.ballotEnvelopes, winner.selectedIDs, winner.arbitrated)
 	related := make([]domain.ArtifactEnvelope, 0, len(proposals)+len(ballots)+2)
 	related = append(related, proposals...)
 	related = append(related, ballots...)
@@ -128,6 +147,7 @@ type ballotEnvelope struct {
 type winnerSelection struct {
 	proposal           artifacts.ProposalPayload
 	ballots            []domain.ArtifactEnvelope
+	ballotEnvelopes    []ballotEnvelope
 	selectedIDs        []string
 	winningMode        string
 	rejectedReasons    []string
@@ -135,6 +155,10 @@ type winnerSelection struct {
 	reviewQuestions    []string
 	candidateSummaries []artifacts.CuriaCandidateSummary
 	reviewerBreakdown  []artifacts.CuriaReviewContribution
+	arbitrated         bool
+	arbitratorID       string
+	producerRole       domain.ProducerRole
+	producerAgentID    string
 	dispute            disputeResult
 }
 
@@ -236,6 +260,7 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 			reviewScores.Maintainability +
 			reviewScores.ScopeControl +
 			reviewScores.Testability
+		reviewerWeight := e.reviewerWeight(ctx, senator)
 		weightedScore := weightedBallotScore(artifactsBallotView{
 			Scores: struct {
 				Correctness     int
@@ -251,14 +276,14 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 				Testability:     reviewScores.Testability,
 			},
 			Veto: reviewVeto,
-		}, senator)
+		}, reviewerWeight)
 		envelope, err := e.artifacts.BuildBallot(ctx, artifacts.BuildBallotRequest{
 			SessionID:        req.SessionID,
 			TaskID:           req.TaskID,
 			RunID:            req.TaskID + "_" + senator.ID,
 			Agent:            senator,
 			TargetProposalID: chosen,
-			ReviewerWeight:   reviewerWeight(senator),
+			ReviewerWeight:   reviewerWeight,
 			WeightedScore:    weightedScore,
 			Output:           result.Stdout,
 		})
@@ -300,15 +325,177 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 	return outProposals, winnerSelection{
 		proposal:           selected.proposal,
 		ballots:            ballots,
+		ballotEnvelopes:    ballotResults,
 		selectedIDs:        selectedIDs,
 		winningMode:        dispute.WinningMode,
 		rejectedReasons:    append([]string(nil), dispute.RejectedReasons...),
 		riskFlags:          buildRiskFlags(selected.proposal, dispute),
 		reviewQuestions:    buildReviewQuestions(selected.proposal, dispute),
 		candidateSummaries: buildCandidateSummaries(proposals, dispute.Scoreboard),
-		reviewerBreakdown:  buildReviewerBreakdown(ballotResults, req.Senators),
+		reviewerBreakdown:  buildReviewerBreakdown(ballotResults),
+		producerRole:       domain.ProducerRoleHuman,
+		producerAgentID:    "human-arbitration",
 		dispute:            dispute,
 	}, nil
+}
+
+func (e *Executor) reviewerWeight(ctx context.Context, profile domain.AgentProfile) int {
+	if e.reputation == nil {
+		return reviewerWeight(profile)
+	}
+	return e.reputation.EffectiveWeight(ctx, profile)
+}
+
+func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposals []domain.ArtifactEnvelope, winner winnerSelection) (winnerSelection, error) {
+	if req.Arbitrator.ID == "" {
+		return winnerSelection{}, fmt.Errorf("curia arbitration mode augustus requires an arbitrator profile")
+	}
+	result, err := e.supervisor.RunCaptured(ctx, runtime.StartRequest{
+		ExecutionID: "curia_augustus_" + req.TaskID + "_" + req.Arbitrator.ID,
+		SessionID:   req.SessionID,
+		TaskID:      req.TaskID,
+		Profile:     req.Arbitrator,
+		Prompt:      augustusPrompt(req, proposals, winner),
+		WorkingDir:  req.WorkingDir,
+	})
+	if err != nil {
+		return winnerSelection{}, err
+	}
+	override := parseAugustusDecision(result.Stdout, proposals)
+	if override.winningMode != "" {
+		winner.winningMode = override.winningMode
+	}
+	if len(override.selectedIDs) > 0 {
+		winner.selectedIDs = append([]string(nil), override.selectedIDs...)
+		if proposal, ok := selectProposalByID(proposals, override.selectedIDs[0]); ok {
+			winner.proposal = proposal
+		}
+	}
+	if override.rationale != "" {
+		winner.rejectedReasons = mergeUniqueStrings(winner.rejectedReasons, []string{"augustus arbitration completed"})
+		winner.riskFlags = mergeUniqueStrings(winner.riskFlags, []string{"augustus_arbitrated"})
+	}
+	winner.riskFlags = mergeUniqueStrings(winner.riskFlags, override.riskFlags)
+	winner.reviewQuestions = mergeUniqueStrings(winner.reviewQuestions, override.reviewQuestions)
+	winner.arbitrated = true
+	winner.arbitratorID = req.Arbitrator.ID
+	winner.producerRole = domain.ProducerRoleArbitrator
+	winner.producerAgentID = req.Arbitrator.ID
+	if override.rationale != "" {
+		winner.reviewQuestions = append([]string{override.rationale}, winner.reviewQuestions...)
+	}
+	return winner, nil
+}
+
+type augustusDecision struct {
+	winningMode     string
+	selectedIDs     []string
+	rationale       string
+	riskFlags       []string
+	reviewQuestions []string
+}
+
+func augustusPrompt(req ExecuteRequest, proposals []domain.ArtifactEnvelope, winner winnerSelection) string {
+	var b strings.Builder
+	b.WriteString("ROMA Curia Augustus arbitration phase.\n")
+	b.WriteString("Return a final arbitration decision using this exact shape:\n")
+	b.WriteString("winning_mode: accept|merge|replace\n")
+	b.WriteString("selected_proposals: prop_x[,prop_y]\n")
+	b.WriteString("rationale: one concise sentence\n")
+	b.WriteString("risk_flags:\n- flag\n")
+	b.WriteString("review_questions:\n- question?\n\n")
+	b.WriteString("Task:\n")
+	b.WriteString(req.BasePrompt)
+	b.WriteString("\n\nDispute class: ")
+	b.WriteString(winner.dispute.Class)
+	b.WriteString("\nTop score gap: ")
+	b.WriteString(fmt.Sprintf("%d", winner.dispute.TopScoreGap))
+	b.WriteString("\nCurrent winning mode: ")
+	b.WriteString(winner.winningMode)
+	b.WriteString("\nCurrent selected proposals: ")
+	b.WriteString(strings.Join(winner.selectedIDs, ","))
+	b.WriteString("\n\nProposal scoreboard:\n")
+	for _, item := range winner.dispute.Scoreboard {
+		b.WriteString(fmt.Sprintf("- %s raw=%d weighted=%d veto=%d reviewers=%d\n", item.ProposalID, item.RawScore, item.WeightedScore, item.VetoCount, item.ReviewerCount))
+	}
+	b.WriteString("\nProposal summaries:\n")
+	for _, envelope := range proposals {
+		payload, ok := artifacts.ProposalFromEnvelope(envelope)
+		if !ok {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("- %s: %s\n", payload.ProposalID, payload.Summary))
+	}
+	return b.String()
+}
+
+func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) augustusDecision {
+	var decision augustusDecision
+	lines := strings.Split(output, "\n")
+	modeRe := regexp.MustCompile(`(?i)^winning_mode:\s*(accept|merge|replace)\s*$`)
+	selectedRe := regexp.MustCompile(`(?i)^selected_proposals:\s*(.+)\s*$`)
+	rationaleRe := regexp.MustCompile(`(?i)^rationale:\s*(.+)\s*$`)
+	section := ""
+	validIDs := make(map[string]struct{}, len(proposals))
+	for _, envelope := range proposals {
+		if payload, ok := artifacts.ProposalFromEnvelope(envelope); ok {
+			validIDs[payload.ProposalID] = struct{}{}
+		}
+	}
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		switch {
+		case modeRe.MatchString(line):
+			decision.winningMode = strings.ToLower(modeRe.FindStringSubmatch(line)[1])
+			section = ""
+		case selectedRe.MatchString(line):
+			section = ""
+			chunks := strings.Split(selectedRe.FindStringSubmatch(line)[1], ",")
+			for _, chunk := range chunks {
+				id := strings.TrimSpace(chunk)
+				if _, ok := validIDs[id]; ok {
+					decision.selectedIDs = append(decision.selectedIDs, id)
+				}
+			}
+		case rationaleRe.MatchString(line):
+			decision.rationale = rationaleRe.FindStringSubmatch(line)[1]
+			section = ""
+		case strings.EqualFold(line, "risk_flags:"):
+			section = "risk"
+		case strings.EqualFold(line, "review_questions:"):
+			section = "review"
+		case strings.HasPrefix(line, "- ") && section == "risk":
+			decision.riskFlags = append(decision.riskFlags, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		case strings.HasPrefix(line, "- ") && section == "review":
+			decision.reviewQuestions = append(decision.reviewQuestions, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		}
+	}
+	return decision
+}
+
+func selectProposalByID(proposals []domain.ArtifactEnvelope, id string) (artifacts.ProposalPayload, bool) {
+	for _, envelope := range proposals {
+		payload, ok := artifacts.ProposalFromEnvelope(envelope)
+		if ok && payload.ProposalID == id {
+			return payload, true
+		}
+	}
+	return artifacts.ProposalPayload{}, false
+}
+
+func mergeUniqueStrings(base []string, extra []string) []string {
+	out := append([]string(nil), base...)
+	for _, item := range extra {
+		item = strings.TrimSpace(item)
+		if item == "" || containsString(out, item) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func buildCandidateSummaries(proposals []proposalEnvelope, scoreboard []artifacts.CuriaScoreEntry) []artifacts.CuriaCandidateSummary {
@@ -379,11 +566,7 @@ func buildReviewQuestions(proposal artifacts.ProposalPayload, dispute disputeRes
 	return questions
 }
 
-func buildReviewerBreakdown(ballots []ballotEnvelope, senators []domain.AgentProfile) []artifacts.CuriaReviewContribution {
-	weights := make(map[string]int, len(senators))
-	for _, senator := range senators {
-		weights[senator.ID] = reviewerWeight(senator)
-	}
+func buildReviewerBreakdown(ballots []ballotEnvelope) []artifacts.CuriaReviewContribution {
 	out := make([]artifacts.CuriaReviewContribution, 0, len(ballots))
 	for _, ballot := range ballots {
 		reviewerID := ballot.envelope.Producer.AgentID
@@ -396,7 +579,7 @@ func buildReviewerBreakdown(ballots []ballotEnvelope, senators []domain.AgentPro
 			ReviewerID:       reviewerID,
 			TargetProposalID: ballot.ballot.TargetProposalID,
 			RawScore:         raw,
-			ReviewerWeight:   weights[reviewerID],
+			ReviewerWeight:   ballot.ballot.ReviewerWeight,
 			WeightedScore:    ballot.ballot.WeightedScore,
 			Veto:             ballot.ballot.Veto,
 		})

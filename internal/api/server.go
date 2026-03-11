@@ -267,13 +267,15 @@ func toQueueGraph(in *GraphSubmitRequest) *queue.GraphSpec {
 	nodes := make([]queue.GraphNode, 0, len(in.Nodes))
 	for _, node := range in.Nodes {
 		nodes = append(nodes, queue.GraphNode{
-			ID:           node.ID,
-			Title:        node.Title,
-			Agent:        node.Agent,
-			Strategy:     node.Strategy,
-			Dependencies: node.Dependencies,
-			Senators:     node.Senators,
-			Quorum:       node.Quorum,
+			ID:              node.ID,
+			Title:           node.Title,
+			Agent:           node.Agent,
+			Strategy:        node.Strategy,
+			Dependencies:    node.Dependencies,
+			Senators:        node.Senators,
+			Quorum:          node.Quorum,
+			ArbitrationMode: node.ArbitrationMode,
+			Arbitrator:      node.Arbitrator,
 		})
 	}
 	return &queue.GraphSpec{
@@ -687,6 +689,8 @@ func summarizeCuriaArtifacts(items []domain.ArtifactEnvelope) *CuriaSummary {
 	}
 	if latestDecision != nil {
 		out.WinningMode = latestDecision.WinningMode
+		out.Arbitrated = latestDecision.Arbitrated
+		out.ArbitratorID = latestDecision.ArbitratorID
 		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
