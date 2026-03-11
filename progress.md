@@ -151,6 +151,7 @@
   - plan preview/apply/rollback results now include `remediation_hint`
   - gateway remote commands can now bridge `plan_approve` / `plan_reject` into that same plan approval path
   - scheduler now has a concurrent DAG/workspace soak baseline test covering parallel ready nodes plus worktree reclaim for one session
+  - scheduler now also has a repeated concurrent soak regression that runs multiple graph sessions back-to-back and verifies no active lease leakage plus successful stale workspace reclaim
 - Added minimum worktree merge-back closure:
   - `workspace.CapturePatch`
   - `workspace.MergeBack`

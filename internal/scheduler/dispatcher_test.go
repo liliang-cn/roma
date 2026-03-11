@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -279,6 +280,96 @@ func TestDispatcherConcurrentGraphSoakBaseline(t *testing.T) {
 		}
 		if item.Status != "reclaimed" {
 			t.Fatalf("workspace %s status = %q, want reclaimed", taskID, item.Status)
+		}
+	}
+}
+
+func TestDispatcherRepeatedConcurrentSoakMaintainsLeaseAndWorkspaceInvariants(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initDispatcherGitRepo(t, workDir)
+
+	mem := store.NewMemoryStore()
+	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherSlowAdapter{}), mem, mem)
+	manager := workspacepkg.NewManager(workDir, mem)
+
+	const (
+		rounds      = 4
+		nodesPerRun = 6
+	)
+
+	for round := 0; round < rounds; round++ {
+		sessionID := "sess_repeat_" + strconv.Itoa(round)
+		assignments := make([]NodeAssignment, 0, nodesPerRun)
+		for i := 0; i < nodesPerRun; i++ {
+			id := "task_" + strconv.Itoa(round) + "_" + strconv.Itoa(i)
+			assignments = append(assignments, NodeAssignment{
+				Node:    domain.TaskNodeSpec{ID: id, Title: "Node " + id, Strategy: domain.TaskStrategyDirect},
+				Profile: domain.AgentProfile{ID: "agent-" + id, DisplayName: "Agent " + id, Command: "agent"},
+			})
+		}
+
+		result, err := dispatcher.Execute(context.Background(), sessionID, workDir, "parallel repeated soak", assignments)
+		if err != nil {
+			t.Fatalf("Execute(round=%d) error = %v", round, err)
+		}
+		if len(result.Order) != nodesPerRun {
+			t.Fatalf("round %d order len = %d, want %d", round, len(result.Order), nodesPerRun)
+		}
+	}
+
+	leaseStore, err := NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	active, err := leaseStore.ListByStatus(context.Background(), LeaseStatusActive)
+	if err != nil {
+		t.Fatalf("ListByStatus(active) error = %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active lease count = %d, want 0", len(active))
+	}
+	released, err := leaseStore.ListByStatus(context.Background(), LeaseStatusReleased)
+	if err != nil {
+		t.Fatalf("ListByStatus(released) error = %v", err)
+	}
+	if len(released) != rounds {
+		t.Fatalf("released lease count = %d, want %d", len(released), rounds)
+	}
+
+	workspaces, err := manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var relevant int
+	for _, item := range workspaces {
+		if !strings.HasPrefix(item.SessionID, "sess_repeat_") {
+			continue
+		}
+		relevant++
+		if item.Status != "released" && item.Status != "merged" {
+			t.Fatalf("workspace %s/%s status = %q, want released/merged", item.SessionID, item.TaskID, item.Status)
+		}
+	}
+	if relevant != rounds*nodesPerRun {
+		t.Fatalf("workspace count = %d, want %d", relevant, rounds*nodesPerRun)
+	}
+
+	if err := manager.ReclaimStale(context.Background()); err != nil {
+		t.Fatalf("ReclaimStale() error = %v", err)
+	}
+	for round := 0; round < rounds; round++ {
+		sessionID := "sess_repeat_" + strconv.Itoa(round)
+		for i := 0; i < nodesPerRun; i++ {
+			taskID := "task_" + strconv.Itoa(round) + "_" + strconv.Itoa(i)
+			item, err := manager.Get(context.Background(), sessionID, taskID)
+			if err != nil {
+				t.Fatalf("Get(%s,%s) error = %v", sessionID, taskID, err)
+			}
+			if item.Status != "reclaimed" {
+				t.Fatalf("workspace %s/%s status = %q, want reclaimed", sessionID, taskID, item.Status)
+			}
 		}
 	}
 }
