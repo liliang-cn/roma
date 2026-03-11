@@ -182,18 +182,19 @@ Status: in_progress
 - [x] Refresh running-job timestamps and journald output with daemon heartbeats while a job is still executing
 - [x] Simplify CLI entrypoints so top-level help emphasizes `run`, `submit`, `status`, `cancel`, `help`, with `agent` as management and deep inspection under `debug`
 - [x] Remove built-in coding-agent registry entries so runtime selection is fully driven by user-provided profiles (`name`, `path`, `args`, default, PTY)
-- [ ] Add running-job heartbeat updates so `queue.updated_at` and top-level status change while an agent is still executing
-- [ ] Persist running-node runtime metadata:
+- [x] Add running-job heartbeat updates so `queue.updated_at` and top-level status change while an agent is still executing
+- [x] Persist enough running-node runtime metadata for live inspection:
   - current node id
-  - runtime pid
   - workspace path
   - started_at / last_active_at
   - last output timestamp
-- [ ] Emit lightweight progress events while nodes are running instead of only at node completion
-- [ ] Make `queue inspect` and `sessions inspect` surface live execution state for running jobs, not only completed artifacts and final task state
-- [ ] Add a CLI command to tail/attach to one running job or session without requiring direct foreground execution
-- [ ] Improve daemon logs so `journalctl --user -u romad -f` shows live node lifecycle transitions and periodic heartbeats
+- [x] Make `queue inspect` and `sessions inspect` surface live execution state for running jobs, not only completed artifacts and final task state
+- [x] Add a CLI command to tail one running job without requiring direct foreground execution
+- [x] Improve daemon logs so `journalctl --user -u romad -f` shows periodic heartbeats instead of only start/end markers
 - [ ] Fix running-session inspection parity so daemon/API and CLI fallback return the same structure while a job is in progress
+- [ ] Persist runtime pid and expose it through live inspection
+- [ ] Emit lightweight progress events while nodes are running instead of only at node completion
+- [ ] Add an attach mode beyond polling tail so users can watch one running session without re-printing full inspect payloads
 
 ## Risks
 
@@ -211,8 +212,8 @@ Status: in_progress
 
 ## Next Immediate Steps
 
-1. Implement Phase 19 heartbeat and live runtime metadata so running jobs stop looking like hung queue records.
-2. Finish live inspection and one minimal `tail/attach` command for active jobs.
-3. Keep tightening the simplified CLI so `run` stays the obvious default and advanced inspection remains under `debug`, while agent execution stays fully user-configured.
-4. Finish the remaining `$HOME/.roma` convergence work so installed services, config discovery, and state-path inspection all behave the same by default.
-5. After runtime visibility is in place, continue Curia arbitration refinement and conflict UX work.
+1. Finish Phase 19 by persisting runtime pid and adding an attach mode richer than polling `queue tail`.
+2. Tighten running-session parity so daemon/API and CLI fallback expose exactly the same live structure while a job is active.
+3. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
+4. Add stronger daemon-side progress events while nodes are still running, not only at node completion.
+5. Use the improved live surface to continue CLI product simplification around `run`, `submit`, and `cancel`.

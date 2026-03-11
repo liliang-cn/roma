@@ -194,10 +194,18 @@
   - agent config now defaults to `$HOME/.roma/agents.json`
   - daemon discovery now prefers `$HOME/.roma/run/api.json`
   - systemd and launchd templates now point at `$HOME/.roma`
+- Added live runtime visibility for active jobs:
+  - `queue inspect` and `session inspect` now include a `live` section
+  - `live` currently summarizes current task, agent, execution id, workspace path, heartbeat time, last event, and last output preview
+  - `queue list` now surfaces current running task and agent in the summary for active jobs
+  - `roma queue tail <job_id>` now polls and prints live job progress until the job leaves `pending/running`
 
 ## Latest Verified Commands
 
-- `env GOCACHE=/tmp/go-build-cache-roma go test ./...`
+- `go test -count=1 ./...`
+- `go test -count=1 ./internal/api ./cmd/roma`
+- `go test -count=1 ./...`
+- `go build ./...`
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue inspect job_1773190497370443455`
 - `timeout 35s env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/romad`
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma graph run --file examples/relay-graph.json`

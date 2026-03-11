@@ -590,6 +590,12 @@ func runQueue(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	if client.Available() && subcommand == "tail" {
+		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return client.QueueInspect(ctx, id)
+		}, subArg)
+	}
+
 	if client.Available() && subcommand == "cancel" {
 		item, err := client.QueueCancel(ctx, subArg)
 		if err != nil {
@@ -639,45 +645,9 @@ func runQueue(ctx context.Context, args []string) error {
 	}
 
 	if subcommand == "inspect" {
-		req, err := store.Get(ctx, subArg)
+		resp, err := inspectQueueLocal(ctx, wd, subArg)
 		if err != nil {
 			return err
-		}
-		resp := api.QueueInspectResponse{Job: req, ApprovalResumeReady: true}
-		if req.SessionID != "" {
-			sessionStore := preferredHistoryStore(wd)
-			if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
-				resp.Session = &session
-			}
-			if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
-				if lease, err := leaseStore.Get(ctx, req.SessionID); err == nil {
-					resp.Lease = &lease
-					resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
-					resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
-				}
-			}
-			taskStore := preferredTaskStore(wd)
-			if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
-				resp.Tasks = items
-			}
-			artifactStore := preferredArtifactStore(wd)
-			if items, err := artifactStore.List(ctx, req.SessionID); err == nil {
-				resp.Artifacts = items
-				resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
-			}
-			eventStore := preferredEventStore(wd)
-			if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
-				resp.Events = items
-				resp.Plans = summarizePlanActions(items)
-			}
-			manager := workspacepkg.NewManager(wd, nil)
-			if items, err := manager.List(ctx); err == nil {
-				for _, item := range items {
-					if item.SessionID == req.SessionID {
-						resp.Workspaces = append(resp.Workspaces, item)
-					}
-				}
-			}
 		}
 		raw, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
@@ -685,6 +655,12 @@ func runQueue(ctx context.Context, args []string) error {
 		}
 		fmt.Println(string(raw))
 		return nil
+	}
+
+	if subcommand == "tail" {
+		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return inspectQueueLocal(ctx, wd, id)
+		}, subArg)
 	}
 
 	if subcommand == "cancel" {
@@ -793,6 +769,112 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 	}
 	fmt.Println(string(raw))
 	return nil
+}
+
+func runQueueTail(ctx context.Context, inspect func(context.Context, string) (api.QueueInspectResponse, error), jobID string) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastLine string
+	for {
+		resp, err := inspect(ctx, jobID)
+		if err != nil {
+			return err
+		}
+		line := formatQueueTailLine(resp)
+		if line != lastLine {
+			fmt.Println(line)
+			lastLine = line
+		}
+		if resp.Job.Status != queue.StatusPending && resp.Job.Status != queue.StatusRunning {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func formatQueueTailLine(resp api.QueueInspectResponse) string {
+	parts := []string{
+		fmt.Sprintf("job=%s", resp.Job.ID),
+		fmt.Sprintf("status=%s", resp.Job.Status),
+	}
+	if resp.Live != nil {
+		if resp.Live.CurrentTaskID != "" {
+			parts = append(parts, "task="+resp.Live.CurrentTaskID)
+		}
+		if resp.Live.CurrentAgentID != "" {
+			parts = append(parts, "agent="+resp.Live.CurrentAgentID)
+		}
+		if resp.Live.ExecutionID != "" {
+			parts = append(parts, "exec="+resp.Live.ExecutionID)
+		}
+		if resp.Live.WorkspacePath != "" {
+			parts = append(parts, "workspace="+resp.Live.WorkspacePath)
+		}
+		if resp.Live.LastOutputAt != nil {
+			parts = append(parts, "last_output="+resp.Live.LastOutputAt.Format(time.RFC3339))
+		}
+		if resp.Live.LastOutputPreview != "" {
+			parts = append(parts, "output="+strconv.Quote(resp.Live.LastOutputPreview))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectResponse, error) {
+	queueStore := preferredQueueStore(wd)
+	req, err := queueStore.Get(ctx, jobID)
+	if err != nil {
+		return api.QueueInspectResponse{}, err
+	}
+	resp := api.QueueInspectResponse{Job: req, ApprovalResumeReady: true}
+	if req.SessionID == "" {
+		return resp, nil
+	}
+
+	sessionStore := preferredHistoryStore(wd)
+	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
+		resp.Session = &session
+	}
+	if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+		if lease, err := leaseStore.Get(ctx, req.SessionID); err == nil {
+			resp.Lease = &lease
+			resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+			resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+		}
+	}
+	taskStore := preferredTaskStore(wd)
+	if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
+		resp.Tasks = items
+	}
+	artifactStore := preferredArtifactStore(wd)
+	if items, err := artifactStore.List(ctx, req.SessionID); err == nil {
+		resp.Artifacts = items
+		resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
+	}
+	eventStore := preferredEventStore(wd)
+	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
+		resp.Events = items
+		resp.Plans = summarizePlanActions(items)
+	}
+	manager := workspacepkg.NewManager(wd, nil)
+	if items, err := manager.List(ctx); err == nil {
+		for _, item := range items {
+			if item.SessionID == req.SessionID {
+				resp.Workspaces = append(resp.Workspaces, item)
+			}
+		}
+	}
+	sessionStatus := string(req.Status)
+	if resp.Session != nil && resp.Session.Status != "" {
+		sessionStatus = resp.Session.Status
+	}
+	resp.Live = api.SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, req.UpdatedAt)
+	return resp, nil
 }
 
 func runQueueCancel(ctx context.Context, args []string) error {
@@ -1214,6 +1296,7 @@ func runSessions(ctx context.Context, args []string) error {
 				}
 			}
 		}
+		resp.Live = api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
 		raw, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal session inspect: %w", err)
@@ -1260,6 +1343,7 @@ func runSessions(ctx context.Context, args []string) error {
 				}
 			}
 		}
+		resp.Live = api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
 		printCuriaSummary(resp)
 		return nil
 	}
@@ -2624,6 +2708,7 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma queue list [--status <status>] [--mode <direct|graph>]")
 		fmt.Println("  roma queue show <job_id>")
 		fmt.Println("  roma queue inspect <job_id>")
+		fmt.Println("  roma queue tail <job_id>")
 		fmt.Println("  roma queue cancel <job_id>")
 		fmt.Println("  roma approve <job_id>")
 		fmt.Println("  roma reject <job_id>")
@@ -2757,6 +2842,34 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		}
 	}
 	summary := fmt.Sprintf("nodes=%d ok=%d run=%d wait=%d fail=%d", total, succeeded, running, waiting, failed)
+	eventStore := preferredEventStore(wd)
+	var eventItems []events.Record
+	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
+		eventItems = items
+	}
+	manager := workspacepkg.NewManager(wd, nil)
+	var workspaceItems []workspacepkg.Prepared
+	if items, err := manager.List(ctx); err == nil {
+		for _, item := range items {
+			if item.SessionID == req.SessionID {
+				workspaceItems = append(workspaceItems, item)
+			}
+		}
+	}
+	var lease *scheduler.LeaseRecord
+	if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+		if item, err := leaseStore.Get(ctx, req.SessionID); err == nil {
+			lease = &item
+		}
+	}
+	if live := api.SummarizeRuntimeLive(string(req.Status), items, eventItems, workspaceItems, lease, req.UpdatedAt); live != nil && req.Status == queue.StatusRunning {
+		if live.CurrentTaskID != "" {
+			summary += " current=" + live.CurrentTaskID
+		}
+		if live.CurrentAgentID != "" {
+			summary += " agent=" + live.CurrentAgentID
+		}
+	}
 	artifactStore := preferredArtifactStore(wd)
 	artifactsForSession, err := artifactStore.List(ctx, req.SessionID)
 	if err != nil || len(artifactsForSession) == 0 {
@@ -2811,7 +2924,7 @@ func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subc
 		switch args[i] {
 		case "list":
 			subcommand = "list"
-		case "show", "inspect", "cancel":
+		case "show", "inspect", "cancel", "tail":
 			subcommand = args[i]
 			i++
 			if i >= len(args) {

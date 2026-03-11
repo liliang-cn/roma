@@ -198,6 +198,11 @@
   - `events list --session ...` often remains empty until the current node exits
   - `journalctl --user -u romad -f` only shows start/end markers, not running-node heartbeats
   - the system can still be genuinely busy; `ps` confirmed live `codex exec` child processes under the task worktree while queue/session views looked static
+- Runtime visibility is materially better now:
+  - `queue inspect` and `session inspect` carry a `live` section with current task, agent, execution id, workspace path, heartbeat, and last output preview
+  - `roma queue tail <job_id>` gives a minimal watch mode for active jobs
+  - `roma queue list` now appends the current running task and agent for active jobs when that live state can be derived
+  - the biggest remaining observability gaps are runtime pid, richer progress events while a node is still running, and a true attach mode beyond polling
 - There is now a first-class queue cancellation path:
   - `roma cancel <job_id>`
   - `roma queue cancel <job_id>`

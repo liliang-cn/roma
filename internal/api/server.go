@@ -1148,6 +1148,11 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		sessionStatus := string(job.Status)
+		if resp.Session != nil && resp.Session.Status != "" {
+			sessionStatus = resp.Session.Status
+		}
+		resp.Live = SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, job.UpdatedAt)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1215,6 +1220,7 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	resp.Live = SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
 	writeJSON(w, http.StatusOK, resp)
 }
 

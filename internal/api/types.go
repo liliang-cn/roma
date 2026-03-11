@@ -153,6 +153,7 @@ type QueueInspectResponse struct {
 	Lease                  *scheduler.LeaseRecord    `json:"lease,omitempty"`
 	PendingApprovalTaskIDs []string                  `json:"pending_approval_task_ids,omitempty"`
 	ApprovalResumeReady    bool                      `json:"approval_resume_ready"`
+	Live                   *RuntimeLiveSummary       `json:"live,omitempty"`
 	Tasks                  []domain.TaskRecord       `json:"tasks,omitempty"`
 	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
 	Events                 []events.Record           `json:"events,omitempty"`
@@ -172,6 +173,7 @@ type SessionInspectResponse struct {
 	Lease                  *scheduler.LeaseRecord    `json:"lease,omitempty"`
 	PendingApprovalTaskIDs []string                  `json:"pending_approval_task_ids,omitempty"`
 	ApprovalResumeReady    bool                      `json:"approval_resume_ready"`
+	Live                   *RuntimeLiveSummary       `json:"live,omitempty"`
 	Tasks                  []domain.TaskRecord       `json:"tasks,omitempty"`
 	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
 	Events                 []events.Record           `json:"events,omitempty"`

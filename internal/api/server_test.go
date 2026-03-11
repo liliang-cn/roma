@@ -389,6 +389,151 @@ func TestServerQueueInspect(t *testing.T) {
 	}
 }
 
+func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initAPIGitRepo(t, workDir)
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := NewClient(workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	startedAt := time.Now().UTC().Add(-4 * time.Second)
+	outputAt := startedAt.Add(2 * time.Second)
+	job := queue.Request{
+		ID:           "job_live",
+		Prompt:       "build a feature",
+		StarterAgent: "my-codex",
+		WorkingDir:   workDir,
+		SessionID:    "sess_live",
+		TaskID:       "task_live",
+		Status:       queue.StatusRunning,
+		CreatedAt:    startedAt,
+		UpdatedAt:    outputAt,
+	}
+	if err := queueStore.Enqueue(context.Background(), job); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	jobRecord, err := queueStore.Get(context.Background(), "job_live")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	jobRecord.SessionID = "sess_live"
+	jobRecord.TaskID = "task_live"
+	jobRecord.Status = queue.StatusRunning
+	jobRecord.UpdatedAt = outputAt
+	if err := queueStore.Update(context.Background(), jobRecord); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_live",
+		TaskID:     "task_live",
+		Prompt:     "build a feature",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  startedAt,
+		UpdatedAt:  outputAt,
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
+
+	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	if err := taskStore.UpsertTask(context.Background(), domain.TaskRecord{
+		ID:        "task_live",
+		SessionID: "sess_live",
+		Title:     "Starter",
+		Strategy:  domain.TaskStrategyDirect,
+		State:     domain.TaskStateRunning,
+		AgentID:   "my-codex",
+		CreatedAt: startedAt,
+		UpdatedAt: outputAt,
+	}); err != nil {
+		t.Fatalf("UpsertTask() error = %v", err)
+	}
+
+	manager := workspacepkg.NewManager(workDir, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_live", "task_live", workDir, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	eventStore := preferredEventStore(workDir)
+	if err := eventStore.AppendEvent(context.Background(), events.Record{
+		ID:         "evt_runtime_started",
+		SessionID:  "sess_live",
+		TaskID:     "task_live",
+		Type:       events.TypeRuntimeStarted,
+		ActorType:  events.ActorTypeSystem,
+		OccurredAt: startedAt,
+		Payload: map[string]any{
+			"execution_id": "exec_task_live",
+			"agent":        "my-codex",
+		},
+	}); err != nil {
+		t.Fatalf("AppendEvent(started) error = %v", err)
+	}
+	if err := eventStore.AppendEvent(context.Background(), events.Record{
+		ID:         "evt_runtime_stdout",
+		SessionID:  "sess_live",
+		TaskID:     "task_live",
+		Type:       events.TypeRuntimeStdoutCaptured,
+		ActorType:  events.ActorTypeAgent,
+		OccurredAt: outputAt,
+		Payload: map[string]any{
+			"agent":  "my-codex",
+			"stdout": "planning\nstill working",
+		},
+	}); err != nil {
+		t.Fatalf("AppendEvent(stdout) error = %v", err)
+	}
+
+	resp, err := client.QueueInspect(context.Background(), "job_live")
+	if err != nil {
+		t.Fatalf("QueueInspect() error = %v", err)
+	}
+	if resp.Live == nil {
+		t.Fatal("live = nil, want runtime summary")
+	}
+	if resp.Live.State != "running" {
+		t.Fatalf("live state = %q, want running", resp.Live.State)
+	}
+	if resp.Live.CurrentTaskID != "task_live" {
+		t.Fatalf("live task id = %q, want task_live", resp.Live.CurrentTaskID)
+	}
+	if resp.Live.CurrentAgentID != "my-codex" {
+		t.Fatalf("live agent = %q, want my-codex", resp.Live.CurrentAgentID)
+	}
+	if resp.Live.ExecutionID != "exec_task_live" {
+		t.Fatalf("live execution id = %q, want exec_task_live", resp.Live.ExecutionID)
+	}
+	if resp.Live.WorkspacePath != prepared.EffectiveDir {
+		t.Fatalf("live workspace = %q, want %q", resp.Live.WorkspacePath, prepared.EffectiveDir)
+	}
+	if resp.Live.LastOutputPreview != "still working" {
+		t.Fatalf("live output preview = %q, want still working", resp.Live.LastOutputPreview)
+	}
+}
+
 func TestServerTaskListAndShow(t *testing.T) {
 	t.Parallel()
 
@@ -596,7 +741,8 @@ func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 	manager := workspacepkg.NewManager(workDir, nil)
-	if _, err := manager.Prepare(context.Background(), "sess_1", "task_1", workDir, domain.TaskStrategyDirect); err != nil {
+	prepared, err := manager.Prepare(context.Background(), "sess_1", "task_1", workDir, domain.TaskStrategyDirect)
+	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	leaseStore, err := scheduler.NewLeaseStore(workDir)
@@ -625,6 +771,15 @@ func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
 	}
 	if resp.ApprovalResumeReady || len(resp.PendingApprovalTaskIDs) != 1 {
 		t.Fatalf("approval readiness = %t pending = %#v, want false with one pending task", resp.ApprovalResumeReady, resp.PendingApprovalTaskIDs)
+	}
+	if resp.Live == nil {
+		t.Fatal("live = nil, want awaiting approval summary")
+	}
+	if resp.Live.State != "awaiting_approval" {
+		t.Fatalf("live state = %q, want awaiting_approval", resp.Live.State)
+	}
+	if resp.Live.WorkspacePath != prepared.EffectiveDir {
+		t.Fatalf("live workspace = %q, want %q", resp.Live.WorkspacePath, prepared.EffectiveDir)
 	}
 }
 
