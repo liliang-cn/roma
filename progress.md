@@ -81,6 +81,16 @@
   - direct/write tasks now create detached `git worktree` checkouts when the base directory is a Git repository
   - existing task worktrees are reused on repeated prepare calls
   - non-Git directories now persist explicit fallback reasons in workspace metadata
+- Added workspace reclaim on daemon recovery:
+  - released git worktrees are now removed on daemon startup before task recovery resumes
+  - workspace metadata now persists `reclaimed_at` and `reclaimed` status
+  - scheduler recovery tests now cover released workspace cleanup
+- Expanded workspace cleanup and inspection:
+  - stale `prepared` worktrees are now reclaimed alongside `released` worktrees on daemon startup
+  - `roma workspaces list/show/cleanup` now works in CLI fallback and daemon API modes
+  - `/workspaces`, `/workspaces/{session}/{task}`, and `/workspaces/cleanup` are now exposed by the local daemon API
+  - `queue inspect` now includes related workspace metadata
+  - `roma sessions inspect <session_id>` and `/session-inspect/{id}` now provide aggregated session truth including tasks, artifacts, events, and workspaces
 - Removed the main execution path's compile-time dependency on `internal/relay`:
   - scheduler now owns `NodeAssignment` and `DispatchResult`
   - direct run, graph run, recovery, and scheduler tests now use scheduler-native execution types
@@ -122,10 +132,13 @@
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding persisted scheduler leases and daemon lease recovery
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding node-level scheduler approval gates
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding scheduler workspace preparation hooks
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding workspace inspection/cleanup APIs and lease-aware periodic recovery
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after attaching workspace refs to scheduler leases and exposing lease/workspace linkage in inspection
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after persisting approval-pending task ids in leases and exposing approval resume readiness in inspection
 - `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
 
 ## Current Focus
 
-- Persist workspace lifecycle for daemon recovery and cleanup.
-- Add explicit workspace cleanup/reclaim operations for released or orphaned worktrees.
-- Tighten task-level approval recovery so resumed sessions can re-enter dispatch without queue-only mediation.
+- Append pending-approval metadata into scheduler lease events for replay clarity.
+- Expose lease-aware recovery snapshots through CLI/API inspection.
+- Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth.

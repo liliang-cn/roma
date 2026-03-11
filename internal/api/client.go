@@ -16,6 +16,7 @@ import (
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
+	"github.com/liliang/roma/internal/workspace"
 )
 
 // Client talks to romad over a Unix domain socket.
@@ -229,6 +230,29 @@ func (c *Client) SessionGet(ctx context.Context, id string) (history.SessionReco
 	return out, nil
 }
 
+// SessionInspect returns one session with expanded execution records from the daemon.
+func (c *Client) SessionInspect(ctx context.Context, id string) (SessionInspectResponse, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return SessionInspectResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/session-inspect/"+id, nil)
+	if err != nil {
+		return SessionInspectResponse{}, fmt.Errorf("create session inspect request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return SessionInspectResponse{}, fmt.Errorf("session inspect request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out SessionInspectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return SessionInspectResponse{}, fmt.Errorf("decode session inspect response: %w", err)
+	}
+	return out, nil
+}
+
 // TaskList returns persisted task records from the daemon.
 func (c *Client) TaskList(ctx context.Context, sessionID string) ([]domain.TaskRecord, error) {
 	httpClient, baseURL, err := c.httpClient()
@@ -309,6 +333,75 @@ func (c *Client) taskAction(ctx context.Context, id, action string) (domain.Task
 		return domain.TaskRecord{}, fmt.Errorf("decode task %s response: %w", action, err)
 	}
 	return out, nil
+}
+
+// WorkspaceList returns persisted workspace metadata from the daemon.
+func (c *Client) WorkspaceList(ctx context.Context) ([]workspace.Prepared, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/workspaces", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create workspaces request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("workspaces request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out WorkspaceListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode workspaces response: %w", err)
+	}
+	return out.Items, nil
+}
+
+// WorkspaceGet returns one persisted workspace record from the daemon.
+func (c *Client) WorkspaceGet(ctx context.Context, sessionID, taskID string) (workspace.Prepared, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return workspace.Prepared{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/workspaces/"+sessionID+"/"+taskID, nil)
+	if err != nil {
+		return workspace.Prepared{}, fmt.Errorf("create workspace get request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return workspace.Prepared{}, fmt.Errorf("workspace get request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out workspace.Prepared
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return workspace.Prepared{}, fmt.Errorf("decode workspace get response: %w", err)
+	}
+	return out, nil
+}
+
+// WorkspaceCleanup reclaims stale workspaces through the daemon.
+func (c *Client) WorkspaceCleanup(ctx context.Context) ([]workspace.Prepared, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/workspaces/cleanup", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create workspace cleanup request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("workspace cleanup request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out WorkspaceListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode workspace cleanup response: %w", err)
+	}
+	return out.Items, nil
 }
 
 // ArtifactList returns persisted artifacts from the daemon.

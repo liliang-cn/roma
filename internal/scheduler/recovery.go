@@ -11,13 +11,16 @@ import (
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
 	"github.com/liliang/roma/internal/taskstore"
+	"github.com/liliang/roma/internal/workspace"
 )
 
 // RecoverySnapshot describes one session's recoverable scheduling state.
 type RecoverySnapshot struct {
-	SessionID  string              `json:"session_id"`
-	Status     string              `json:"status"`
-	ReadyTasks []domain.TaskRecord `json:"ready_tasks,omitempty"`
+	SessionID              string              `json:"session_id"`
+	Status                 string              `json:"status"`
+	ReadyTasks             []domain.TaskRecord `json:"ready_tasks,omitempty"`
+	PendingApprovalTaskIDs []string            `json:"pending_approval_task_ids,omitempty"`
+	ApprovalResumeReady    bool                `json:"approval_resume_ready"`
 }
 
 // RecoverableSessions rebuilds ready-to-dispatch task views from authoritative SQLite metadata.
@@ -29,6 +32,10 @@ func RecoverableSessions(ctx context.Context, workDir string) ([]RecoverySnapsho
 	taskStore, err := taskstore.NewSQLiteStore(workDir)
 	if err != nil {
 		return nil, err
+	}
+	var leaseStore *LeaseStore
+	if store, err := NewLeaseStore(workDir); err == nil {
+		leaseStore = store
 	}
 
 	sessions, err := sessionStore.List(ctx)
@@ -45,18 +52,26 @@ func RecoverableSessions(ctx context.Context, workDir string) ([]RecoverySnapsho
 			return nil, fmt.Errorf("list tasks for session %s: %w", session.ID, err)
 		}
 		ready := make([]domain.TaskRecord, 0)
+		pendingApprovalTaskIDs := make([]string, 0)
+		if leaseStore != nil {
+			if lease, err := leaseStore.Get(ctx, session.ID); err == nil {
+				pendingApprovalTaskIDs = append(pendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+			}
+		}
 		for _, task := range tasks {
 			if task.State == domain.TaskStateReady || task.State == domain.TaskStatePending {
 				ready = append(ready, task)
 			}
 		}
-		if len(ready) == 0 {
+		if len(ready) == 0 && len(pendingApprovalTaskIDs) == 0 {
 			continue
 		}
 		out = append(out, RecoverySnapshot{
-			SessionID:  session.ID,
-			Status:     session.Status,
-			ReadyTasks: ready,
+			SessionID:              session.ID,
+			Status:                 session.Status,
+			ReadyTasks:             ready,
+			PendingApprovalTaskIDs: pendingApprovalTaskIDs,
+			ApprovalResumeReady:    len(pendingApprovalTaskIDs) == 0,
 		})
 	}
 	return out, nil
@@ -94,6 +109,20 @@ func RecoverInterruptedLeases(ctx context.Context, workDir string) error {
 	return leaseStore.RecoverActive(ctx)
 }
 
+// ReclaimStaleWorkspaces removes stale workspaces on daemon startup.
+func ReclaimStaleWorkspaces(ctx context.Context, workDir string) error {
+	activeSessions := make(map[string]struct{})
+	if leaseStore, err := NewLeaseStore(workDir); err == nil {
+		items, err := leaseStore.ListByStatus(ctx, LeaseStatusActive)
+		if err == nil {
+			for _, item := range items {
+				activeSessions[item.SessionID] = struct{}{}
+			}
+		}
+	}
+	return workspace.NewManager(workDir, nil).ReclaimStaleExcept(ctx, activeSessions)
+}
+
 // ResumeRunner captures the recovery execution contract needed by the daemon.
 type ResumeRunner interface {
 	ResumeSession(ctx context.Context, workDir, sessionID string, stdout io.Writer) error
@@ -123,8 +152,22 @@ func ResumeRecoverableSessions(ctx context.Context, workDir string, queueStore q
 			}
 		}
 	}
+	if leaseStore, err := NewLeaseStore(workDir); err == nil {
+		for _, item := range items {
+			record, err := leaseStore.Get(ctx, item.SessionID)
+			if err != nil {
+				continue
+			}
+			if record.Status == LeaseStatusActive {
+				owned[item.SessionID] = struct{}{}
+			}
+		}
+	}
 	for _, item := range items {
 		if _, ok := owned[item.SessionID]; ok {
+			continue
+		}
+		if len(item.PendingApprovalTaskIDs) > 0 {
 			continue
 		}
 		if err := runner.ResumeSession(ctx, workDir, item.SessionID, os.Stdout); err != nil {

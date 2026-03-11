@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS scheduler_leases (
   owner_id TEXT NOT NULL,
   status TEXT NOT NULL,
   ready_task_ids_json TEXT,
+  workspace_refs_json TEXT,
+  pending_approval_task_ids_json TEXT,
   completed_task_ids_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -140,6 +142,18 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_leases_status_updated ON scheduler_leas
 		if !alreadyExists(err) {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate task_records.approval_granted: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE scheduler_leases ADD COLUMN workspace_refs_json TEXT`); err != nil {
+		if !alreadyExists(err) {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate scheduler_leases.workspace_refs_json: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE scheduler_leases ADD COLUMN pending_approval_task_ids_json TEXT`); err != nil {
+		if !alreadyExists(err) {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate scheduler_leases.pending_approval_task_ids_json: %w", err)
 		}
 	}
 	return db, nil

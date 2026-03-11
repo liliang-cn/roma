@@ -19,6 +19,7 @@ import (
 	"github.com/liliang/roma/internal/scheduler"
 	"github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/taskstore"
+	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
 
 // ErrUnavailable indicates the current environment does not permit local listeners.
@@ -57,8 +58,11 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 	mux.HandleFunc("/queue-inspect/", server.handleQueueInspect)
 	mux.HandleFunc("/sessions", server.handleSessionList)
 	mux.HandleFunc("/sessions/", server.handleSessionShow)
+	mux.HandleFunc("/session-inspect/", server.handleSessionInspect)
 	mux.HandleFunc("/tasks", server.handleTaskList)
 	mux.HandleFunc("/tasks/", server.handleTaskShow)
+	mux.HandleFunc("/workspaces", server.handleWorkspaceList)
+	mux.HandleFunc("/workspaces/", server.handleWorkspaceShow)
 
 	server.httpServer = &http.Server{
 		Handler: mux,
@@ -388,12 +392,19 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	resp := QueueInspectResponse{Job: job}
+	resp := QueueInspectResponse{Job: job, ApprovalResumeReady: true}
 
 	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
 	if job.SessionID != "" {
 		if session, err := s.sessionStore.Get(r.Context(), job.SessionID); err == nil {
 			resp.Session = &session
+		}
+		if leaseStore, err := scheduler.NewLeaseStore(workDir); err == nil {
+			if lease, err := leaseStore.Get(r.Context(), job.SessionID); err == nil {
+				resp.Lease = &lease
+				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+			}
 		}
 		taskStore := preferredTaskStore(workDir)
 		if items, err := taskStore.ListTasksBySession(r.Context(), job.SessionID); err == nil {
@@ -406,6 +417,13 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		artifactStore := preferredArtifactStore(workDir)
 		if items, err := artifactStore.List(r.Context(), job.SessionID); err == nil {
 			resp.Artifacts = items
+		}
+		if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
+			for _, item := range items {
+				if item.SessionID == job.SessionID {
+					resp.Workspaces = append(resp.Workspaces, item)
+				}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -427,6 +445,52 @@ func (s *Server) handleSessionShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/session-inspect/")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	session, err := s.sessionStore.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	resp := SessionInspectResponse{Session: session, ApprovalResumeReady: true}
+	if leaseStore, err := scheduler.NewLeaseStore(workDir); err == nil {
+		if lease, err := leaseStore.Get(r.Context(), id); err == nil {
+			resp.Lease = &lease
+			resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+			resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+		}
+	}
+	taskStore := preferredTaskStore(workDir)
+	if items, err := taskStore.ListTasksBySession(r.Context(), id); err == nil {
+		resp.Tasks = items
+	}
+	eventStore := preferredEventStore(workDir)
+	if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: id}); err == nil {
+		resp.Events = items
+	}
+	artifactStore := preferredArtifactStore(workDir)
+	if items, err := artifactStore.List(r.Context(), id); err == nil {
+		resp.Artifacts = items
+	}
+	if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
+		for _, item := range items {
+			if item.SessionID == id {
+				resp.Workspaces = append(resp.Workspaces, item)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
@@ -527,6 +591,67 @@ func (s *Server) handleTaskApproval(w http.ResponseWriter, r *http.Request, id s
 		}
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleWorkspaceList(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.TrimSuffix(r.URL.Path, "/") == "/workspaces" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	items, err := workspacepkg.NewManager(workDir, nil).List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, WorkspaceListResponse{Items: items})
+}
+
+func (s *Server) handleWorkspaceShow(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/workspaces/")
+	if rest == "cleanup" {
+		s.handleWorkspaceCleanup(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "workspace path must be /workspaces/{session}/{task}", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	item, err := workspacepkg.NewManager(workDir, nil).Get(r.Context(), parts[0], parts[1])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleWorkspaceCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	manager := workspacepkg.NewManager(workDir, preferredEventStore(workDir))
+	if err := manager.ReclaimStale(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	items, err := manager.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, WorkspaceListResponse{Items: items})
 }
 
 func preferredEventStore(workDir string) store.EventStore {

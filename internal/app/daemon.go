@@ -102,6 +102,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := scheduler.RecoverInterruptedLeases(ctx, wd); err != nil {
 		return fmt.Errorf("recover interrupted scheduler leases: %w", err)
 	}
+	if err := scheduler.ReclaimStaleWorkspaces(ctx, wd); err != nil {
+		return fmt.Errorf("reclaim stale workspaces: %w", err)
+	}
 	if err := scheduler.NormalizeInterruptedTasks(ctx, wd); err != nil {
 		return fmt.Errorf("normalize interrupted tasks: %w", err)
 	}
@@ -195,6 +198,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ticker.C:
 			if err := d.processNextQueueItem(ctx); err != nil {
 				log.Printf("romad queue error: %v", err)
+			}
+			if err := scheduler.ResumeRecoverableSessions(ctx, wd, d.queue, d.runner); err != nil {
+				log.Printf("romad recovery error: %v", err)
 			}
 		}
 	}

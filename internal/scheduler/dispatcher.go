@@ -74,11 +74,15 @@ func (d *Dispatcher) Resume(ctx context.Context, sessionID, workDir, basePrompt 
 
 func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt string, assignments []NodeAssignment, existing map[string]domain.ArtifactEnvelope, register bool) (DispatchResult, error) {
 	completedOrder := make([]string, 0, len(assignments))
+	shouldReleaseLease := true
 	if d.leases != nil {
 		if err := d.leases.Acquire(ctx, sessionID, d.ownerID); err == nil {
 			d.appendLeaseEvent(ctx, sessionID, LeaseStatusActive, nil, nil)
 		}
 		defer func() {
+			if !shouldReleaseLease {
+				return
+			}
 			if err := d.leases.Release(context.Background(), sessionID, d.ownerID, completedOrder); err == nil {
 				d.appendLeaseEvent(context.Background(), sessionID, LeaseStatusReleased, nil, completedOrder)
 			}
@@ -171,16 +175,35 @@ func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt
 		}
 
 		if len(batch) > 0 {
+			preparedWorkspaces := make([]workspacepkg.Prepared, 0, len(batch))
+			workspaceByNode := make(map[string]workspacepkg.Prepared, len(batch))
+			for _, assignment := range batch {
+				prepared, err := d.workspaces.Prepare(ctx, sessionID, assignment.Node.ID, workDir, assignment.Node.Strategy)
+				if err != nil {
+					return DispatchResult{Artifacts: artifactsByNode, Order: order}, err
+				}
+				preparedWorkspaces = append(preparedWorkspaces, prepared)
+				workspaceByNode[assignment.Node.ID] = prepared
+			}
 			if d.leases != nil {
 				readyIDs := make([]string, 0, len(batch))
+				workspaceRefs := make([]WorkspaceRef, 0, len(preparedWorkspaces))
 				for _, assignment := range batch {
 					readyIDs = append(readyIDs, assignment.Node.ID)
 				}
-				if err := d.leases.Renew(ctx, sessionID, d.ownerID, readyIDs, order); err == nil {
+				for _, prepared := range preparedWorkspaces {
+					workspaceRefs = append(workspaceRefs, WorkspaceRef{
+						TaskID:        prepared.TaskID,
+						EffectiveDir:  prepared.EffectiveDir,
+						Provider:      prepared.Provider,
+						EffectiveMode: string(prepared.Effective),
+					})
+				}
+				if err := d.leases.Renew(ctx, sessionID, d.ownerID, readyIDs, workspaceRefs, nil, order); err == nil {
 					d.appendLeaseEvent(ctx, sessionID, LeaseStatusActive, readyIDs, order)
 				}
 			}
-			results, err := d.executeBatch(ctx, sessionID, workDir, basePrompt, artifactsByNode, batch)
+			results, err := d.executeBatch(ctx, sessionID, workDir, basePrompt, artifactsByNode, batch, workspaceByNode)
 			if err != nil {
 				return DispatchResult{Artifacts: artifactsByNode, Order: order}, err
 			}
@@ -197,6 +220,12 @@ func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt
 
 		if !progressed {
 			if len(pendingApprovals) > 0 {
+				if d.leases != nil {
+					if err := d.leases.Renew(ctx, sessionID, d.ownerID, nil, nil, pendingApprovals, order); err == nil {
+						d.appendLeaseEvent(ctx, sessionID, LeaseStatusActive, nil, order)
+					}
+				}
+				shouldReleaseLease = false
 				return DispatchResult{Artifacts: artifactsByNode, Order: order}, &ApprovalPendingError{TaskIDs: pendingApprovals}
 			}
 			return DispatchResult{Artifacts: artifactsByNode, Order: order}, fmt.Errorf("scheduler dispatcher made no progress; dependency cycle or missing artifact")
@@ -240,6 +269,7 @@ func (d *Dispatcher) executeBatch(
 	sessionID, workDir, basePrompt string,
 	artifactsByNode map[string]domain.ArtifactEnvelope,
 	batch []NodeAssignment,
+	workspaceByNode map[string]workspacepkg.Prepared,
 ) ([]dispatchBatchResult, error) {
 	results := make([]dispatchBatchResult, len(batch))
 	var wg sync.WaitGroup
@@ -252,15 +282,7 @@ func (d *Dispatcher) executeBatch(
 			}
 
 			prompt := buildNodePrompt(basePrompt, assignment.Node, artifactsByNode)
-			workspace, workspaceErr := d.workspaces.Prepare(ctx, sessionID, assignment.Node.ID, workDir, assignment.Node.Strategy)
-			if workspaceErr != nil {
-				results[i] = dispatchBatchResult{
-					assignment: assignment,
-					workspace:  workspace,
-					runErr:     workspaceErr,
-				}
-				return
-			}
+			workspace := workspaceByNode[assignment.Node.ID]
 			_ = d.events.AppendEvent(ctx, events.Record{
 				ID:         fmt.Sprintf("evt_%s_started", assignment.Node.ID),
 				SessionID:  sessionID,

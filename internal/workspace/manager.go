@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ type Prepared struct {
 	PreparedAt   time.Time `json:"prepared_at"`
 	Status       string    `json:"status"`
 	ReleasedAt   time.Time `json:"released_at,omitempty"`
+	ReclaimedAt  time.Time `json:"reclaimed_at,omitempty"`
 }
 
 // Manager resolves per-task workspace directories and persists workspace metadata.
@@ -87,11 +89,7 @@ func (m *Manager) Prepare(ctx context.Context, sessionID, taskID, baseDir string
 	if err := os.MkdirAll(metaDir, 0o755); err != nil {
 		return Prepared{}, fmt.Errorf("create workspace metadata dir: %w", err)
 	}
-	raw, err := json.MarshalIndent(prepared, "", "  ")
-	if err != nil {
-		return Prepared{}, fmt.Errorf("marshal workspace metadata: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(metaDir, "workspace.json"), raw, 0o644); err != nil {
+	if err := writePrepared(filepath.Join(metaDir, "workspace.json"), prepared); err != nil {
 		return Prepared{}, fmt.Errorf("write workspace metadata: %w", err)
 	}
 
@@ -131,11 +129,7 @@ func (m *Manager) Release(ctx context.Context, prepared Prepared, outcome string
 		rootDir = prepared.BaseDir
 	}
 	metaPath := filepath.Join(rootDir, ".roma", "workspaces", prepared.SessionID, prepared.TaskID, "workspace.json")
-	raw, err := json.MarshalIndent(prepared, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal released workspace metadata: %w", err)
-	}
-	if err := os.WriteFile(metaPath, raw, 0o644); err != nil {
+	if err := writePrepared(metaPath, prepared); err != nil {
 		return fmt.Errorf("write released workspace metadata: %w", err)
 	}
 
@@ -155,6 +149,83 @@ func (m *Manager) Release(ctx context.Context, prepared Prepared, outcome string
 				"outcome":        outcome,
 			},
 		})
+	}
+	return nil
+}
+
+// List returns all persisted task workspaces.
+func (m *Manager) List(_ context.Context) ([]Prepared, error) {
+	rootDir := m.rootDir
+	if rootDir == "" {
+		return nil, nil
+	}
+	items, err := m.loadAll(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(items, func(a, b Prepared) int {
+		if cmp := strings.Compare(a.SessionID, b.SessionID); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.TaskID, b.TaskID)
+	})
+	return items, nil
+}
+
+// Get returns one persisted task workspace.
+func (m *Manager) Get(_ context.Context, sessionID, taskID string) (Prepared, error) {
+	rootDir := m.rootDir
+	if rootDir == "" {
+		return Prepared{}, os.ErrNotExist
+	}
+	return loadPrepared(filepath.Join(rootDir, ".roma", "workspaces", sessionID, taskID, "workspace.json"))
+}
+
+// ReclaimStale removes prepared or released git worktrees and marks them as reclaimed.
+func (m *Manager) ReclaimStale(ctx context.Context) error {
+	return m.ReclaimStaleExcept(ctx, nil)
+}
+
+// ReclaimStaleExcept removes stale git worktrees except for sessions explicitly marked active.
+func (m *Manager) ReclaimStaleExcept(ctx context.Context, activeSessions map[string]struct{}) error {
+	rootDir := m.rootDir
+	if rootDir == "" {
+		return nil
+	}
+	items, err := m.loadAll(rootDir)
+	if err != nil {
+		return err
+	}
+	for _, prepared := range items {
+		if _, ok := activeSessions[prepared.SessionID]; ok {
+			continue
+		}
+		if (prepared.Status != "released" && prepared.Status != "prepared") || prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+			continue
+		}
+		if err := m.runGit(ctx, prepared.BaseDir, "worktree", "remove", "--force", prepared.EffectiveDir); err != nil {
+			return err
+		}
+		prepared.Status = "reclaimed"
+		prepared.ReclaimedAt = m.now()
+		if err := writePrepared(m.metaPath(rootDir, prepared.SessionID, prepared.TaskID), prepared); err != nil {
+			return err
+		}
+		if m.events != nil {
+			_ = m.events.AppendEvent(ctx, events.Record{
+				ID:         fmt.Sprintf("evt_%s_%s_workspace_reclaim_%d", prepared.SessionID, prepared.TaskID, prepared.ReclaimedAt.UnixNano()),
+				SessionID:  prepared.SessionID,
+				TaskID:     prepared.TaskID,
+				Type:       events.TypeWorkspaceReclaimed,
+				ActorType:  events.ActorTypeScheduler,
+				OccurredAt: prepared.ReclaimedAt,
+				ReasonCode: prepared.Status,
+				Payload: map[string]any{
+					"effective_dir": prepared.EffectiveDir,
+					"provider":      prepared.Provider,
+				},
+			})
+		}
 	}
 	return nil
 }
@@ -215,6 +286,29 @@ func sanitizeFallback(err error) string {
 	return text
 }
 
+func loadPrepared(path string) (Prepared, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Prepared{}, fmt.Errorf("read workspace metadata: %w", err)
+	}
+	var prepared Prepared
+	if err := json.Unmarshal(raw, &prepared); err != nil {
+		return Prepared{}, fmt.Errorf("decode workspace metadata: %w", err)
+	}
+	return prepared, nil
+}
+
+func writePrepared(path string, prepared Prepared) error {
+	raw, err := json.MarshalIndent(prepared, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal workspace metadata: %w", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
 func requestedMode(strategy domain.TaskStrategy) Mode {
 	switch strategy {
 	case domain.TaskStrategyDirect:
@@ -224,4 +318,40 @@ func requestedMode(strategy domain.TaskStrategy) Mode {
 	default:
 		return ModeSharedRead
 	}
+}
+
+func (m *Manager) loadAll(rootDir string) ([]Prepared, error) {
+	workspaceRoot := filepath.Join(rootDir, ".roma", "workspaces")
+	sessionEntries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read workspace root: %w", err)
+	}
+	items := make([]Prepared, 0)
+	for _, sessionEntry := range sessionEntries {
+		if !sessionEntry.IsDir() {
+			continue
+		}
+		taskEntries, err := os.ReadDir(filepath.Join(workspaceRoot, sessionEntry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("read session workspace dir: %w", err)
+		}
+		for _, taskEntry := range taskEntries {
+			if !taskEntry.IsDir() {
+				continue
+			}
+			prepared, err := loadPrepared(m.metaPath(rootDir, sessionEntry.Name(), taskEntry.Name()))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, prepared)
+		}
+	}
+	return items, nil
+}
+
+func (m *Manager) metaPath(rootDir, sessionID, taskID string) string {
+	return filepath.Join(rootDir, ".roma", "workspaces", sessionID, taskID, "workspace.json")
 }

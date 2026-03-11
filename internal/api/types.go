@@ -5,6 +5,8 @@ import (
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
+	"github.com/liliang/roma/internal/scheduler"
+	"github.com/liliang/roma/internal/workspace"
 )
 
 // SubmitRequest is the daemon API payload for queue submission.
@@ -61,9 +63,30 @@ type EventListResponse struct {
 
 // QueueInspectResponse expands a queued job into its execution records.
 type QueueInspectResponse struct {
-	Job       queue.Request             `json:"job"`
-	Session   *history.SessionRecord    `json:"session,omitempty"`
-	Tasks     []domain.TaskRecord       `json:"tasks,omitempty"`
-	Artifacts []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
-	Events    []events.Record           `json:"events,omitempty"`
+	Job                    queue.Request             `json:"job"`
+	Session                *history.SessionRecord    `json:"session,omitempty"`
+	Lease                  *scheduler.LeaseRecord    `json:"lease,omitempty"`
+	PendingApprovalTaskIDs []string                  `json:"pending_approval_task_ids,omitempty"`
+	ApprovalResumeReady    bool                      `json:"approval_resume_ready"`
+	Tasks                  []domain.TaskRecord       `json:"tasks,omitempty"`
+	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
+	Events                 []events.Record           `json:"events,omitempty"`
+	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
+}
+
+// WorkspaceListResponse lists persisted workspace records.
+type WorkspaceListResponse struct {
+	Items []workspace.Prepared `json:"items"`
+}
+
+// SessionInspectResponse expands a session into its execution records.
+type SessionInspectResponse struct {
+	Session                history.SessionRecord     `json:"session"`
+	Lease                  *scheduler.LeaseRecord    `json:"lease,omitempty"`
+	PendingApprovalTaskIDs []string                  `json:"pending_approval_task_ids,omitempty"`
+	ApprovalResumeReady    bool                      `json:"approval_resume_ready"`
+	Tasks                  []domain.TaskRecord       `json:"tasks,omitempty"`
+	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
+	Events                 []events.Record           `json:"events,omitempty"`
+	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
 }

@@ -21,13 +21,23 @@ const (
 
 // LeaseRecord persists scheduler dispatch ownership for a session.
 type LeaseRecord struct {
-	SessionID        string      `json:"session_id"`
-	OwnerID          string      `json:"owner_id"`
-	Status           LeaseStatus `json:"status"`
-	ReadyTaskIDs     []string    `json:"ready_task_ids,omitempty"`
-	CompletedTaskIDs []string    `json:"completed_task_ids,omitempty"`
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
+	SessionID              string         `json:"session_id"`
+	OwnerID                string         `json:"owner_id"`
+	Status                 LeaseStatus    `json:"status"`
+	ReadyTaskIDs           []string       `json:"ready_task_ids,omitempty"`
+	WorkspaceRefs          []WorkspaceRef `json:"workspace_refs,omitempty"`
+	PendingApprovalTaskIDs []string       `json:"pending_approval_task_ids,omitempty"`
+	CompletedTaskIDs       []string       `json:"completed_task_ids,omitempty"`
+	CreatedAt              time.Time      `json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
+}
+
+// WorkspaceRef captures scheduler-owned workspace linkage for an active lease.
+type WorkspaceRef struct {
+	TaskID        string `json:"task_id"`
+	EffectiveDir  string `json:"effective_dir"`
+	Provider      string `json:"provider"`
+	EffectiveMode string `json:"effective_mode"`
 }
 
 // LeaseStore persists scheduler ownership in the workspace SQLite database.
@@ -58,7 +68,7 @@ func (s *LeaseStore) Acquire(ctx context.Context, sessionID, ownerID string) err
 }
 
 // Renew updates ready/completed checkpoint information for the active owner.
-func (s *LeaseStore) Renew(ctx context.Context, sessionID, ownerID string, readyTaskIDs, completedTaskIDs []string) error {
+func (s *LeaseStore) Renew(ctx context.Context, sessionID, ownerID string, readyTaskIDs []string, workspaceRefs []WorkspaceRef, pendingApprovalTaskIDs []string, completedTaskIDs []string) error {
 	record, err := s.Get(ctx, sessionID)
 	if err != nil {
 		return err
@@ -66,6 +76,8 @@ func (s *LeaseStore) Renew(ctx context.Context, sessionID, ownerID string, ready
 	record.OwnerID = ownerID
 	record.Status = LeaseStatusActive
 	record.ReadyTaskIDs = append([]string(nil), readyTaskIDs...)
+	record.WorkspaceRefs = append([]WorkspaceRef(nil), workspaceRefs...)
+	record.PendingApprovalTaskIDs = append([]string(nil), pendingApprovalTaskIDs...)
 	record.CompletedTaskIDs = append([]string(nil), completedTaskIDs...)
 	record.UpdatedAt = time.Now().UTC()
 	return s.save(ctx, record)
@@ -80,6 +92,8 @@ func (s *LeaseStore) Release(ctx context.Context, sessionID, ownerID string, com
 	record.OwnerID = ownerID
 	record.Status = LeaseStatusReleased
 	record.ReadyTaskIDs = nil
+	record.WorkspaceRefs = nil
+	record.PendingApprovalTaskIDs = nil
 	record.CompletedTaskIDs = append([]string(nil), completedTaskIDs...)
 	record.UpdatedAt = time.Now().UTC()
 	return s.save(ctx, record)
@@ -122,17 +136,52 @@ func (s *LeaseStore) RecoverActive(ctx context.Context) error {
 func (s *LeaseStore) Get(ctx context.Context, sessionID string) (LeaseRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT session_id, owner_id, status, ready_task_ids_json, completed_task_ids_json, created_at, updated_at
+		`SELECT session_id, owner_id, status, ready_task_ids_json, workspace_refs_json, pending_approval_task_ids_json, completed_task_ids_json, created_at, updated_at
 		 FROM scheduler_leases WHERE session_id = ?`,
 		sessionID,
 	)
 	return scanLease(row)
 }
 
+// ListByStatus returns all leases in one status bucket.
+func (s *LeaseStore) ListByStatus(ctx context.Context, status LeaseStatus) ([]LeaseRecord, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT session_id, owner_id, status, ready_task_ids_json, workspace_refs_json, pending_approval_task_ids_json, completed_task_ids_json, created_at, updated_at
+		 FROM scheduler_leases WHERE status = ? ORDER BY updated_at`,
+		string(status),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query scheduler leases: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]LeaseRecord, 0)
+	for rows.Next() {
+		record, err := scanLease(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate scheduler leases: %w", err)
+	}
+	return out, nil
+}
+
 func (s *LeaseStore) save(ctx context.Context, record LeaseRecord) error {
 	readyRaw, err := json.Marshal(record.ReadyTaskIDs)
 	if err != nil {
 		return fmt.Errorf("marshal ready task ids: %w", err)
+	}
+	workspaceRaw, err := json.Marshal(record.WorkspaceRefs)
+	if err != nil {
+		return fmt.Errorf("marshal workspace refs: %w", err)
+	}
+	pendingApprovalRaw, err := json.Marshal(record.PendingApprovalTaskIDs)
+	if err != nil {
+		return fmt.Errorf("marshal pending approval task ids: %w", err)
 	}
 	completedRaw, err := json.Marshal(record.CompletedTaskIDs)
 	if err != nil {
@@ -147,12 +196,14 @@ func (s *LeaseStore) save(ctx context.Context, record LeaseRecord) error {
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT OR REPLACE INTO scheduler_leases
-		(session_id, owner_id, status, ready_task_ids_json, completed_task_ids_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(session_id, owner_id, status, ready_task_ids_json, workspace_refs_json, pending_approval_task_ids_json, completed_task_ids_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.SessionID,
 		record.OwnerID,
 		string(record.Status),
 		string(readyRaw),
+		string(workspaceRaw),
+		string(pendingApprovalRaw),
 		string(completedRaw),
 		record.CreatedAt.Format(time.RFC3339Nano),
 		record.UpdatedAt.Format(time.RFC3339Nano),
@@ -165,18 +216,22 @@ func (s *LeaseStore) save(ctx context.Context, record LeaseRecord) error {
 
 func scanLease(scanner interface{ Scan(dest ...any) error }) (LeaseRecord, error) {
 	var (
-		record       LeaseRecord
-		status       string
-		readyRaw     string
-		completedRaw string
-		createdAt    string
-		updatedAt    string
+		record             LeaseRecord
+		status             string
+		readyRaw           string
+		workspaceRaw       string
+		pendingApprovalRaw string
+		completedRaw       string
+		createdAt          string
+		updatedAt          string
 	)
 	if err := scanner.Scan(
 		&record.SessionID,
 		&record.OwnerID,
 		&status,
 		&readyRaw,
+		&workspaceRaw,
+		&pendingApprovalRaw,
 		&completedRaw,
 		&createdAt,
 		&updatedAt,
@@ -187,6 +242,16 @@ func scanLease(scanner interface{ Scan(dest ...any) error }) (LeaseRecord, error
 	if readyRaw != "" && readyRaw != "null" {
 		if err := json.Unmarshal([]byte(readyRaw), &record.ReadyTaskIDs); err != nil {
 			return LeaseRecord{}, fmt.Errorf("unmarshal ready task ids: %w", err)
+		}
+	}
+	if workspaceRaw != "" && workspaceRaw != "null" {
+		if err := json.Unmarshal([]byte(workspaceRaw), &record.WorkspaceRefs); err != nil {
+			return LeaseRecord{}, fmt.Errorf("unmarshal workspace refs: %w", err)
+		}
+	}
+	if pendingApprovalRaw != "" && pendingApprovalRaw != "null" {
+		if err := json.Unmarshal([]byte(pendingApprovalRaw), &record.PendingApprovalTaskIDs); err != nil {
+			return LeaseRecord{}, fmt.Errorf("unmarshal pending approval task ids: %w", err)
 		}
 	}
 	if completedRaw != "" && completedRaw != "null" {

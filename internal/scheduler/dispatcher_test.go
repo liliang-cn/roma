@@ -135,4 +135,15 @@ func TestDispatcherReturnsApprovalPendingForRiskyNode(t *testing.T) {
 	if task.State != domain.TaskStateAwaitingApproval {
 		t.Fatalf("state = %s, want %s", task.State, domain.TaskStateAwaitingApproval)
 	}
+	leaseStore, err := NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	lease, err := leaseStore.Get(context.Background(), "sess_gate")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(lease.PendingApprovalTaskIDs) != 1 || lease.PendingApprovalTaskIDs[0] != "sess_gate__task_a" {
+		t.Fatalf("pending approvals = %#v, want [sess_gate__task_a]", lease.PendingApprovalTaskIDs)
+	}
 }

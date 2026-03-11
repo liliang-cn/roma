@@ -21,6 +21,7 @@ const (
 	TypeSchedulerLeaseRecorded      Type = "SchedulerLeaseRecorded"
 	TypeWorkspacePrepared           Type = "WorkspacePrepared"
 	TypeWorkspaceReleased           Type = "WorkspaceReleased"
+	TypeWorkspaceReclaimed          Type = "WorkspaceReclaimed"
 	TypeGatewayEndpointRegistered   Type = "GatewayEndpointRegistered"
 	TypeGatewayDeliveryRecorded     Type = "GatewayDeliveryRecorded"
 	TypeRemoteCommandRecorded       Type = "RemoteCommandRecorded"

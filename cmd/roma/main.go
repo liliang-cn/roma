@@ -26,6 +26,7 @@ import (
 	storepkg "github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/syncdb"
 	"github.com/liliang/roma/internal/taskstore"
+	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
 
 func main() {
@@ -74,6 +75,8 @@ func run(ctx context.Context, args []string) error {
 		return runSessions(ctx, args[1:])
 	case "tasks":
 		return runTasks(ctx, args[1:])
+	case "workspaces":
+		return runWorkspaces(ctx, args[1:])
 	case "run":
 		return runPrompt(ctx, registry, args[1:])
 	case "help", "-h", "--help":
@@ -630,6 +633,19 @@ func runSessions(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	if client.Available() && len(args) > 1 && args[0] == "inspect" {
+		record, err := client.SessionInspect(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(record, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal session inspect: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
+
 	if len(args) == 0 || args[0] == "list" {
 		records, err := store.List(ctx)
 		if err != nil {
@@ -660,6 +676,50 @@ func runSessions(ctx context.Context, args []string) error {
 		raw, err := json.MarshalIndent(record, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal session: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
+
+	if args[0] == "inspect" {
+		if len(args) < 2 {
+			return fmt.Errorf("roma sessions inspect requires a session id")
+		}
+		record, err := store.Get(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		resp := api.SessionInspectResponse{Session: record, ApprovalResumeReady: true}
+		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+			if lease, err := leaseStore.Get(ctx, args[1]); err == nil {
+				resp.Lease = &lease
+				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+			}
+		}
+		taskStore := preferredTaskStore(wd)
+		if items, err := taskStore.ListTasksBySession(ctx, args[1]); err == nil {
+			resp.Tasks = items
+		}
+		eventStore := preferredEventStore(wd)
+		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: args[1]}); err == nil {
+			resp.Events = items
+		}
+		artifactStore := preferredArtifactStore(wd)
+		if items, err := artifactStore.List(ctx, args[1]); err == nil {
+			resp.Artifacts = items
+		}
+		manager := workspacepkg.NewManager(wd, eventStore)
+		if items, err := manager.List(ctx); err == nil {
+			for _, item := range items {
+				if item.SessionID == args[1] {
+					resp.Workspaces = append(resp.Workspaces, item)
+				}
+			}
+		}
+		raw, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal session inspect: %w", err)
 		}
 		fmt.Println(string(raw))
 		return nil
@@ -980,6 +1040,92 @@ func runTasks(ctx context.Context, args []string) error {
 	return fmt.Errorf("unknown tasks subcommand %q", args[0])
 }
 
+func runWorkspaces(ctx context.Context, args []string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	client := api.NewClient(wd)
+	manager := workspacepkg.NewManager(wd, preferredEventStore(wd))
+
+	if client.Available() && (len(args) == 0 || args[0] == "list") {
+		items, err := client.WorkspaceList(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Println("SESSION\tTASK\tSTATUS\tPROVIDER\tMODE\tDIR")
+		for _, item := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.SessionID, item.TaskID, item.Status, item.Provider, item.Effective, item.EffectiveDir)
+		}
+		return nil
+	}
+	if client.Available() && len(args) > 2 && args[0] == "show" {
+		item, err := client.WorkspaceGet(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal workspace: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
+	if client.Available() && len(args) > 0 && args[0] == "cleanup" {
+		items, err := client.WorkspaceCleanup(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Println("SESSION\tTASK\tSTATUS\tPROVIDER\tMODE\tDIR")
+		for _, item := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.SessionID, item.TaskID, item.Status, item.Provider, item.Effective, item.EffectiveDir)
+		}
+		return nil
+	}
+
+	if len(args) == 0 || args[0] == "list" {
+		items, err := manager.List(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Println("SESSION\tTASK\tSTATUS\tPROVIDER\tMODE\tDIR")
+		for _, item := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.SessionID, item.TaskID, item.Status, item.Provider, item.Effective, item.EffectiveDir)
+		}
+		return nil
+	}
+	if args[0] == "show" {
+		if len(args) < 3 {
+			return fmt.Errorf("roma workspaces show requires a session id and task id")
+		}
+		item, err := manager.Get(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal workspace: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
+	if args[0] == "cleanup" {
+		if err := manager.ReclaimStale(ctx); err != nil {
+			return err
+		}
+		items, err := manager.List(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Println("SESSION\tTASK\tSTATUS\tPROVIDER\tMODE\tDIR")
+		for _, item := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.SessionID, item.TaskID, item.Status, item.Provider, item.Effective, item.EffectiveDir)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown workspaces subcommand %q", args[0])
+}
+
 func runEvents(ctx context.Context, args []string) error {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1196,8 +1342,12 @@ func printUsage() {
 	fmt.Println("  roma submit --agent codex --continuous --max-rounds 5 \"build a feature\"")
 	fmt.Println("  roma sessions list")
 	fmt.Println("  roma sessions show <session_id>")
+	fmt.Println("  roma sessions inspect <session_id>")
 	fmt.Println("  roma tasks list [--session <session_id>]")
 	fmt.Println("  roma tasks show <task_id>")
+	fmt.Println("  roma workspaces list")
+	fmt.Println("  roma workspaces show <session_id> <task_id>")
+	fmt.Println("  roma workspaces cleanup")
 	fmt.Println(`  roma run --agent codex --continuous --max-rounds 5 "build a feature"`)
 	fmt.Println(`  roma --agent claude "fix the failing tests"`)
 	fmt.Println(`  roma --agent codex --delegate gemini,copilot "build a feature with optional delegation"`)

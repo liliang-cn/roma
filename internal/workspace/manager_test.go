@@ -89,6 +89,51 @@ func TestManagerPrepareCreatesGitWorktreeForIsolatedWrite(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(prepared.EffectiveDir, ".git")); err != nil {
 		t.Fatalf("expected git worktree checkout: %v", err)
 	}
+
+	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
+		t.Fatalf("Release returned error: %v", err)
+	}
+	if err := manager.ReclaimStale(context.Background()); err != nil {
+		t.Fatalf("ReclaimStale returned error: %v", err)
+	}
+
+	reclaimed, err := loadPrepared(filepath.Join(root, ".roma", "workspaces", "sess_git", "task_git", "workspace.json"))
+	if err != nil {
+		t.Fatalf("loadPrepared() error = %v", err)
+	}
+	if reclaimed.Status != "reclaimed" {
+		t.Fatalf("status = %q, want reclaimed", reclaimed.Status)
+	}
+	if reclaimed.ReclaimedAt.IsZero() {
+		t.Fatal("expected reclaimed timestamp")
+	}
+	if _, err := os.Stat(reclaimed.EffectiveDir); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree dir removed, stat err = %v", err)
+	}
+}
+
+func TestManagerReclaimStaleRemovesPreparedWorktree(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	manager := NewManager(root, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_prepared", "task_prepared", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	if err := manager.ReclaimStale(context.Background()); err != nil {
+		t.Fatalf("ReclaimStale returned error: %v", err)
+	}
+	reclaimed, err := loadPrepared(filepath.Join(root, ".roma", "workspaces", "sess_prepared", "task_prepared", "workspace.json"))
+	if err != nil {
+		t.Fatalf("loadPrepared() error = %v", err)
+	}
+	if reclaimed.Status != "reclaimed" {
+		t.Fatalf("status = %q, want reclaimed", reclaimed.Status)
+	}
+	if _, err := os.Stat(prepared.EffectiveDir); !os.IsNotExist(err) {
+		t.Fatalf("expected prepared worktree dir removed, stat err = %v", err)
+	}
 }
 
 func initGitRepo(t *testing.T, dir string) {

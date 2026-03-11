@@ -95,8 +95,31 @@ Status: complete
 Status: in_progress
 
 - [x] Replace shared-read scheduler workspace fallback with worktree-backed isolated execution for writable tasks when Git is available, with explicit fallback metadata otherwise
-- [ ] Persist workspace lifecycle state for recovery and cleanup
-- [ ] Reconcile node/task approval with resumed leases so approval can continue without queue-level mediation only
+- [x] Persist workspace lifecycle state for recovery and cleanup
+- [x] Add explicit workspace cleanup/reclaim operations for orphaned prepared worktrees, not only released ones
+- [x] Surface workspace state and cleanup controls through CLI/API inspection paths
+- [x] Reconcile node/task approval with resumed leases so approval can continue without queue-level mediation only
+
+### Phase 11: Lease-Integrated Workspace Truth
+Status: in_progress
+
+- [x] Attach workspace ownership metadata to scheduler leases
+- [x] Use lease-owned workspace metadata instead of status-only heuristics during cleanup/recovery
+- [x] Surface lease/workspace linkage inside queue/session inspection
+
+### Phase 12: Lease-Driven Approval Resume
+Status: in_progress
+
+- [x] Persist approval-pending task ids inside scheduler leases
+- [x] Use lease-owned approval metadata during recovery instead of inferring only from task/session status
+- [x] Surface approval-resume readiness inside queue/session inspection
+
+### Phase 13: Lease-Centric Recovery Refinement
+Status: in_progress
+
+- [ ] Append pending-approval metadata into scheduler lease events for replay clarity
+- [ ] Expose lease-aware recovery snapshots through CLI/API inspection
+- [ ] Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth
 
 ## Risks
 
@@ -104,12 +127,12 @@ Status: in_progress
 - Current persistence is mirrored across file and SQLite backends, so read-path divergence is still possible.
 - Concurrent DAG dispatch now exists for ready batches, and run/graph/recovery entrypoints now execute through `scheduler.Dispatcher`.
 - Scheduler leases now persist ownership/checkpoint state in SQLite and are recovered on daemon restart.
-- Real worktree isolation is still missing; current scheduler workspace hooks only establish per-task metadata and an execution handoff point.
+- Real worktree isolation now exists only when the working directory is a Git repository; non-Git execution still falls back to shared-read mode.
 - Continuous execution currently relies on agent-emitted `ROMA_DONE:` markers and is still coarse-grained.
-- Policy approval exists for queue-backed runs, but direct non-daemon runs still do not have a resumable approval inbox.
+- Policy approval exists at queue and node level, but resumed approval still depends on queue/session recovery rather than lease-owned approval continuation.
 
 ## Next Immediate Steps
 
-1. Persist workspace lifecycle state so daemon recovery can reattach or clean up scheduler-owned workspaces.
-2. Tighten task-level approval recovery so resumed sessions can re-enter dispatch without queue-only mediation.
-3. Add explicit workspace cleanup/reclaim operations for released or orphaned worktrees.
+1. Append pending-approval metadata into scheduler lease events for replay clarity.
+2. Expose lease-aware recovery snapshots through CLI/API inspection.
+3. Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth.

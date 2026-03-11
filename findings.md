@@ -54,9 +54,23 @@
   - `roma tasks approve <task_id>` and `roma tasks reject <task_id>` drive node-level approval through daemon API or fallback
 - Scheduler-dispatched tasks now pass through a dedicated workspace preparation hook before runtime launch:
   - per-task workspace metadata is written under `.roma/workspaces/<session>/<task>/workspace.json`
-  - `WorkspacePrepared` / `WorkspaceReleased` events are emitted
+  - `WorkspacePrepared` / `WorkspaceReleased` / `WorkspaceReclaimed` events are emitted
   - direct/write tasks now use detached Git worktrees when the base directory is a Git repository
   - non-Git working directories now persist an explicit fallback reason instead of silently pretending isolation exists
+- Daemon startup now reclaims released Git worktrees before recovery resumes runnable sessions.
+- `roma workspaces list/show/cleanup` and daemon `/workspaces` endpoints now expose workspace state and reclaim controls to users.
+- `queue inspect` now includes `workspaces`, and `roma sessions inspect` / daemon `/session-inspect/{id}` provide one-command aggregated session truth including workspace state.
+- Daemon recovery no longer depends on queue re-enqueue alone:
+  - `romad` now calls `ResumeRecoverableSessions` on every scheduler tick, not only at startup
+  - `ResumeRecoverableSessions` skips sessions that still hold an active scheduler lease
+- Scheduler leases now carry workspace ownership metadata:
+  - `workspace_refs` are persisted in SQLite
+  - queue/session inspection now exposes the active lease alongside workspace metadata
+  - stale workspace reclaim skips sessions that still hold active leases
+- Scheduler leases now also carry approval metadata:
+  - `pending_approval_task_ids` are persisted in SQLite
+  - recovery skips sessions whose leases still carry unresolved approval gates
+  - queue/session inspection now exposes `approval_resume_ready`
 - The main run/recovery/graph execution paths no longer import `internal/relay`; scheduler now owns the shared node-assignment/result types used by the live execution path.
 - Queue requests now reserve `session_id` / `task_id` before execution starts, so crash recovery can resume the same session instead of spawning a replacement one.
 - Coding-agent execution can now opt into continuous multi-round mode with `--continuous` and `--max-rounds`, and runtime supervision will keep prompting until the agent emits `ROMA_DONE:` or the round budget is exhausted.
@@ -65,7 +79,7 @@
 ## Remaining Gaps
 
 - Queue records still do not expose richer node-level state summaries in list view.
-- Recovery now resumes through `scheduler.Dispatcher`, and dispatcher leases are persisted, but released/orphaned worktrees are not yet reclaimed automatically.
+- Recovery now resumes through `scheduler.Dispatcher`, dispatcher leases are persisted, daemon periodic recovery can resume post-approval sessions without queue re-enqueue, and both workspace and approval metadata are now explicit in leases.
 - Policy remains minimum viable; there is still no path-scoped approval policy or override ACL model.
 - Direct non-daemon runs can now enter node-level `awaiting_approval`, but resumption still depends on rerunning dispatch rather than a dedicated inbox/lease handoff.
-- `internal/relay` still exists as a compatibility package, but workspace cleanup/reclaim is still missing after task completion or daemon crash.
+- `internal/relay` still exists as a compatibility package, and workspace cleanup still relies on workspace status heuristics rather than explicit lease ownership.

@@ -3,6 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +15,10 @@ import (
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
+	"github.com/liliang/roma/internal/scheduler"
 	storepkg "github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/taskstore"
+	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
 
 func TestServerSubmitAndQueueList(t *testing.T) {
@@ -191,6 +197,21 @@ func TestServerQueueInspect(t *testing.T) {
 	if err := eventStore.AppendEvent(context.Background(), eventRecord); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
 	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_1", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := leaseStore.Renew(context.Background(), "sess_1", "owner_1", []string{"task_1"}, []scheduler.WorkspaceRef{{
+		TaskID:        "task_1",
+		EffectiveDir:  filepath.Join(workDir, ".roma", "workspaces", "sess_1", "task_1", "root"),
+		Provider:      "git_worktree",
+		EffectiveMode: "isolated_write",
+	}}, []string{"sess_1__task_1"}, []string{}); err != nil {
+		t.Fatalf("Renew() error = %v", err)
+	}
 
 	resp, err := client.QueueInspect(context.Background(), "job_1")
 	if err != nil {
@@ -210,6 +231,15 @@ func TestServerQueueInspect(t *testing.T) {
 	}
 	if len(resp.Tasks) != 0 {
 		t.Fatalf("task count = %d, want 0", len(resp.Tasks))
+	}
+	if len(resp.Workspaces) != 0 {
+		t.Fatalf("workspace count = %d, want 0", len(resp.Workspaces))
+	}
+	if resp.Lease == nil || len(resp.Lease.WorkspaceRefs) != 1 {
+		t.Fatalf("lease = %#v, want one workspace ref", resp.Lease)
+	}
+	if resp.ApprovalResumeReady || len(resp.PendingApprovalTaskIDs) != 1 {
+		t.Fatalf("approval readiness = %t pending = %#v, want false with one pending task", resp.ApprovalResumeReady, resp.PendingApprovalTaskIDs)
 	}
 }
 
@@ -270,5 +300,157 @@ func TestServerTaskListAndShow(t *testing.T) {
 	}
 	if got.ArtifactID != "art_plan" {
 		t.Fatalf("artifact id = %s, want art_plan", got.ArtifactID)
+	}
+}
+
+func TestServerWorkspaceListShowAndCleanup(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initAPIGitRepo(t, workDir)
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := NewClient(workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	manager := workspacepkg.NewManager(workDir, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_1", "task_1", workDir, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	items, err := client.WorkspaceList(context.Background())
+	if err != nil {
+		t.Fatalf("WorkspaceList() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("workspace count = %d, want 1", len(items))
+	}
+
+	got, err := client.WorkspaceGet(context.Background(), "sess_1", "task_1")
+	if err != nil {
+		t.Fatalf("WorkspaceGet() error = %v", err)
+	}
+	if got.Provider != "git_worktree" {
+		t.Fatalf("provider = %q, want git_worktree", got.Provider)
+	}
+
+	cleaned, err := client.WorkspaceCleanup(context.Background())
+	if err != nil {
+		t.Fatalf("WorkspaceCleanup() error = %v", err)
+	}
+	if len(cleaned) != 1 || cleaned[0].Status != "reclaimed" {
+		t.Fatalf("cleanup result = %#v, want reclaimed workspace", cleaned)
+	}
+	if _, err := os.Stat(prepared.EffectiveDir); !os.IsNotExist(err) {
+		t.Fatalf("expected cleaned worktree removed, stat err = %v", err)
+	}
+}
+
+func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initAPIGitRepo(t, workDir)
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := NewClient(workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	session := history.SessionRecord{
+		ID:         "sess_1",
+		TaskID:     "task_1",
+		Prompt:     "test",
+		Starter:    "codex-cli",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := sessionStore.Save(context.Background(), session); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	manager := workspacepkg.NewManager(workDir, nil)
+	if _, err := manager.Prepare(context.Background(), "sess_1", "task_1", workDir, domain.TaskStrategyDirect); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_1", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := leaseStore.Renew(context.Background(), "sess_1", "owner_1", nil, nil, []string{"sess_1__task_1"}, nil); err != nil {
+		t.Fatalf("Renew() error = %v", err)
+	}
+
+	resp, err := client.SessionInspect(context.Background(), "sess_1")
+	if err != nil {
+		t.Fatalf("SessionInspect() error = %v", err)
+	}
+	if resp.Session.ID != "sess_1" {
+		t.Fatalf("session id = %s, want sess_1", resp.Session.ID)
+	}
+	if len(resp.Workspaces) != 1 {
+		t.Fatalf("workspace count = %d, want 1", len(resp.Workspaces))
+	}
+	if resp.Lease == nil || resp.Lease.SessionID != "sess_1" {
+		t.Fatalf("lease = %#v, want sess_1 lease", resp.Lease)
+	}
+	if resp.ApprovalResumeReady || len(resp.PendingApprovalTaskIDs) != 1 {
+		t.Fatalf("approval readiness = %t pending = %#v, want false with one pending task", resp.ApprovalResumeReady, resp.PendingApprovalTaskIDs)
+	}
+}
+
+func initAPIGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runAPIGit(t, dir, "init")
+	runAPIGit(t, dir, "config", "user.email", "roma@example.com")
+	runAPIGit(t, dir, "config", "user.name", "ROMA")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("roma\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runAPIGit(t, dir, "add", "README.md")
+	runAPIGit(t, dir, "commit", "-m", "init")
+}
+
+func runAPIGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s error = %v (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 }
