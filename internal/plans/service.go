@@ -25,21 +25,22 @@ type ApplyOptions struct {
 }
 
 type ApplyResult struct {
-	ArtifactID     string                    `json:"artifact_id"`
-	SessionID      string                    `json:"session_id"`
-	TaskID         string                    `json:"task_id"`
-	Workspace      workspacepkg.Prepared     `json:"workspace"`
-	Preview        workspacepkg.MergePreview `json:"preview"`
-	ChangedPaths   []string                  `json:"changed_paths"`
-	PatchBytes     int                       `json:"patch_bytes"`
-	DryRun         bool                      `json:"dry_run"`
-	Applied        bool                      `json:"applied"`
-	RolledBack     bool                      `json:"rolled_back"`
-	RollbackHint   string                    `json:"rollback_hint,omitempty"`
-	RequiredChecks []string                  `json:"required_checks,omitempty"`
-	Violations     []string                  `json:"violations,omitempty"`
-	Conflict       bool                      `json:"conflict"`
-	ConflictDetail string                    `json:"conflict_detail,omitempty"`
+	ArtifactID      string                    `json:"artifact_id"`
+	SessionID       string                    `json:"session_id"`
+	TaskID          string                    `json:"task_id"`
+	Workspace       workspacepkg.Prepared     `json:"workspace"`
+	Preview         workspacepkg.MergePreview `json:"preview"`
+	ChangedPaths    []string                  `json:"changed_paths"`
+	PatchBytes      int                       `json:"patch_bytes"`
+	DryRun          bool                      `json:"dry_run"`
+	Applied         bool                      `json:"applied"`
+	RolledBack      bool                      `json:"rolled_back"`
+	RollbackHint    string                    `json:"rollback_hint,omitempty"`
+	RequiredChecks  []string                  `json:"required_checks,omitempty"`
+	Violations      []string                  `json:"violations,omitempty"`
+	Conflict        bool                      `json:"conflict"`
+	ConflictDetail  string                    `json:"conflict_detail,omitempty"`
+	RemediationHint string                    `json:"remediation_hint,omitempty"`
 }
 
 type Service struct {
@@ -65,6 +66,7 @@ type InboxEntry struct {
 	Violations            []string `json:"violations,omitempty"`
 	Conflict              bool     `json:"conflict,omitempty"`
 	ConflictDetail        string   `json:"conflict_detail,omitempty"`
+	RemediationHint       string   `json:"remediation_hint,omitempty"`
 }
 
 type ErrorKind string
@@ -150,6 +152,9 @@ func (s *Service) Inbox(ctx context.Context, sessionID string) ([]InboxEntry, er
 			}
 			if value, ok := latest.Payload["conflict_detail"].(string); ok {
 				entry.ConflictDetail = value
+			}
+			if value, ok := latest.Payload["remediation_hint"].(string); ok {
+				entry.RemediationHint = value
 			}
 			entry.Status = inboxStatus(payload, latest)
 		}
@@ -247,15 +252,18 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		switch {
 		case rejected:
 			err := &ApplyError{Kind: ErrorKindApprovalRequired, Message: "execution plan has been explicitly rejected"}
+			result.RemediationHint = "Review the rejection, revise the execution plan, and request approval again."
 			s.appendRejectedEvent(ctx, result, plan, err)
 			return result, err
 		case approved:
 		case !opts.PolicyOverride:
 			err := &ApplyError{Kind: ErrorKindApprovalRequired, Message: "execution plan requires approval override or explicit approval"}
+			result.RemediationHint = "Approve the execution plan from the inbox or rerun with an authorized override actor."
 			s.appendRejectedEvent(ctx, result, plan, err)
 			return result, err
 		case !policy.CanOverrideActor(opts.PolicyOverrideActor):
 			err := &ApplyError{Kind: ErrorKindOverrideForbidden, Message: "execution plan override actor forbidden"}
+			result.RemediationHint = "Use an allowed override actor or get an explicit plan approval first."
 			s.appendRejectedEvent(ctx, result, plan, err)
 			return result, err
 		}
@@ -267,6 +275,7 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 	}
 	if len(violations) > 0 {
 		result.Violations = append([]string(nil), violations...)
+		result.RemediationHint = "Restrict the workspace diff to expected files or update the execution plan contract."
 		err := &ApplyError{Kind: ErrorKindValidation, Message: strings.Join(violations, "; "), Violations: append([]string(nil), violations...)}
 		s.appendRejectedEvent(ctx, result, plan, err)
 		return result, err
@@ -276,6 +285,11 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		if preview.Conflict {
 			result.Conflict = true
 			result.ConflictDetail = preview.ConflictDetail
+			result.RemediationHint = "Rebase or refresh the isolated workspace, then rerun plan preview before applying."
+		} else if len(result.ChangedPaths) == 0 {
+			result.RemediationHint = "No diff detected in the workspace; confirm the task actually produced changes."
+		} else {
+			result.RemediationHint = "Preview passed. Approve and apply the execution plan when ready."
 		}
 		s.appendAppliedEvent(ctx, result, plan, "dry_run")
 		return result, nil
@@ -283,6 +297,7 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if preview.Conflict {
 		result.Conflict = true
 		result.ConflictDetail = preview.ConflictDetail
+		result.RemediationHint = "Resolve the merge conflict in the worktree or regenerate the plan against the latest base."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: preview.ConflictDetail}
 		s.appendRejectedEvent(ctx, result, plan, applyErr)
 		return result, applyErr
@@ -290,6 +305,7 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if err := s.workspaces.MergeBack(ctx, prepared); err != nil {
 		result.Conflict = true
 		result.ConflictDetail = err.Error()
+		result.RemediationHint = "Inspect the worktree patch, update the base branch, and retry plan preview."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: err.Error()}
 		s.appendRejectedEvent(ctx, result, plan, applyErr)
 		return result, applyErr
@@ -297,11 +313,13 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if err := runRequiredChecks(ctx, prepared.BaseDir, plan.RequiredChecks); err != nil {
 		_ = s.workspaces.RollbackMerge(ctx, prepared)
 		result.RolledBack = true
+		result.RemediationHint = "Fix the failing required checks in the isolated workspace and rerun preview/apply."
 		applyErr := &ApplyError{Kind: ErrorKindCheckFailed, Message: err.Error()}
 		s.appendRejectedEvent(ctx, result, plan, applyErr)
 		return result, applyErr
 	}
 	result.Applied = true
+	result.RemediationHint = "Apply succeeded. Review the merged result and keep the rollback hint for follow-up validation."
 	s.appendAppliedEvent(ctx, result, plan, "applied")
 	return result, nil
 }
@@ -324,15 +342,16 @@ func (s *Service) Rollback(ctx context.Context, sessionID, taskID, artifactID st
 	changed, _ := s.workspaces.ChangedPaths(ctx, prepared)
 	preview, _ := s.workspaces.PreviewMerge(ctx, prepared)
 	result := ApplyResult{
-		ArtifactID:     artifactID,
-		SessionID:      sessionID,
-		TaskID:         taskID,
-		Workspace:      prepared,
-		Preview:        preview,
-		ChangedPaths:   changed,
-		PatchBytes:     preview.PatchBytes,
-		RollbackHint:   plan.RollbackHint,
-		RequiredChecks: append([]string(nil), plan.RequiredChecks...),
+		ArtifactID:      artifactID,
+		SessionID:       sessionID,
+		TaskID:          taskID,
+		Workspace:       prepared,
+		Preview:         preview,
+		ChangedPaths:    changed,
+		PatchBytes:      preview.PatchBytes,
+		RollbackHint:    plan.RollbackHint,
+		RequiredChecks:  append([]string(nil), plan.RequiredChecks...),
+		RemediationHint: "Rollback completed. Rerun plan preview before attempting another apply.",
 	}
 	if err := s.workspaces.RollbackMerge(ctx, prepared); err != nil {
 		return result, err
@@ -445,6 +464,9 @@ func (s *Service) appendEvent(ctx context.Context, eventType events.Type, result
 	if result.Conflict {
 		payload["conflict"] = true
 		payload["conflict_detail"] = result.ConflictDetail
+	}
+	if result.RemediationHint != "" {
+		payload["remediation_hint"] = result.RemediationHint
 	}
 	for key, value := range extra {
 		payload[key] = value

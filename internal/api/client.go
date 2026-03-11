@@ -234,6 +234,10 @@ func (c *Client) PlanApply(ctx context.Context, req PlanApplyRequest) (PlanApply
 	return c.planAction(ctx, "/plans/apply", req)
 }
 
+func (c *Client) PlanPreview(ctx context.Context, req PlanApplyRequest) (PlanApplyResponse, error) {
+	return c.planAction(ctx, "/plans/preview", req)
+}
+
 func (c *Client) PlanRollback(ctx context.Context, req PlanApplyRequest) (PlanApplyResponse, error) {
 	return c.planAction(ctx, "/plans/rollback", req)
 }

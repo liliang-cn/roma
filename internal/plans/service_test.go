@@ -180,6 +180,9 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	if result.ConflictDetail == "" {
 		t.Fatalf("result = %#v, want conflict detail", result)
 	}
+	if result.RemediationHint == "" {
+		t.Fatalf("result = %#v, want remediation hint", result)
+	}
 }
 
 func TestServiceInboxSummarizesLatestPlanState(t *testing.T) {

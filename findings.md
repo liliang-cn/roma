@@ -134,6 +134,9 @@
 - gateway remote commands are no longer audit-only:
   - `plan_approve` / `plan_reject` can now bridge through the gateway service into the plan approval flow
   - this is still minimal, but it is the first real remote approval path rather than pure logging
+- the cold-start API failures around recovery and queue approval were caused by file-backed metadata being written in tests while API handlers read SQLite-authoritative state without first backfilling:
+  - `handleRecoveryList` and `handleQueueApproval` now run `syncdb` before reading scheduler/session truth
+  - queue task approval now updates both the preferred history store and the injected session backend, so file/SQLite state no longer diverges on approval
 - there is now a runnable concurrent DAG/workspace soak baseline in scheduler tests:
   - multiple ready nodes execute in parallel
   - per-task git worktrees are created
@@ -142,6 +145,18 @@
 - Curia is still intentionally minimal:
   - quorum and vote selection are lightweight
   - it now detects close-score and veto-driven disputes and can emit `winning_mode=merge`, but arbitration is still human-first
+  - ballot scoring now has a first reputation layer, so reviewer weight can change Curia outcomes instead of every senator counting equally
+  - ballot artifacts now persist `reviewer_weight` and `weighted_score`
+  - debate logs and decision packs now persist a Curia `scoreboard` with raw score, weighted score, veto count, and reviewer count per proposal
+  - `roma sessions curia <session_id>` now prints dispute signals, selected proposals, and the scoreboard, so Curia outcomes are inspectable instead of implicit
   - arbitration is human-first
-  - there is no Augustus path, no weighted reputation model, and no automatic dispute engine yet
+  - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.
+- execution-plan preview is now a first-class concept:
+  - daemon exposes `/plans/preview`
+  - CLI exposes `roma plans preview <session> <task> <artifact>`
+  - apply/preview/rollback results now carry `remediation_hint`, so conflict and approval failures come back with an explicit next step instead of only raw error text
+- there is now a deterministic Curia decision-flow regression:
+  - `TestServerCuriaDecisionFlowProducesPlanInboxApproval`
+  - it proves `proposal -> ballot -> debate_log -> decision_pack -> execution_plan -> plans inbox`
+  - this is still a Curia dispute demo, not automatic graph-node file-conflict escalation

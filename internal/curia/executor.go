@@ -60,9 +60,11 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		ProposalIDs:         collectProposalIDs(proposals),
 		BallotIDs:           collectBallotIDs(ballots),
 		WinningProposalID:   winner.proposal.ProposalID,
+		DisputeReasons:      append([]string(nil), winner.dispute.RejectedReasons...),
 		DisputeDetected:     winner.dispute.Detected,
 		CriticalVeto:        winner.dispute.CriticalVeto,
 		TopScoreGap:         winner.dispute.TopScoreGap,
+		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
 		ArbitrationRequired: winner.dispute.Detected,
 	})
 	if err != nil {
@@ -74,6 +76,8 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		RunID:                 req.TaskID + "_plan",
 		Goal:                  req.BasePrompt,
 		Proposal:              winner.proposal,
+		WinningMode:           winner.winningMode,
+		SelectedProposalIDs:   append([]string(nil), winner.selectedIDs...),
 		HumanApprovalRequired: true,
 	})
 	if err != nil {
@@ -89,6 +93,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		ApprovalRequired:    true,
 		MergedRationale:     decisionRationale(winner),
 		RejectedReasons:     append([]string(nil), winner.rejectedReasons...),
+		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
 	})
 	if err != nil {
 		return ExecuteResult{}, err
@@ -130,6 +135,7 @@ type disputeResult struct {
 	WinningMode     string
 	SelectedIDs     []string
 	RejectedReasons []string
+	Scoreboard      []artifacts.CuriaScoreEntry
 }
 
 func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quorum int) ([]domain.ArtifactEnvelope, winnerSelection, error) {
@@ -191,8 +197,10 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 	}
 
 	ballotResults := make([]ballotEnvelope, 0, len(req.Senators))
+	rawScoreByProposal := make(map[string]int, len(proposals))
 	scoreByProposal := make(map[string]int, len(proposals))
 	vetoByProposal := make(map[string]int, len(proposals))
+	reviewerCountByProposal := make(map[string]int, len(proposals))
 	for _, senator := range req.Senators {
 		target := chooseTargetProposal(senator.ID, proposals)
 		if target.proposal.ProposalID == "" {
@@ -210,12 +218,37 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 			return nil, winnerSelection{}, err
 		}
 		chosen := detectTargetProposal(result.Stdout, proposals, target.proposal.ProposalID)
+		reviewScores := artifacts.BallotScoresView(result.Stdout)
+		reviewVeto := strings.Contains(strings.ToLower(result.Stdout), "veto")
+		rawScore := reviewScores.Correctness +
+			reviewScores.Safety +
+			reviewScores.Maintainability +
+			reviewScores.ScopeControl +
+			reviewScores.Testability
+		weightedScore := weightedBallotScore(artifactsBallotView{
+			Scores: struct {
+				Correctness     int
+				Safety          int
+				Maintainability int
+				ScopeControl    int
+				Testability     int
+			}{
+				Correctness:     reviewScores.Correctness,
+				Safety:          reviewScores.Safety,
+				Maintainability: reviewScores.Maintainability,
+				ScopeControl:    reviewScores.ScopeControl,
+				Testability:     reviewScores.Testability,
+			},
+			Veto: reviewVeto,
+		}, senator)
 		envelope, err := e.artifacts.BuildBallot(ctx, artifacts.BuildBallotRequest{
 			SessionID:        req.SessionID,
 			TaskID:           req.TaskID,
 			RunID:            req.TaskID + "_" + senator.ID,
 			Agent:            senator,
 			TargetProposalID: chosen,
+			ReviewerWeight:   reviewerWeight(senator),
+			WeightedScore:    weightedScore,
 			Output:           result.Stdout,
 		})
 		if err != nil {
@@ -223,9 +256,10 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 		}
 		rawBallot, _ := artifacts.BallotFromEnvelope(envelope)
 		ballotResults = append(ballotResults, ballotEnvelope{envelope: envelope, ballot: rawBallot})
-		scoreByProposal[chosen] += rawBallot.Scores.Correctness + rawBallot.Scores.Safety + rawBallot.Scores.Maintainability + rawBallot.Scores.ScopeControl + rawBallot.Scores.Testability
+		rawScoreByProposal[chosen] += rawScore
+		scoreByProposal[chosen] += weightedScore
+		reviewerCountByProposal[chosen]++
 		if rawBallot.Veto {
-			scoreByProposal[chosen] -= 10
 			vetoByProposal[chosen]++
 		}
 	}
@@ -247,7 +281,7 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 	for _, proposal := range proposals {
 		outProposals = append(outProposals, proposal.envelope)
 	}
-	dispute := detectDispute(proposals, scoreByProposal, vetoByProposal)
+	dispute := detectDispute(proposals, rawScoreByProposal, scoreByProposal, vetoByProposal, reviewerCountByProposal)
 	selectedIDs := []string{selected.proposal.ProposalID}
 	if len(dispute.SelectedIDs) > 0 {
 		selectedIDs = append([]string(nil), dispute.SelectedIDs...)
@@ -342,16 +376,22 @@ func min(a, b int) int {
 	return b
 }
 
-func detectDispute(proposals []proposalEnvelope, scoreByProposal map[string]int, vetoByProposal map[string]int) disputeResult {
+func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]int, scoreByProposal map[string]int, vetoByProposal map[string]int, reviewerCountByProposal map[string]int) disputeResult {
 	type rankedProposal struct {
-		id    string
-		score int
+		id            string
+		rawScore      int
+		weightedScore int
+		vetoCount     int
+		reviewerCount int
 	}
 	ranked := make([]rankedProposal, 0, len(proposals))
 	for _, proposal := range proposals {
 		ranked = append(ranked, rankedProposal{
-			id:    proposal.proposal.ProposalID,
-			score: scoreByProposal[proposal.proposal.ProposalID],
+			id:            proposal.proposal.ProposalID,
+			rawScore:      rawScoreByProposal[proposal.proposal.ProposalID],
+			weightedScore: scoreByProposal[proposal.proposal.ProposalID],
+			vetoCount:     vetoByProposal[proposal.proposal.ProposalID],
+			reviewerCount: reviewerCountByProposal[proposal.proposal.ProposalID],
 		})
 	}
 	if len(ranked) == 0 {
@@ -359,7 +399,7 @@ func detectDispute(proposals []proposalEnvelope, scoreByProposal map[string]int,
 	}
 	for i := 0; i < len(ranked); i++ {
 		for j := i + 1; j < len(ranked); j++ {
-			if ranked[j].score > ranked[i].score {
+			if ranked[j].weightedScore > ranked[i].weightedScore {
 				ranked[i], ranked[j] = ranked[j], ranked[i]
 			}
 		}
@@ -369,20 +409,37 @@ func detectDispute(proposals []proposalEnvelope, scoreByProposal map[string]int,
 		SelectedIDs: []string{ranked[0].id},
 	}
 	if len(ranked) > 1 {
-		result.TopScoreGap = ranked[0].score - ranked[1].score
+		result.TopScoreGap = ranked[0].weightedScore - ranked[1].weightedScore
 		if result.TopScoreGap <= 3 {
 			result.Detected = true
 			result.WinningMode = "merge"
 			result.SelectedIDs = []string{ranked[0].id, ranked[1].id}
+			result.RejectedReasons = append(result.RejectedReasons, "top proposals are too close to accept one without merge review")
 		}
 	}
 	if vetoByProposal[ranked[0].id] > 0 {
 		result.Detected = true
 		result.CriticalVeto = true
-		result.WinningMode = "merge"
-		if len(result.SelectedIDs) == 0 {
-			result.SelectedIDs = []string{ranked[0].id}
+		if len(ranked) > 1 {
+			result.WinningMode = "replace"
+			result.SelectedIDs = []string{ranked[1].id}
+			result.RejectedReasons = append(result.RejectedReasons, fmt.Sprintf("%s received a critical veto and was replaced by %s", ranked[0].id, ranked[1].id))
+		} else {
+			result.WinningMode = "merge"
+			if len(result.SelectedIDs) == 0 {
+				result.SelectedIDs = []string{ranked[0].id}
+			}
 		}
+	}
+	result.Scoreboard = make([]artifacts.CuriaScoreEntry, 0, len(ranked))
+	for _, proposal := range ranked {
+		result.Scoreboard = append(result.Scoreboard, artifacts.CuriaScoreEntry{
+			ProposalID:    proposal.id,
+			RawScore:      proposal.rawScore,
+			WeightedScore: proposal.weightedScore,
+			VetoCount:     proposal.vetoCount,
+			ReviewerCount: proposal.reviewerCount,
+		})
 	}
 	for _, proposal := range ranked {
 		if containsString(result.SelectedIDs, proposal.id) {

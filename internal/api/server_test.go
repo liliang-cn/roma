@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +18,41 @@ import (
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
+	"github.com/liliang/roma/internal/runtime"
 	"github.com/liliang/roma/internal/scheduler"
 	storepkg "github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/taskstore"
 	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
+
+type curiaDisputeAdapter struct{}
+
+func (curiaDisputeAdapter) Supports(domain.AgentProfile) bool { return true }
+
+func (curiaDisputeAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
+	script := `
+import re, sys
+profile = sys.argv[1]
+prompt = sys.argv[2]
+ids = re.findall(r"(prop_[A-Za-z0-9_-]+)", prompt)
+if "blind review phase" in prompt:
+    target = ids[1] if len(ids) > 1 else (ids[0] if ids else "prop_missing")
+    if profile == "gemini-cli":
+        print(target + " is weak and veto")
+    elif profile == "copilot-cli":
+        print(target + " is the best proposal")
+    else:
+        print(target + " is the best proposal with strong safety")
+else:
+    if profile == "codex-cli":
+        print("Proposal A for internal/api/server.go\ninternal/api/server.go\nrisk: merge conflict")
+    elif profile == "gemini-cli":
+        print("Proposal B for internal/api/server.go\ninternal/api/server.go\nrisk: veto")
+    else:
+        print("Proposal C for internal/api/server.go\ninternal/api/server.go\nrisk: scope drift")
+`
+	return exec.CommandContext(ctx, "python3", "-c", script, req.Profile.ID, req.Prompt), nil
+}
 
 func TestServerSubmitAndQueueList(t *testing.T) {
 	t.Parallel()
@@ -752,6 +785,123 @@ func TestServerQueueApproveDelegatesToPendingTasks(t *testing.T) {
 	}
 }
 
+func TestSyncWorkspaceMetadataBackfillsRecoveryState(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	sessionStore := history.NewStore(workDir)
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_recover_sync",
+		TaskID:     "task_1",
+		Prompt:     "recover me",
+		Starter:    "codex-cli",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	fileTaskStore := taskstore.NewStore(workDir)
+	if err := fileTaskStore.UpsertTask(context.Background(), domain.TaskRecord{
+		ID:        "sess_recover_sync__task_1",
+		SessionID: "sess_recover_sync",
+		Title:     "Task 1",
+		Strategy:  domain.TaskStrategyDirect,
+		State:     domain.TaskStateReady,
+		AgentID:   "codex-cli",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertTask() error = %v", err)
+	}
+	if err := syncWorkspaceMetadata(context.Background(), workDir); err != nil {
+		t.Fatalf("syncWorkspaceMetadata() error = %v", err)
+	}
+
+	items, err := scheduler.RecoverableSessions(context.Background(), workDir)
+	if err != nil {
+		t.Fatalf("RecoverableSessions() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("recovery count = %d, want 1", len(items))
+	}
+	if items[0].SessionID != "sess_recover_sync" {
+		t.Fatalf("session id = %s, want sess_recover_sync", items[0].SessionID)
+	}
+}
+
+func TestHandleQueueTaskApprovalUpdatesInjectedSessionBackend(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+	session := history.SessionRecord{
+		ID:         "sess_gate_sync",
+		TaskID:     "task_gate_sync",
+		Prompt:     "risky task",
+		Starter:    "codex-cli",
+		WorkingDir: workDir,
+		Status:     "awaiting_approval",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := sessionStore.Save(context.Background(), session); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	sqliteTaskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	task := domain.TaskRecord{
+		ID:        "sess_gate_sync__task_1",
+		SessionID: "sess_gate_sync",
+		Title:     "Gate",
+		Strategy:  domain.TaskStrategyDirect,
+		State:     domain.TaskStateAwaitingApproval,
+		AgentID:   "codex-cli",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := sqliteTaskStore.UpsertTask(context.Background(), task); err != nil {
+		t.Fatalf("UpsertTask() error = %v", err)
+	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_gate_sync", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := leaseStore.Renew(context.Background(), "sess_gate_sync", "owner_1", nil, nil, []string{"sess_gate_sync__task_1"}, nil); err != nil {
+		t.Fatalf("Renew() error = %v", err)
+	}
+
+	handled, _, err := server.handleQueueTaskApproval(
+		context.Background(),
+		workDir,
+		queue.Request{ID: "job_gate_sync", SessionID: "sess_gate_sync", TaskID: "task_gate_sync", Status: queue.StatusAwaitingApproval},
+		sqliteTaskStore,
+		storepkg.NewMemoryStore(),
+		true,
+	)
+	if err != nil {
+		t.Fatalf("handleQueueTaskApproval() error = %v", err)
+	}
+	if !handled {
+		t.Fatal("handleQueueTaskApproval() = false, want true")
+	}
+	session, err = sessionStore.Get(context.Background(), "sess_gate_sync")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if session.Status != "running" {
+		t.Fatalf("session status = %s, want running", session.Status)
+	}
+}
+
 func TestServerPlanApplyDryRunAndApprovalGate(t *testing.T) {
 	t.Parallel()
 
@@ -827,6 +977,20 @@ func TestServerPlanApplyDryRunAndApprovalGate(t *testing.T) {
 	}
 	if !dryRun.DryRun || dryRun.Applied {
 		t.Fatalf("dryRun = %#v, want dry-run only", dryRun)
+	}
+	preview, err := client.PlanPreview(context.Background(), PlanApplyRequest{
+		SessionID:  "sess_plan",
+		TaskID:     "task_plan",
+		ArtifactID: envelope.ID,
+	})
+	if err != nil {
+		t.Fatalf("PlanPreview() error = %v", err)
+	}
+	if !preview.DryRun || preview.ArtifactID != envelope.ID {
+		t.Fatalf("preview = %#v, want dry-run preview for artifact", preview)
+	}
+	if preview.RemediationHint == "" {
+		t.Fatalf("preview = %#v, want remediation hint", preview)
 	}
 
 	if _, err := client.PlanApply(context.Background(), PlanApplyRequest{
@@ -964,6 +1128,108 @@ func TestServerPlanInbox(t *testing.T) {
 	}
 	if items[0].Status != "approved" {
 		t.Fatalf("status after approve = %q, want approved", items[0].Status)
+	}
+}
+
+func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	mem := storepkg.NewMemoryStore()
+	dispatcher := scheduler.NewDispatcher(workDir, runtime.NewSupervisor(curiaDisputeAdapter{}), mem, mem)
+	result, err := dispatcher.Execute(context.Background(), "sess_curia_demo", workDir, "Two competing designs both want to change internal/api/server.go", []scheduler.NodeAssignment{
+		{
+			Node: domain.TaskNodeSpec{
+				ID:       "task_curia_demo",
+				Title:    "Curia dispute demo",
+				Strategy: domain.TaskStrategyCuria,
+				Quorum:   2,
+			},
+			Profile: domain.AgentProfile{ID: "codex-cli", DisplayName: "Codex CLI", Command: "codex"},
+			CuriaProfiles: []domain.AgentProfile{
+				{ID: "codex-cli", DisplayName: "Codex CLI", Command: "codex"},
+				{ID: "gemini-cli", DisplayName: "Gemini CLI", Command: "gemini"},
+				{ID: "copilot-cli", DisplayName: "Copilot CLI", Command: "copilot"},
+			},
+			CuriaQuorum: 2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	artifactStore, err := artifacts.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	for _, artifact := range result.Artifacts {
+		if err := artifactStore.Save(context.Background(), artifact); err != nil {
+			t.Fatalf("Save primary artifact error = %v", err)
+		}
+	}
+	for _, related := range result.RelatedArtifacts {
+		for _, artifact := range related {
+			if err := artifactStore.Save(context.Background(), artifact); err != nil {
+				t.Fatalf("Save related artifact error = %v", err)
+			}
+		}
+	}
+
+	items, err := artifactStore.List(context.Background(), "sess_curia_demo")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var sawDebate, sawDecision, sawPlan bool
+	for _, item := range items {
+		switch item.Kind {
+		case domain.ArtifactKindDebateLog:
+			payload, ok := artifacts.DebateLogFromEnvelope(item)
+			if !ok {
+				t.Fatal("DebateLogFromEnvelope() = false")
+			}
+			if !payload.DisputeDetected {
+				t.Fatalf("debate payload = %#v, want dispute detected", payload)
+			}
+			sawDebate = true
+		case domain.ArtifactKindDecisionPack:
+			payload, ok := artifacts.DecisionPackFromEnvelope(item)
+			if !ok {
+				t.Fatal("DecisionPackFromEnvelope() = false")
+			}
+			if payload.WinningMode == "" {
+				t.Fatalf("decision payload = %#v, want winning mode", payload)
+			}
+			sawDecision = true
+		case domain.ArtifactKindExecutionPlan:
+			sawPlan = true
+		}
+	}
+	if !sawDebate || !sawDecision || !sawPlan {
+		t.Fatalf("artifacts missing debate/decision/plan: debate=%t decision=%t plan=%t", sawDebate, sawDecision, sawPlan)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/plans/inbox?session=sess_curia_demo", nil)
+	server.handlePlanInbox(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var resp PlanInboxResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response error = %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("inbox count = %d, want 1", len(resp.Items))
+	}
+	if resp.Items[0].Status != "pending_approval" {
+		t.Fatalf("status = %q, want pending_approval", resp.Items[0].Status)
+	}
+	if !resp.Items[0].HumanApprovalRequired {
+		t.Fatalf("item = %#v, want human approval required", resp.Items[0])
 	}
 }
 

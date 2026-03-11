@@ -945,8 +945,18 @@ func filterArtifactsByKind(envelopes []domain.ArtifactEnvelope, kind string) []d
 
 func printCuriaSummary(resp api.SessionInspectResponse) {
 	counts := map[domain.ArtifactKind]int{}
+	var latestDebate *artifacts.DebateLogPayload
+	var latestDecision *artifacts.DecisionPackPayload
 	for _, artifact := range resp.Artifacts {
 		counts[artifact.Kind]++
+		if payload, ok := artifacts.DebateLogFromEnvelope(artifact); ok {
+			item := payload
+			latestDebate = &item
+		}
+		if payload, ok := artifacts.DecisionPackFromEnvelope(artifact); ok {
+			item := payload
+			latestDecision = &item
+		}
 	}
 	fmt.Printf("session=%s\n", resp.Session.ID)
 	fmt.Printf("status=%s\n", resp.Session.Status)
@@ -962,6 +972,23 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		switch artifact.Kind {
 		case domain.ArtifactKindDecisionPack, domain.ArtifactKindExecutionPlan:
 			fmt.Printf("%s=%s\n", artifact.Kind, artifact.ID)
+		}
+	}
+	if latestDebate != nil {
+		fmt.Printf("curia_dispute=%t\n", latestDebate.DisputeDetected)
+		fmt.Printf("curia_critical_veto=%t\n", latestDebate.CriticalVeto)
+		fmt.Printf("curia_top_score_gap=%d\n", latestDebate.TopScoreGap)
+		if len(latestDebate.DisputeReasons) > 0 {
+			fmt.Printf("curia_dispute_reasons=%s\n", strings.Join(latestDebate.DisputeReasons, " | "))
+		}
+		for _, item := range latestDebate.Scoreboard {
+			fmt.Printf("scoreboard[%s]=raw:%d weighted:%d veto:%d reviewers:%d\n", item.ProposalID, item.RawScore, item.WeightedScore, item.VetoCount, item.ReviewerCount)
+		}
+	}
+	if latestDecision != nil {
+		fmt.Printf("curia_winning_mode=%s\n", latestDecision.WinningMode)
+		if len(latestDecision.SelectedProposalIDs) > 0 {
+			fmt.Printf("curia_selected=%s\n", strings.Join(latestDecision.SelectedProposalIDs, ","))
 		}
 	}
 }
@@ -1034,6 +1061,8 @@ func printPlanInbox(items []api.PlanInboxEntry) error {
 		detail := item.LastReason
 		if item.ConflictDetail != "" {
 			detail = item.ConflictDetail
+		} else if item.RemediationHint != "" {
+			detail = item.RemediationHint
 		} else if len(item.Violations) > 0 {
 			detail = item.Violations[0]
 		}
@@ -1313,6 +1342,7 @@ func runPlans(ctx context.Context, args []string) error {
 				Violations:            item.Violations,
 				Conflict:              item.Conflict,
 				ConflictDetail:        item.ConflictDetail,
+				RemediationHint:       item.RemediationHint,
 			})
 		}
 		return printPlanInbox(apiItems)
@@ -1402,6 +1432,36 @@ func runPlans(ctx context.Context, args []string) error {
 		raw, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal plan apply: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	case "preview":
+		if len(args) < 4 {
+			return fmt.Errorf("roma plans preview requires <session_id> <task_id> <artifact_id>")
+		}
+		if client.Available() {
+			result, err := client.PlanPreview(ctx, api.PlanApplyRequest{
+				SessionID:  args[1],
+				TaskID:     args[2],
+				ArtifactID: args[3],
+			})
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal plan preview: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
+		}
+		result, err := service.Apply(ctx, args[1], args[2], args[3], plans.ApplyOptions{DryRun: true})
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal plan preview: %w", err)
 		}
 		fmt.Println(string(raw))
 		return nil

@@ -123,6 +123,12 @@
     - close top-score gaps trigger `winning_mode=merge`
     - vetoed top proposals also mark the debate as disputed
     - `debate_log` and `decision_pack` now carry dispute metadata instead of only a hard-coded accept path
+  - Curia ballot scoring now uses a first reviewer-weight layer, so senator reputation can influence proposal ranking
+  - ballot artifacts now persist reviewer weight and weighted score
+  - debate logs and decision packs now persist proposal scoreboards with raw score, weighted score, veto count, and reviewer count
+  - `roma sessions curia <session_id>` now prints dispute reasons, winning mode, selected proposals, and the Curia scoreboard
+  - added a deterministic Curia decision-flow regression in `internal/api` proving that a disputed Curia run produces an `execution_plan` visible in `/plans/inbox` as `pending_approval`
+  - added [`docs/curia-decision-flow.md`](/home/liliang/Codes/oss/ROMA/docs/curia-decision-flow.md) to document the current Curia demo path and its limits
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`
@@ -141,6 +147,8 @@
   - plan apply now routes protected-path decisions through a first action-aware policy matrix
   - new `roma plans inbox [--session <id>]` and daemon `/plans/inbox` aggregate pending plan approvals and latest apply outcomes
   - new `roma plans approve|reject <artifact_id>` and daemon `/plans/{artifact_id}/approve|reject` turn that inbox into an actual approval path
+  - new `roma plans preview <session_id> <task_id> <artifact_id>` and daemon `/plans/preview` expose dry-run merge preview as a first-class endpoint
+  - plan preview/apply/rollback results now include `remediation_hint`
   - gateway remote commands can now bridge `plan_approve` / `plan_reject` into that same plan approval path
   - scheduler now has a concurrent DAG/workspace soak baseline test covering parallel ready nodes plus worktree reclaim for one session
 - Added minimum worktree merge-back closure:
@@ -199,11 +207,11 @@
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after extending dynamic delegation follow-up nodes to the shared run/graph path
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma status`
 - `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
+- `env GOCACHE=/tmp/go-build-cache-roma go test -count=1 ./internal/api ./internal/scheduler ./internal/syncdb`
 
 ## Current Focus
 
-- Surface more scheduler-native node summaries in daemon list endpoints.
-- Push more dynamic multi-agent delegation decisions into scheduler-owned execution.
-- Replace minimal dynamic delegation parsing with richer scheduler-issued follow-up node contracts.
-- Add path-scoped policy enforcement against workspace/effective directories and expected repo boundaries.
-- Add override ACL semantics for explicit policy bypass actions.
+- Continue Curia arbitration refinement beyond the first weighted-ballot layer.
+- Surface more Curia truth through CLI/API inspection instead of only raw artifacts.
+- Tighten merge conflict UX further with explicit preview endpoints and clearer remediation hints.
+- Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.

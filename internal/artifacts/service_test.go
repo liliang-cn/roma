@@ -73,6 +73,8 @@ func TestBuildCuriaArtifacts(t *testing.T) {
 		RunID:            "task_curia_gemini",
 		Agent:            domain.AgentProfile{ID: "gemini-cli", DisplayName: "Gemini CLI"},
 		TargetProposalID: "prop_task_curia_codex",
+		ReviewerWeight:   2,
+		WeightedScore:    40,
 		Output:           "prop_task_curia_codex is the best proposal with strong safety",
 	})
 	if err != nil {
@@ -80,6 +82,13 @@ func TestBuildCuriaArtifacts(t *testing.T) {
 	}
 	if ballot.Kind != domain.ArtifactKindBallot {
 		t.Fatalf("kind = %s, want %s", ballot.Kind, domain.ArtifactKindBallot)
+	}
+	ballotPayload, ok := BallotFromEnvelope(ballot)
+	if !ok {
+		t.Fatal("BallotFromEnvelope(ballot) = false")
+	}
+	if ballotPayload.ReviewerWeight != 2 || ballotPayload.WeightedScore != 40 {
+		t.Fatalf("ballot payload = %#v, want reviewer weight 2 and weighted score 40", ballotPayload)
 	}
 	plan, err := svc.BuildExecutionPlan(context.Background(), BuildExecutionPlanRequest{
 		SessionID: "sess_1",
@@ -100,7 +109,105 @@ func TestBuildCuriaArtifacts(t *testing.T) {
 	if plan.Kind != domain.ArtifactKindExecutionPlan {
 		t.Fatalf("kind = %s, want %s", plan.Kind, domain.ArtifactKindExecutionPlan)
 	}
+	planPayload, ok := ExecutionPlanFromEnvelope(plan)
+	if !ok {
+		t.Fatal("ExecutionPlanFromEnvelope(plan) = false")
+	}
+	if planPayload.ApplyMode != "proposal_accept" {
+		t.Fatalf("apply mode = %q, want proposal_accept", planPayload.ApplyMode)
+	}
 	if got := SummaryFromEnvelope(plan); got == "" {
 		t.Fatal("SummaryFromEnvelope(plan) returned empty summary")
+	}
+}
+
+func TestBuildExecutionPlanTracksReplaceWinningMode(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	plan, err := svc.BuildExecutionPlan(context.Background(), BuildExecutionPlanRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_curia",
+		RunID:     "task_curia_replace",
+		Goal:      "Implement fallback",
+		Proposal: ProposalPayload{
+			ProposalID:     "prop_task_curia_replace",
+			Summary:        "Fallback proposal",
+			EstimatedSteps: []string{"Replace prior plan"},
+			AffectedFiles:  []string{"internal/api/server.go"},
+		},
+		WinningMode:           "replace",
+		SelectedProposalIDs:   []string{"prop_task_curia_replace"},
+		HumanApprovalRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildExecutionPlan() error = %v", err)
+	}
+	payload, ok := ExecutionPlanFromEnvelope(plan)
+	if !ok {
+		t.Fatal("ExecutionPlanFromEnvelope() = false")
+	}
+	if payload.ApplyMode != "proposal_replace" {
+		t.Fatalf("apply mode = %q, want proposal_replace", payload.ApplyMode)
+	}
+	if len(payload.Steps) == 0 || payload.Steps[0] != "Replace the prior dominant proposal with the arbitrated fallback plan." {
+		t.Fatalf("steps = %#v, want replace preface", payload.Steps)
+	}
+}
+
+func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	scoreboard := []CuriaScoreEntry{
+		{ProposalID: "prop_a", RawScore: 20, WeightedScore: 54, VetoCount: 0, ReviewerCount: 2},
+		{ProposalID: "prop_b", RawScore: 18, WeightedScore: 36, VetoCount: 1, ReviewerCount: 2},
+	}
+	debate, err := svc.BuildDebateLog(context.Background(), BuildDebateLogRequest{
+		SessionID:           "sess_1",
+		TaskID:              "task_curia",
+		RunID:               "task_curia_debate",
+		ProposalIDs:         []string{"prop_a", "prop_b"},
+		BallotIDs:           []string{"ballot_1", "ballot_2"},
+		WinningProposalID:   "prop_a",
+		DisputeReasons:      []string{"close vote"},
+		DisputeDetected:     true,
+		CriticalVeto:        false,
+		TopScoreGap:         2,
+		Scoreboard:          scoreboard,
+		ArbitrationRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildDebateLog() error = %v", err)
+	}
+	debatePayload, ok := DebateLogFromEnvelope(debate)
+	if !ok {
+		t.Fatal("DebateLogFromEnvelope() = false")
+	}
+	if len(debatePayload.Scoreboard) != 2 || debatePayload.Scoreboard[0].WeightedScore != 54 {
+		t.Fatalf("debate scoreboard = %#v, want weighted scoreboard entries", debatePayload.Scoreboard)
+	}
+
+	decision, err := svc.BuildDecisionPack(context.Background(), BuildDecisionPackRequest{
+		SessionID:           "sess_1",
+		TaskID:              "task_curia",
+		RunID:               "task_curia_decision",
+		WinningMode:         "merge",
+		SelectedProposalIDs: []string{"prop_a", "prop_b"},
+		ExecutionPlanID:     "plan_1",
+		ApprovalRequired:    true,
+		MergedRationale:     "merge due to close vote",
+		RejectedReasons:     []string{"prop_c scored lower"},
+		Scoreboard:          scoreboard,
+	})
+	if err != nil {
+		t.Fatalf("BuildDecisionPack() error = %v", err)
+	}
+	decisionPayload, ok := DecisionPackFromEnvelope(decision)
+	if !ok {
+		t.Fatal("DecisionPackFromEnvelope() = false")
+	}
+	if len(decisionPayload.Scoreboard) != 2 || decisionPayload.Scoreboard[1].VetoCount != 1 {
+		t.Fatalf("decision scoreboard = %#v, want veto count carried through", decisionPayload.Scoreboard)
 	}
 }

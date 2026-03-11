@@ -21,6 +21,7 @@ import (
 	"github.com/liliang/roma/internal/scheduler"
 	"github.com/liliang/roma/internal/sqliteutil"
 	"github.com/liliang/roma/internal/store"
+	"github.com/liliang/roma/internal/syncdb"
 	"github.com/liliang/roma/internal/taskstore"
 	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
@@ -64,6 +65,7 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 	mux.HandleFunc("/plans/", server.handlePlanShow)
 	mux.HandleFunc("/plans/apply", server.handlePlanApply)
 	mux.HandleFunc("/plans/inbox", server.handlePlanInbox)
+	mux.HandleFunc("/plans/preview", server.handlePlanPreview)
 	mux.HandleFunc("/plans/rollback", server.handlePlanRollback)
 	mux.HandleFunc("/sessions", server.handleSessionList)
 	mux.HandleFunc("/sessions/", server.handleSessionShow)
@@ -349,6 +351,10 @@ func (s *Server) handleRecoveryList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	if err := syncWorkspaceMetadata(r.Context(), workDir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	items, err := scheduler.RecoverableSessions(r.Context(), workDir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -414,9 +420,36 @@ func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
 			Violations:            item.Violations,
 			Conflict:              item.Conflict,
 			ConflictDetail:        item.ConflictDetail,
+			RemediationHint:       item.RemediationHint,
 		})
 	}
 	writeJSON(w, http.StatusOK, PlanInboxResponse{Items: out})
+}
+
+func (s *Server) handlePlanPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req PlanApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ArtifactID == "" {
+		http.Error(w, "artifact_id is required", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	result, err := service.Apply(r.Context(), req.SessionID, req.TaskID, req.ArtifactID, plans.ApplyOptions{
+		DryRun: true,
+	})
+	if err != nil {
+		writePlanError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handlePlanDecision(w http.ResponseWriter, r *http.Request, artifactID string, approved bool) {
@@ -640,6 +673,10 @@ func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	if err := syncWorkspaceMetadata(r.Context(), workDir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	actor := policy.OverrideActor()
 	taskStore := preferredTaskStore(workDir)
 	eventStore := preferredEventStore(workDir)
@@ -678,15 +715,10 @@ func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if req.SessionID != "" {
-		sessionStore := preferredHistoryStore(workDir)
-		if session, err := sessionStore.Get(r.Context(), req.SessionID); err == nil {
-			if approved {
-				session.Status = "pending"
-			} else {
-				session.Status = "rejected"
-			}
-			session.UpdatedAt = time.Now().UTC()
-			_ = sessionStore.Save(r.Context(), session)
+		if approved {
+			_ = s.updateSessionStatus(r.Context(), workDir, req.SessionID, "pending")
+		} else {
+			_ = s.updateSessionStatus(r.Context(), workDir, req.SessionID, "rejected")
 		}
 		eventStore := preferredEventStore(workDir)
 		reason := "human_approved"
@@ -774,15 +806,10 @@ func (s *Server) handleQueueTaskApproval(ctx context.Context, workDir string, re
 			"completed_task_ids":        lease.CompletedTaskIDs,
 		},
 	})
-	sessionStore := preferredHistoryStore(workDir)
-	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
-		if approved {
-			session.Status = "running"
-		} else {
-			session.Status = "rejected"
-		}
-		session.UpdatedAt = time.Now().UTC()
-		_ = sessionStore.Save(ctx, session)
+	if approved {
+		_ = s.updateSessionStatus(ctx, workDir, req.SessionID, "running")
+	} else {
+		_ = s.updateSessionStatus(ctx, workDir, req.SessionID, "rejected")
 	}
 	if approved {
 		req.Status = queue.StatusPending
@@ -1170,6 +1197,38 @@ func preferredArtifactStore(workDir string) artifacts.Backend {
 		return sqliteStore
 	}
 	return artifacts.NewFileStore(workDir)
+}
+
+func syncWorkspaceMetadata(ctx context.Context, workDir string) error {
+	return syncdb.NewWorkspace(workDir).Run(ctx)
+}
+
+func (s *Server) updateSessionStatus(ctx context.Context, workDir, sessionID, status string) error {
+	sessionStore := preferredHistoryStore(workDir)
+	session, err := sessionStore.Get(ctx, sessionID)
+	if err != nil {
+		if s.sessionStore == nil {
+			return err
+		}
+		session, err = s.sessionStore.Get(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+	}
+	session.Status = status
+	session.UpdatedAt = time.Now().UTC()
+	if err := sessionStore.Save(ctx, session); err != nil {
+		if s.sessionStore == nil {
+			return err
+		}
+	}
+	if s.sessionStore == nil {
+		return nil
+	}
+	if err := s.sessionStore.Save(ctx, session); err != nil {
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

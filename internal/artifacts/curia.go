@@ -41,6 +41,8 @@ type BallotScores struct {
 type BallotPayload struct {
 	BallotID         string            `json:"ballot_id"`
 	TargetProposalID string            `json:"target_proposal_id"`
+	ReviewerWeight   int               `json:"reviewer_weight"`
+	WeightedScore    int               `json:"weighted_score"`
 	Scores           BallotScores      `json:"scores"`
 	Critique         string            `json:"critique"`
 	Veto             bool              `json:"veto"`
@@ -48,27 +50,38 @@ type BallotPayload struct {
 	Confidence       domain.Confidence `json:"confidence"`
 }
 
+type CuriaScoreEntry struct {
+	ProposalID    string `json:"proposal_id"`
+	RawScore      int    `json:"raw_score"`
+	WeightedScore int    `json:"weighted_score"`
+	VetoCount     int    `json:"veto_count"`
+	ReviewerCount int    `json:"reviewer_count"`
+}
+
 type DebateLogPayload struct {
-	DebateLogID         string   `json:"debate_log_id"`
-	ProposalIDs         []string `json:"proposal_ids"`
-	BallotIDs           []string `json:"ballot_ids"`
-	DisputeSummary      string   `json:"dispute_summary"`
-	DisputeDetected     bool     `json:"dispute_detected"`
-	CriticalVeto        bool     `json:"critical_veto"`
-	TopScoreGap         int      `json:"top_score_gap"`
-	QuorumReachedAt     string   `json:"quorum_reached_at"`
-	ArbitrationRequired bool     `json:"arbitration_required"`
-	WinningProposalID   string   `json:"winning_proposal_id,omitempty"`
+	DebateLogID         string            `json:"debate_log_id"`
+	ProposalIDs         []string          `json:"proposal_ids"`
+	BallotIDs           []string          `json:"ballot_ids"`
+	DisputeSummary      string            `json:"dispute_summary"`
+	DisputeReasons      []string          `json:"dispute_reasons,omitempty"`
+	DisputeDetected     bool              `json:"dispute_detected"`
+	CriticalVeto        bool              `json:"critical_veto"`
+	TopScoreGap         int               `json:"top_score_gap"`
+	Scoreboard          []CuriaScoreEntry `json:"scoreboard,omitempty"`
+	QuorumReachedAt     string            `json:"quorum_reached_at"`
+	ArbitrationRequired bool              `json:"arbitration_required"`
+	WinningProposalID   string            `json:"winning_proposal_id,omitempty"`
 }
 
 type DecisionPackPayload struct {
-	DecisionPackID      string   `json:"decision_pack_id"`
-	WinningMode         string   `json:"winning_mode"`
-	SelectedProposalIDs []string `json:"selected_proposal_ids"`
-	MergedRationale     string   `json:"merged_rationale"`
-	RejectedReasons     []string `json:"rejected_reasons,omitempty"`
-	ExecutionPlanID     string   `json:"execution_plan_id"`
-	ApprovalRequired    bool     `json:"approval_required"`
+	DecisionPackID      string            `json:"decision_pack_id"`
+	WinningMode         string            `json:"winning_mode"`
+	SelectedProposalIDs []string          `json:"selected_proposal_ids"`
+	MergedRationale     string            `json:"merged_rationale"`
+	RejectedReasons     []string          `json:"rejected_reasons,omitempty"`
+	Scoreboard          []CuriaScoreEntry `json:"scoreboard,omitempty"`
+	ExecutionPlanID     string            `json:"execution_plan_id"`
+	ApprovalRequired    bool              `json:"approval_required"`
 }
 
 type ExecutionPlanPayload struct {
@@ -97,6 +110,8 @@ type BuildBallotRequest struct {
 	RunID            string
 	Agent            domain.AgentProfile
 	TargetProposalID string
+	ReviewerWeight   int
+	WeightedScore    int
 	Output           string
 }
 
@@ -107,9 +122,11 @@ type BuildDebateLogRequest struct {
 	ProposalIDs         []string
 	BallotIDs           []string
 	WinningProposalID   string
+	DisputeReasons      []string
 	DisputeDetected     bool
 	CriticalVeto        bool
 	TopScoreGap         int
+	Scoreboard          []CuriaScoreEntry
 	ArbitrationRequired bool
 }
 
@@ -123,6 +140,7 @@ type BuildDecisionPackRequest struct {
 	ApprovalRequired    bool
 	MergedRationale     string
 	RejectedReasons     []string
+	Scoreboard          []CuriaScoreEntry
 }
 
 type BuildExecutionPlanRequest struct {
@@ -131,6 +149,8 @@ type BuildExecutionPlanRequest struct {
 	RunID                 string
 	Goal                  string
 	Proposal              ProposalPayload
+	WinningMode           string
+	SelectedProposalIDs   []string
 	HumanApprovalRequired bool
 }
 
@@ -159,6 +179,8 @@ func (s *Service) BuildBallot(_ context.Context, req BuildBallotRequest) (domain
 	payload := BallotPayload{
 		BallotID:         "ballot_" + req.RunID,
 		TargetProposalID: req.TargetProposalID,
+		ReviewerWeight:   req.ReviewerWeight,
+		WeightedScore:    req.WeightedScore,
 		Scores:           scoreReview(req.Output),
 		Critique:         summarizeParagraph(req.Output),
 		Veto:             strings.Contains(strings.ToLower(req.Output), "veto"),
@@ -176,9 +198,11 @@ func (s *Service) BuildDebateLog(_ context.Context, req BuildDebateLogRequest) (
 		ProposalIDs:         append([]string(nil), req.ProposalIDs...),
 		BallotIDs:           append([]string(nil), req.BallotIDs...),
 		DisputeSummary:      disputeSummary(req.WinningProposalID, req.ArbitrationRequired),
+		DisputeReasons:      append([]string(nil), req.DisputeReasons...),
 		DisputeDetected:     req.DisputeDetected,
 		CriticalVeto:        req.CriticalVeto,
 		TopScoreGap:         req.TopScoreGap,
+		Scoreboard:          append([]CuriaScoreEntry(nil), req.Scoreboard...),
 		QuorumReachedAt:     s.now().Format(time.RFC3339Nano),
 		ArbitrationRequired: req.ArbitrationRequired,
 		WinningProposalID:   req.WinningProposalID,
@@ -193,6 +217,7 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		SelectedProposalIDs: append([]string(nil), req.SelectedProposalIDs...),
 		MergedRationale:     req.MergedRationale,
 		RejectedReasons:     append([]string(nil), req.RejectedReasons...),
+		Scoreboard:          append([]CuriaScoreEntry(nil), req.Scoreboard...),
 		ExecutionPlanID:     req.ExecutionPlanID,
 		ApprovalRequired:    req.ApprovalRequired,
 	}
@@ -207,12 +232,18 @@ func (s *Service) BuildExecutionPlan(_ context.Context, req BuildExecutionPlanRe
 		ExpectedFiles:         append([]string(nil), req.Proposal.AffectedFiles...),
 		ForbiddenPaths:        []string{".git/", ".roma/"},
 		RequiredChecks:        []string{"go test ./...", "go build ./..."},
-		ApplyMode:             "proposal_accept",
+		ApplyMode:             executionApplyMode(req.WinningMode),
 		RollbackHint:          "Reverse-apply the captured worktree patch if validation fails.",
 		HumanApprovalRequired: req.HumanApprovalRequired,
 	}
 	if len(payload.Steps) == 0 {
 		payload.Steps = firstLines(req.Proposal.Approach, 4)
+	}
+	if req.WinningMode == "merge" && len(req.SelectedProposalIDs) > 1 {
+		payload.Steps = append([]string{"Merge the selected Curia proposals into one approved execution track."}, payload.Steps...)
+	}
+	if req.WinningMode == "replace" {
+		payload.Steps = append([]string{"Replace the prior dominant proposal with the arbitrated fallback plan."}, payload.Steps...)
 	}
 	return s.buildCuriaEnvelope(req.SessionID, req.TaskID, "art_"+payload.ExecutionPlanID, domain.ArtifactKindExecutionPlan, ExecutionPlanPayloadSchema, domain.ProducerRoleSystem, "roma-curia", req.RunID, payload)
 }
@@ -269,6 +300,47 @@ func BallotFromEnvelope(envelope domain.ArtifactEnvelope) (BallotPayload, bool) 
 		return BallotPayload{}, false
 	}
 	return payload, true
+}
+
+func DebateLogFromEnvelope(envelope domain.ArtifactEnvelope) (DebateLogPayload, bool) {
+	if payload, ok := envelope.Payload.(DebateLogPayload); ok {
+		return payload, true
+	}
+	raw, err := json.Marshal(envelope.Payload)
+	if err != nil {
+		return DebateLogPayload{}, false
+	}
+	var payload DebateLogPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return DebateLogPayload{}, false
+	}
+	return payload, true
+}
+
+func DecisionPackFromEnvelope(envelope domain.ArtifactEnvelope) (DecisionPackPayload, bool) {
+	if payload, ok := envelope.Payload.(DecisionPackPayload); ok {
+		return payload, true
+	}
+	raw, err := json.Marshal(envelope.Payload)
+	if err != nil {
+		return DecisionPackPayload{}, false
+	}
+	var payload DecisionPackPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return DecisionPackPayload{}, false
+	}
+	return payload, true
+}
+
+func executionApplyMode(winningMode string) string {
+	switch winningMode {
+	case "merge":
+		return "proposal_merge"
+	case "replace":
+		return "proposal_replace"
+	default:
+		return "proposal_accept"
+	}
 }
 
 func ExecutionPlanFromEnvelope(envelope domain.ArtifactEnvelope) (ExecutionPlanPayload, bool) {
@@ -357,6 +429,10 @@ func scoreReview(output string) BallotScores {
 		ScopeControl:    base,
 		Testability:     base,
 	}
+}
+
+func BallotScoresView(output string) BallotScores {
+	return scoreReview(output)
 }
 
 func disputeSummary(winningProposalID string, arbitrationRequired bool) string {

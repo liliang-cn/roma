@@ -159,6 +159,7 @@ type PlanInboxEntry struct {
 	Violations            []string `json:"violations,omitempty"`
 	Conflict              bool     `json:"conflict,omitempty"`
 	ConflictDetail        string   `json:"conflict_detail,omitempty"`
+	RemediationHint       string   `json:"remediation_hint,omitempty"`
 }
 
 type PlanInboxResponse struct {
