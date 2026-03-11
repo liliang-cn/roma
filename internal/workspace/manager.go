@@ -386,7 +386,7 @@ func (m *Manager) ReclaimStaleExcept(ctx context.Context, activeSessions map[str
 		if (prepared.Status != "released" && prepared.Status != "prepared") || prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
 			continue
 		}
-		if err := m.runGit(ctx, prepared.BaseDir, "worktree", "remove", "--force", prepared.EffectiveDir); err != nil {
+		if err := m.runGitWithRetry(ctx, prepared.BaseDir, "worktree", "remove", "--force", prepared.EffectiveDir); err != nil {
 			return err
 		}
 		prepared.Status = "reclaimed"
@@ -426,7 +426,7 @@ func (m *Manager) prepareIsolated(ctx context.Context, prepared Prepared, rootDi
 			prepared.Fallback = "workspace_metadata_dir_failed"
 			return prepared
 		}
-		if err := m.runGit(ctx, prepared.BaseDir, "worktree", "add", "--detach", worktreeRoot); err == nil {
+		if err := m.runGitWithRetry(ctx, prepared.BaseDir, "worktree", "add", "--detach", worktreeRoot); err == nil {
 			prepared.Effective = ModeIsolatedWrite
 			prepared.Provider = "git_worktree"
 			prepared.EffectiveDir = worktreeRoot
@@ -457,6 +457,39 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 		return fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func (m *Manager) runGitWithRetry(ctx context.Context, dir string, args ...string) error {
+	if m.runGit == nil {
+		return runGit(ctx, dir, args...)
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		lastErr = m.runGit(ctx, dir, args...)
+		if lastErr == nil {
+			return nil
+		}
+		if !isGitLockError(lastErr) || ctx.Err() != nil {
+			return lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 25 * time.Millisecond):
+		}
+	}
+	return lastErr
+}
+
+func isGitLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "index.lock") ||
+		strings.Contains(text, "could not lock") ||
+		strings.Contains(text, "another git process") ||
+		strings.Contains(text, "unable to create")
 }
 
 func sanitizeFallback(err error) string {
