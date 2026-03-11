@@ -31,6 +31,11 @@ import (
 // ErrUnavailable indicates the current environment does not permit local listeners.
 var ErrUnavailable = errors.New("local api transport unavailable")
 
+// QueueCanceler interrupts a daemon-managed queue job.
+type QueueCanceler interface {
+	CancelQueueJob(ctx context.Context, id string) (queue.Request, error)
+}
+
 // Server exposes a minimal JSON API over a Unix domain socket.
 type Server struct {
 	httpServer   *http.Server
@@ -40,6 +45,7 @@ type Server struct {
 	socketPath   string
 	queueStore   queue.Backend
 	sessionStore history.Backend
+	canceler     QueueCanceler
 }
 
 // NewServer constructs the API server.
@@ -82,6 +88,11 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 		Handler: mux,
 	}
 	return server
+}
+
+// SetQueueCanceler attaches an optional daemon-owned queue canceler.
+func (s *Server) SetQueueCanceler(canceler QueueCanceler) {
+	s.canceler = canceler
 }
 
 // Start begins serving on the Unix domain socket.
@@ -838,6 +849,10 @@ func (s *Server) handleQueueShow(w http.ResponseWriter, r *http.Request) {
 		s.handleQueueApproval(w, r, strings.TrimSuffix(id, "/approve"), true)
 		return
 	}
+	if strings.HasSuffix(id, "/cancel") {
+		s.handleQueueCancel(w, r, strings.TrimSuffix(id, "/cancel"))
+		return
+	}
 	if strings.HasSuffix(id, "/reject") {
 		s.handleQueueApproval(w, r, strings.TrimSuffix(id, "/reject"), false)
 		return
@@ -856,6 +871,62 @@ func (s *Server) handleQueueShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleQueueCancel(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if id == "" {
+		http.Error(w, "missing job id", http.StatusBadRequest)
+		return
+	}
+	if s.canceler != nil {
+		item, err := s.canceler.CancelQueueJob(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+		return
+	}
+
+	req, err := s.queueStore.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	if err := syncWorkspaceMetadata(r.Context(), workDir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	req.Status = queue.StatusCancelled
+	req.Error = "cancelled by user"
+	req.PolicyOverride = false
+	req.PolicyOverrideActor = ""
+	if err := s.queueStore.Update(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if req.SessionID != "" {
+		_ = s.updateSessionStatus(r.Context(), workDir, req.SessionID, "cancelled")
+		eventStore := preferredEventStore(workDir)
+		_ = eventStore.AppendEvent(r.Context(), events.Record{
+			ID:         "evt_" + req.ID + "_cancelled",
+			SessionID:  req.SessionID,
+			TaskID:     req.TaskID,
+			Type:       events.TypeQueueCancelled,
+			ActorType:  events.ActorTypeHuman,
+			OccurredAt: time.Now().UTC(),
+			ReasonCode: "manual_cancel",
+			Payload: map[string]any{
+				"job_id": req.ID,
+			},
+		})
+	}
+	writeJSON(w, http.StatusOK, req)
 }
 
 func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id string, approved bool) {

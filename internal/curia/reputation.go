@@ -15,18 +15,7 @@ func reviewerWeight(profile domain.AgentProfile) int {
 			}
 		}
 	}
-	switch profile.ID {
-	case "codex-cli":
-		return 3
-	case "claude-code":
-		return 3
-	case "gemini-cli":
-		return 2
-	case "copilot-cli":
-		return 1
-	default:
-		return 1
-	}
+	return 1
 }
 
 func weightedBallotScore(ballot artifactsBallotView, reviewerWeight int) int {

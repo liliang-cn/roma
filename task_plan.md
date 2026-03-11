@@ -174,6 +174,26 @@ Status: in_progress
 - [x] Make `dry-run` perform real merge preview instead of static path checks only
 - [x] Return conflict-context snippets alongside conflict paths during plan preview and apply failures
 
+### Phase 19: Runtime Visibility and Attachability
+Status: in_progress
+
+- [x] Add a first-class `roma cancel <job_id>` / daemon queue-cancel path so operators do not have to kill child processes manually
+- [x] Refresh running-job timestamps and journald output with daemon heartbeats while a job is still executing
+- [x] Simplify CLI entrypoints so top-level help emphasizes `run`, `submit`, `status`, `cancel`, `help`, with `agent` as management and deep inspection under `debug`
+- [x] Remove built-in coding-agent registry entries so runtime selection is fully driven by user-provided profiles (`name`, `path`, `args`, default, PTY)
+- [ ] Add running-job heartbeat updates so `queue.updated_at` and top-level status change while an agent is still executing
+- [ ] Persist running-node runtime metadata:
+  - current node id
+  - runtime pid
+  - workspace path
+  - started_at / last_active_at
+  - last output timestamp
+- [ ] Emit lightweight progress events while nodes are running instead of only at node completion
+- [ ] Make `queue inspect` and `sessions inspect` surface live execution state for running jobs, not only completed artifacts and final task state
+- [ ] Add a CLI command to tail/attach to one running job or session without requiring direct foreground execution
+- [ ] Improve daemon logs so `journalctl --user -u romad -f` shows live node lifecycle transitions and periodic heartbeats
+- [ ] Fix running-session inspection parity so daemon/API and CLI fallback return the same structure while a job is in progress
+
 ## Risks
 
 - PTY behavior differs across coding CLIs; some still assume stronger TTY semantics.
@@ -186,10 +206,11 @@ Status: in_progress
 - Dynamic follow-up node generation now uses structured report payloads, but follow-up validation is still permissive compared with a future formal command schema.
 - Curia minimal is now real, but still human-first and score-lite; there is no Augustus arbitration or automatic dispute engine yet.
 - Execution-plan apply now works through daemon API too, but it still needs richer eventing and plan-specific approval inbox UX.
+- Running jobs still look stalled from the outside because queue/session inspection mostly updates on node completion; there is no live heartbeat, runtime metadata, or attach/tail path yet.
 
 ## Next Immediate Steps
 
-1. Continue Curia arbitration refinement on top of the new weighted ballots, dispute signals, Augustus path, and winning modes.
-2. Tighten merge conflict UX further on top of the new conflict snippets, especially around per-hunk resolution summaries and remediation.
-3. Extend Curia reputation visibility from the new dedicated CLI/API endpoint into richer historical and per-session drill-down views.
-4. Extend the concurrent DAG soak baseline toward larger parallel session counts, repeated runs, and restart-focused lease/workspace assertions.
+1. Implement Phase 19 heartbeat and live runtime metadata so running jobs stop looking like hung queue records.
+2. Finish live inspection and one minimal `tail/attach` command for active jobs.
+3. Keep tightening the simplified CLI so `run` stays the obvious default and advanced inspection remains under `debug`, while agent execution stays fully user-configured.
+4. After runtime visibility is in place, continue Curia arbitration refinement and conflict UX work.

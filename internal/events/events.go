@@ -30,6 +30,7 @@ const (
 	TypeGatewayEndpointRegistered   Type = "GatewayEndpointRegistered"
 	TypeGatewayDeliveryRecorded     Type = "GatewayDeliveryRecorded"
 	TypeRemoteCommandRecorded       Type = "RemoteCommandRecorded"
+	TypeQueueCancelled              Type = "QueueCancelled"
 )
 
 // ActorType identifies who produced an event.

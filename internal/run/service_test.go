@@ -36,9 +36,15 @@ func TestRunRejectsUnknownAgent(t *testing.T) {
 func TestRunRejectsUnknownDelegate(t *testing.T) {
 	t.Parallel()
 
-	registry, err := agents.DefaultRegistry()
+	registry, err := agents.NewRegistry(domain.AgentProfile{
+		ID:           "starter",
+		DisplayName:  "Starter",
+		Command:      "starter",
+		Aliases:      []string{"codex"},
+		Availability: domain.AgentAvailabilityAvailable,
+	})
 	if err != nil {
-		t.Fatalf("DefaultRegistry() error = %v", err)
+		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
 	svc := NewService(registry)

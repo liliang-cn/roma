@@ -105,13 +105,7 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 	s.events = newEventBackend(req.WorkingDir)
 	s.store = newArtifactBackend(req.WorkingDir)
 	s.tasks = newTaskBackend(req.WorkingDir)
-	s.supervisor = runtime.NewSupervisorWithEvents(
-		s.events,
-		runtime.CodexAdapter{},
-		runtime.ClaudeAdapter{},
-		runtime.GeminiAdapter{},
-		runtime.CopilotAdapter{},
-	)
+	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	assignments := make([]scheduler.NodeAssignment, 0, len(req.Nodes))
 	for _, node := range req.Nodes {
@@ -257,10 +251,8 @@ func resolveCuriaProfiles(ctx context.Context, registry *agents.Registry, names 
 	if len(out) > 0 {
 		return out
 	}
-	defaults := []string{"codex", "gemini", "copilot"}
-	for _, name := range defaults {
-		profile, ok := registry.Resolve(ctx, name)
-		if !ok || profile.Availability != domain.AgentAvailabilityAvailable {
+	for _, profile := range registry.WithResolvedAvailability(ctx) {
+		if profile.Availability != domain.AgentAvailabilityAvailable {
 			continue
 		}
 		if _, exists := seen[profile.ID]; exists {

@@ -188,7 +188,10 @@ func TestReputationStorePersistsReviewerWeight(t *testing.T) {
 	root := t.TempDir()
 	store := NewReputationStore(root)
 	err := store.RecordOutcome(context.Background(),
-		[]domain.AgentProfile{{ID: "codex-cli"}},
+		[]domain.AgentProfile{{
+			ID:       "codex-cli",
+			Metadata: map[string]string{"curia_weight": "3"},
+		}},
 		[]ballotEnvelope{{
 			envelope: domain.ArtifactEnvelope{Producer: domain.Producer{AgentID: "codex-cli"}},
 			ballot: artifacts.BallotPayload{
@@ -209,7 +212,10 @@ func TestReputationStorePersistsReviewerWeight(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".roma", "curia-reputation.json")); err != nil {
 		t.Fatalf("reputation file missing: %v", err)
 	}
-	weight := store.EffectiveWeight(context.Background(), domain.AgentProfile{ID: "codex-cli"})
+	weight := store.EffectiveWeight(context.Background(), domain.AgentProfile{
+		ID:       "codex-cli",
+		Metadata: map[string]string{"curia_weight": "3"},
+	})
 	if weight < 3 {
 		t.Fatalf("effective weight = %d, want >= 3", weight)
 	}

@@ -100,12 +100,12 @@ func NewSupervisorWithEvents(eventStore store.EventStore, adapters ...Adapter) *
 
 // DefaultSupervisor wires the built-in starter-agent adapters.
 func DefaultSupervisor() *Supervisor {
-	return NewSupervisor(
-		CodexAdapter{},
-		ClaudeAdapter{},
-		GeminiAdapter{},
-		CopilotAdapter{},
-	)
+	return NewSupervisor(ProfileAdapter{})
+}
+
+// NewDefaultSupervisorWithEvents constructs the default user-profile-driven supervisor with event append support.
+func NewDefaultSupervisorWithEvents(eventStore store.EventStore) *Supervisor {
+	return NewSupervisorWithEvents(eventStore, ProfileAdapter{})
 }
 
 // RunAttached launches the runtime and attaches stdio to the current terminal.

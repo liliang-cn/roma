@@ -21,6 +21,7 @@ const (
 	StatusSucceeded        Status = "succeeded"
 	StatusFailed           Status = "failed"
 	StatusRejected         Status = "rejected"
+	StatusCancelled        Status = "cancelled"
 )
 
 // Request is a daemon-submittable run request.

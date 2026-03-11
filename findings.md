@@ -192,6 +192,32 @@
   - `TestServerCuriaDecisionFlowProducesPlanInboxApproval`
   - it proves `proposal -> ballot -> debate_log -> decision_pack -> execution_plan -> plans inbox`
   - this is still a Curia dispute demo, not automatic graph-node file-conflict escalation
+- Runtime visibility is now the most obvious UX gap:
+  - `queue show` on a running job barely changes after submission
+  - `queue inspect` can return almost no useful live data while the starter agent is still running
+  - `events list --session ...` often remains empty until the current node exits
+  - `journalctl --user -u romad -f` only shows start/end markers, not running-node heartbeats
+  - the system can still be genuinely busy; `ps` confirmed live `codex exec` child processes under the task worktree while queue/session views looked static
+- There is now a first-class queue cancellation path:
+  - `roma cancel <job_id>`
+  - `roma queue cancel <job_id>`
+  - daemon API `POST /queue/{id}/cancel`
+  - daemon-managed cancellation now propagates through the shared job context, so all agent processes launched under the same job are interrupted together
+- Agent registry is now fully user-provided:
+  - there are no built-in coding-agent profiles anymore
+  - user-defined agents persist in `~/.config/roma/agents.json`
+  - runtime launch now comes from profile `command` + `args` templates instead of hard-coded per-agent adapters
+  - a profile can now mark itself as `default` and `use_pty`
+  - `roma agent add/remove/inspect` target that per-user config path
+- CLI discoverability was becoming a product problem:
+  - top-level help exposed too many internal inspection nouns at once
+  - `agent` belongs to the management layer, not to `debug`
+  - `session/task/artifact/event/plan/workspace` are better treated as internal inspection surfaces under a `debug` namespace
+- `roma sessions inspect <session_id>` is not reliable enough on running sessions yet; recent inspection returned a non-JSON response and failed decode on a live session.
+- `roma` and `romad` were previously coupled too tightly to the current workspace root:
+  - stale local `.roma/run/api.json` could shadow a healthy global daemon
+  - `systemd --user` service needed explicit PATH for `codex/gemini/copilot`
+  - daemon discovery now falls back to a global daemon home, but live progress UX still needs work on top of that fix
 - the concurrent DAG soak baseline is stronger now:
   - repeated graph runs already existed
   - parallel multi-session dispatcher soak now also verifies lease drain and workspace reclaim invariants under concurrent session execution

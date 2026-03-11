@@ -291,6 +291,11 @@ func (c *Client) QueueReject(ctx context.Context, id string) (queue.Request, err
 	return c.queueAction(ctx, id, "reject")
 }
 
+// QueueCancel cancels a queued or running item.
+func (c *Client) QueueCancel(ctx context.Context, id string) (queue.Request, error) {
+	return c.queueAction(ctx, id, "cancel")
+}
+
 // RecoveryList returns daemon recovery snapshots.
 func (c *Client) RecoveryList(ctx context.Context) ([]scheduler.RecoverySnapshot, error) {
 	httpClient, baseURL, err := c.httpClient()

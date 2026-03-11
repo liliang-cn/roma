@@ -1,18 +1,38 @@
-# ROMA
+# ROMA: Runtime Orchestrator for Multi-Agents
 
-ROMA is a local daemon-first **R**untime **O**rchestrator for **M**ulti-**A**gents.
+> “It just fires up all the coding agents at once and points them at the same problem.” — someone
 
-Key entrypoints:
+> “It not only does nothing, it also burns a lot of tokens.” — someone else
 
-- `bin/roma`: CLI client
-- `bin/romad`: local daemon
+## How ROMA Works
 
-Core design docs:
+ROMA treats multi-agent coding like a Roman state, not a chat room.
 
-- [`DESIGN.md`](./DESIGN.md)
-- [`docs/domain-schema-spec.md`](./docs/domain-schema-spec.md)
-- [`docs/state-machine-spec.md`](./docs/state-machine-spec.md)
-- [`docs/backend-module-design.md`](./docs/backend-module-design.md)
+- `romad` is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
+- `roma` is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
+- Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
+- Each task runs in an isolated workspace when possible. Agents work there first, then ROMA decides whether a plan can be merged back.
+
+ROMA currently supports three execution styles:
+
+- `Direct`: one agent executes one task.
+- `Relay`: multiple agents run as a pipeline, passing artifacts forward.
+- `Curia`: multiple agents act as a senate. Senators produce proposals, review each other anonymously, and ROMA builds a `DecisionPack` plus an `ExecutionPlan`.
+
+In the Curia metaphor:
+
+- **Senators** are the proposing and reviewing agents.
+- **DebateLog** is the court record of proposals, ballots, disputes, and tradeoffs.
+- **Augustus** is the higher-weight arbitrator agent used when the senate cannot converge cleanly.
+- **ExecutionPlan** is the only thing that should reach real apply/rollback flow.
+
+The intended user flow is:
+
+1. `roma run ...` or `roma submit ...`
+2. `romad` schedules agents and records everything under `.roma/`
+3. inspect with `roma queue ...` or `roma debug ...`
+4. approve or reject when policy or plan gates require it
+5. preview, apply, or roll back the resulting execution plan
 
 ## Build
 

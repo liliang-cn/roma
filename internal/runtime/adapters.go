@@ -9,104 +9,83 @@ import (
 	"github.com/liliang-cn/roma/internal/domain"
 )
 
-// CodexAdapter launches Codex CLI in non-interactive exec mode.
-type CodexAdapter struct{}
+// ProfileAdapter launches coding agents from user-provided command/args profiles.
+type ProfileAdapter struct{}
 
-// Supports reports whether this adapter handles the given profile.
-func (CodexAdapter) Supports(profile domain.AgentProfile) bool {
-	return profile.ID == "codex-cli"
+// Supports reports whether the profile is runnable.
+func (ProfileAdapter) Supports(profile domain.AgentProfile) bool {
+	return strings.TrimSpace(profile.Command) != ""
 }
 
-// BuildCommand builds the runtime command.
-func (CodexAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
-	return exec.CommandContext(
-		ctx,
-		req.Profile.Command,
-		"exec",
-		"--full-auto",
-		"--skip-git-repo-check",
-		"--ephemeral",
-		"-C", req.WorkingDir,
-		req.Prompt,
-	), nil
+// BuildCommand builds a launch command from the profile's configured args.
+func (ProfileAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
+	if strings.TrimSpace(req.Profile.Command) == "" {
+		return nil, fmt.Errorf("agent %q has no command configured", req.Profile.ID)
+	}
+	args, err := buildProfileArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	return exec.CommandContext(ctx, req.Profile.Command, args...), nil
 }
 
-// RequiresPTY reports whether Codex should run in a PTY-backed terminal.
-func (CodexAdapter) RequiresPTY(profile domain.AgentProfile) bool {
-	return profile.ID == "codex-cli"
+// RequiresPTY reports whether the profile should be launched in a PTY.
+func (ProfileAdapter) RequiresPTY(profile domain.AgentProfile) bool {
+	if profile.UsePTY {
+		return true
+	}
+	if profile.Metadata == nil {
+		return false
+	}
+	return truthy(profile.Metadata["pty"]) || truthy(profile.Metadata["use_pty"])
 }
 
-// ClaudeAdapter launches Claude Code in print mode.
-type ClaudeAdapter struct{}
-
-// Supports reports whether this adapter handles the given profile.
-func (ClaudeAdapter) Supports(profile domain.AgentProfile) bool {
-	return profile.ID == "claude-code"
+func buildProfileArgs(req StartRequest) ([]string, error) {
+	args := make([]string, 0, len(req.Profile.Args)+1)
+	promptReferenced := false
+	for _, arg := range req.Profile.Args {
+		expanded, usedPrompt := expandProfileArg(arg, req)
+		promptReferenced = promptReferenced || usedPrompt
+		if strings.TrimSpace(expanded) == "" {
+			continue
+		}
+		args = append(args, expanded)
+	}
+	if !promptReferenced && strings.TrimSpace(req.Prompt) != "" {
+		args = append(args, req.Prompt)
+	}
+	return args, nil
 }
 
-// BuildCommand builds the runtime command.
-func (ClaudeAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
-	return exec.CommandContext(
-		ctx,
-		req.Profile.Command,
-		"-p",
-		"--permission-mode", "acceptEdits",
-		req.Prompt,
-	), nil
+func expandProfileArg(arg string, req StartRequest) (string, bool) {
+	replacements := map[string]string{
+		"{prompt}":       req.Prompt,
+		"{cwd}":          req.WorkingDir,
+		"{working_dir}":  req.WorkingDir,
+		"{session_id}":   req.SessionID,
+		"{task_id}":      req.TaskID,
+		"{execution_id}": req.ExecutionID,
+	}
+	expanded := arg
+	promptReferenced := false
+	for placeholder, value := range replacements {
+		if strings.Contains(expanded, placeholder) {
+			if placeholder == "{prompt}" {
+				promptReferenced = true
+			}
+			expanded = strings.ReplaceAll(expanded, placeholder, value)
+		}
+	}
+	return expanded, promptReferenced
 }
 
-// RequiresPTY reports whether Claude should run in a PTY-backed terminal.
-func (ClaudeAdapter) RequiresPTY(profile domain.AgentProfile) bool {
-	return profile.ID == "claude-code"
-}
-
-// GeminiAdapter launches Gemini CLI in prompt mode.
-type GeminiAdapter struct{}
-
-// Supports reports whether this adapter handles the given profile.
-func (GeminiAdapter) Supports(profile domain.AgentProfile) bool {
-	return profile.ID == "gemini-cli"
-}
-
-// BuildCommand builds the runtime command.
-func (GeminiAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
-	return exec.CommandContext(
-		ctx,
-		req.Profile.Command,
-		"-y",
-		"-p", req.Prompt,
-	), nil
-}
-
-// RequiresPTY reports whether Gemini should run in a PTY-backed terminal.
-func (GeminiAdapter) RequiresPTY(profile domain.AgentProfile) bool {
-	return profile.ID == "gemini-cli"
-}
-
-// CopilotAdapter launches Copilot CLI in non-interactive mode.
-type CopilotAdapter struct{}
-
-// Supports reports whether this adapter handles the given profile.
-func (CopilotAdapter) Supports(profile domain.AgentProfile) bool {
-	return profile.ID == "copilot-cli"
-}
-
-// BuildCommand builds the runtime command.
-func (CopilotAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
-	return exec.CommandContext(
-		ctx,
-		req.Profile.Command,
-		"-p", req.Prompt,
-		"--yolo",
-		"--autopilot",
-		"--no-ask-user",
-		"-s",
-	), nil
-}
-
-// RequiresPTY reports whether Copilot should run in a PTY-backed terminal.
-func (CopilotAdapter) RequiresPTY(profile domain.AgentProfile) bool {
-	return profile.ID == "copilot-cli"
+func truthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildDelegationPrompt augments the starter prompt with allowed delegate agents.

@@ -27,13 +27,7 @@ func (s *Service) ResumeSessionWithResult(ctx context.Context, workDir, sessionI
 	s.events = newEventBackend(workDir)
 	s.store = newArtifactBackend(workDir)
 	s.tasks = newTaskBackend(workDir)
-	s.supervisor = runtime.NewSupervisorWithEvents(
-		s.events,
-		runtime.CodexAdapter{},
-		runtime.ClaudeAdapter{},
-		runtime.GeminiAdapter{},
-		runtime.CopilotAdapter{},
-	)
+	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	record, err := s.history.Get(ctx, sessionID)
 	if err != nil {

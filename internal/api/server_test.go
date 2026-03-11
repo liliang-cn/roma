@@ -28,6 +28,12 @@ import (
 
 type curiaDisputeAdapter struct{}
 
+type queueCancelerFunc func(ctx context.Context, id string) (queue.Request, error)
+
+func (fn queueCancelerFunc) CancelQueueJob(ctx context.Context, id string) (queue.Request, error) {
+	return fn(ctx, id)
+}
+
 func (curiaDisputeAdapter) Supports(domain.AgentProfile) bool { return true }
 
 func (curiaDisputeAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
@@ -144,6 +150,93 @@ func TestServerSubmitInlineGraph(t *testing.T) {
 	}
 	if item.Graph == nil || len(item.Graph.Nodes) != 1 {
 		t.Fatalf("graph payload = %#v, want 1 node", item.Graph)
+	}
+}
+
+func TestServerQueueCancel(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := NewClient(workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	job := queue.Request{
+		ID:         "job_cancel_pending",
+		Prompt:     "stop this",
+		WorkingDir: workDir,
+		Status:     queue.StatusPending,
+	}
+	if err := queueStore.Enqueue(context.Background(), job); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	item, err := client.QueueCancel(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("QueueCancel() error = %v", err)
+	}
+	if item.Status != queue.StatusCancelled {
+		t.Fatalf("status = %s, want %s", item.Status, queue.StatusCancelled)
+	}
+	if item.Error != "cancelled by user" {
+		t.Fatalf("error = %q, want cancelled by user", item.Error)
+	}
+}
+
+func TestServerQueueCancelDelegatesToDaemonCanceler(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+	server.SetQueueCanceler(queueCancelerFunc(func(_ context.Context, id string) (queue.Request, error) {
+		return queue.Request{
+			ID:         id,
+			WorkingDir: workDir,
+			Status:     queue.StatusCancelled,
+			Error:      "cancelled by user",
+		}, nil
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := NewClient(workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	item, err := client.QueueCancel(context.Background(), "job_cancel_running")
+	if err != nil {
+		t.Fatalf("QueueCancel() error = %v", err)
+	}
+	if item.Status != queue.StatusCancelled {
+		t.Fatalf("status = %s, want %s", item.Status, queue.StatusCancelled)
 	}
 }
 

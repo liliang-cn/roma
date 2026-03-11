@@ -90,13 +90,7 @@ func (s *Service) RunWithResult(ctx context.Context, req Request) (Result, error
 	s.events = newEventBackend(req.WorkingDir)
 	s.store = newArtifactBackend(req.WorkingDir)
 	s.tasks = newTaskBackend(req.WorkingDir)
-	s.supervisor = runtime.NewSupervisorWithEvents(
-		s.events,
-		runtime.CodexAdapter{},
-		runtime.ClaudeAdapter{},
-		runtime.GeminiAdapter{},
-		runtime.CopilotAdapter{},
-	)
+	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	delegates, err := s.resolveDelegates(ctx, req.Delegates, profile.ID)
 	if err != nil {

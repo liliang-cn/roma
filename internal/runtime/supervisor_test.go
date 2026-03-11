@@ -9,23 +9,48 @@ import (
 	"github.com/liliang-cn/roma/internal/domain"
 )
 
-func TestBuildCommandForCodex(t *testing.T) {
+func TestBuildCommandForProfileArgs(t *testing.T) {
 	t.Parallel()
 
 	supervisor := DefaultSupervisor()
 	cmd, err := supervisor.BuildCommand(context.Background(), StartRequest{
 		Profile: domain.AgentProfile{
-			ID:      "codex-cli",
+			ID:      "my-codex",
 			Command: "codex",
+			Args:    []string{"exec", "--full-auto", "-C", "{cwd}", "{prompt}"},
 		},
-		Prompt:     "test",
-		WorkingDir: "/tmp",
+		Prompt:     "test prompt",
+		WorkingDir: "/tmp/work",
 	})
 	if err != nil {
 		t.Fatalf("BuildCommand() error = %v", err)
 	}
 	if got := cmd.Args[0]; got != "codex" {
 		t.Fatalf("command = %s, want codex", got)
+	}
+	if got := strings.Join(cmd.Args[1:], " "); got != "exec --full-auto -C /tmp/work test prompt" {
+		t.Fatalf("args = %q, want %q", got, "exec --full-auto -C /tmp/work test prompt")
+	}
+}
+
+func TestProfileAdapterAppendsPromptWhenMissingPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	supervisor := DefaultSupervisor()
+	cmd, err := supervisor.BuildCommand(context.Background(), StartRequest{
+		Profile: domain.AgentProfile{
+			ID:      "custom",
+			Command: "custom-agent",
+			Args:    []string{"--mode", "batch"},
+		},
+		Prompt:     "do work",
+		WorkingDir: "/tmp/work",
+	})
+	if err != nil {
+		t.Fatalf("BuildCommand() error = %v", err)
+	}
+	if got := strings.Join(cmd.Args[1:], " "); got != "--mode batch do work" {
+		t.Fatalf("args = %q, want %q", got, "--mode batch do work")
 	}
 }
 

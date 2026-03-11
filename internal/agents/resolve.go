@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"os/exec"
-	"slices"
 	"strings"
 
 	"github.com/liliang-cn/roma/internal/domain"
@@ -14,7 +13,7 @@ func (r *Registry) Resolve(ctx context.Context, name string) (domain.AgentProfil
 	_ = ctx
 	needle := strings.TrimSpace(strings.ToLower(name))
 	for _, profile := range r.List(context.Background()) {
-		if profile.ID == needle || strings.ToLower(profile.Command) == needle || slices.Contains(profile.Aliases, needle) {
+		if matchesProfile(profile, needle) {
 			profile.Availability = availabilityForCommand(profile.Command)
 			return profile, true
 		}

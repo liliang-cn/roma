@@ -180,6 +180,16 @@
   - `reclaimed_workspaces`
   - `merged_workspaces`
   - added API test coverage for the new status buckets
+- Simplified CLI help and command grouping:
+  - top-level help now centers on `run`, `submit`, `status`, `cancel`, and `help`
+  - `agent` stays top-level as user-facing configuration
+  - deep inspection commands are now presented under `debug`
+  - singular command names remain the primary surface
+- Removed built-in coding-agent assumptions:
+  - `DefaultRegistry()` is now empty until user config is loaded
+  - `romad` and `roma` both load agents from `~/.config/roma/agents.json`
+  - runtime launch now uses generic profile-driven `command + args` templates with placeholders such as `{prompt}` and `{cwd}`
+  - profiles can mark `default` and `use_pty`, so starter selection and PTY behavior are now user-configured
 
 ## Latest Verified Commands
 
@@ -258,3 +268,34 @@
 - Surface more Curia truth through CLI/API inspection instead of only raw artifacts.
 - Tighten merge conflict UX further with explicit preview endpoints and clearer remediation hints.
 - Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.
+
+## 2026-03-11 Runtime Visibility Diagnosis
+
+- Reproduced the current bad UX with a real daemon-managed job:
+  - `roma --agent codex --delegate gemini,copilot "...registry..."` submitted successfully to global `romad`
+  - `queue show` stayed almost unchanged while the job was still running
+  - `queue inspect` returned only sparse job metadata
+  - `events list --session ...` showed no meaningful progress during the live node
+- Confirmed this was not a fake stall:
+  - `ps` showed live `codex exec` child processes owned by `romad`
+  - the process was running inside `.roma/workspaces/<session>/<task>_starter/root`
+- Confirmed two infrastructure issues that amplified the confusion:
+  - stale local `.roma/run/api.json` could shadow the global daemon until client fallback logic was fixed
+  - `systemd --user` `romad` initially lacked a PATH that included `codex/gemini`, causing early queue failures with `agent "codex-cli" is not available on PATH`
+- Decided to treat runtime visibility as the next explicit phase:
+  - running job heartbeat
+  - live runtime metadata in queue/session inspection
+  - better daemon journald logging
+  - a minimal tail/attach command
+- Added a first-class cancellation path:
+  - `roma cancel <job_id>`
+  - `roma queue cancel <job_id>`
+  - daemon API `POST /queue/{id}/cancel`
+  - daemon-managed jobs now cancel through the shared execution context instead of ad hoc process killing
+- Added first heartbeat-level visibility:
+  - running jobs now refresh queue timestamps while execution is still in progress
+  - `romad` now emits `romad heartbeat job=... session=... task=... status=running` to journald
+- Moved the agent registry to a global per-user config flow:
+  - built-in defaults still load automatically
+  - user-defined agents now persist in `~/.config/roma/agents.json`
+  - `roma agents inspect` now reports the active config path alongside the profile payload

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/liliang-cn/roma/internal/agents"
@@ -22,6 +23,7 @@ import (
 	"github.com/liliang-cn/roma/internal/sessions"
 	"github.com/liliang-cn/roma/internal/store"
 	"github.com/liliang-cn/roma/internal/syncdb"
+	"github.com/liliang-cn/roma/internal/taskstore"
 	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
@@ -35,6 +37,9 @@ type Daemon struct {
 	runner    *run.Service
 	sessions  *sessions.Service
 	scheduler *scheduler.Service
+	mu        sync.Mutex
+	running   map[string]context.CancelFunc
+	canceled  map[string]bool
 }
 
 // NewDaemon constructs the bootstrap daemon.
@@ -48,12 +53,17 @@ func NewDaemon() (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load registry: %w", err)
 	}
+	registry.SetUserConfigPath(agents.DefaultUserConfigPath())
+	if err := registry.LoadUserConfig(registry.UserConfigPath()); err != nil {
+		return nil, fmt.Errorf("load user agent config: %w", err)
+	}
 	queueBackend := newQueueBackend(wd)
 	historyBackend := newHistoryBackend(wd)
 	artifactBackend := newArtifactBackend(wd)
 	planService := plans.NewService(artifactBackend, workspacepkg.NewManager(wd, mem), mem)
-	return &Daemon{
-		api:       api.NewServer(wd, queueBackend, historyBackend),
+	server := api.NewServer(wd, queueBackend, historyBackend)
+	daemon := &Daemon{
+		api:       server,
 		store:     mem,
 		gateway:   gateway.NewService(mem, planService, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
 		history:   historyBackend,
@@ -61,7 +71,11 @@ func NewDaemon() (*Daemon, error) {
 		runner:    run.NewService(registry),
 		sessions:  sessions.NewService(mem, mem, mem),
 		scheduler: scheduler.NewService(mem, mem, mem),
-	}, nil
+		running:   make(map[string]context.CancelFunc),
+		canceled:  make(map[string]bool),
+	}
+	server.SetQueueCanceler(daemon)
+	return daemon, nil
 }
 
 func newQueueBackend(workDir string) queue.Backend {
@@ -80,6 +94,24 @@ func newHistoryBackend(workDir string) history.Backend {
 		return fileStore
 	}
 	return history.NewMirrorStore(fileStore, sqliteStore)
+}
+
+func newEventBackend(workDir string) store.EventStore {
+	fileStore := store.NewFileEventStore(workDir)
+	sqliteStore, err := store.NewSQLiteEventStore(workDir)
+	if err != nil {
+		return fileStore
+	}
+	return store.NewMultiEventStore(fileStore, sqliteStore)
+}
+
+func newTaskBackend(workDir string) store.TaskStore {
+	fileStore := taskstore.NewStore(workDir)
+	sqliteStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		return fileStore
+	}
+	return taskstore.NewMirrorStore(fileStore, sqliteStore)
 }
 
 func newArtifactBackend(workDir string) artifacts.Backend {
@@ -246,11 +278,19 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 	}
 
 	log.Printf("romad processing queued job id=%s agent=%s", req.ID, req.StarterAgent)
+	runCtx, cancel := context.WithCancel(ctx)
+	d.trackRunning(req.ID, cancel)
+	defer func() {
+		cancel()
+		d.clearRunning(req.ID)
+	}()
+	stopHeartbeat := d.startJobHeartbeat(runCtx, req)
+	defer stopHeartbeat()
 	var runErr error
 	var runResult run.Result
 	if req.GraphFile == "" {
 		if req.Graph == nil {
-			runResult, runErr = d.runner.RunWithResult(ctx, run.Request{
+			runResult, runErr = d.runner.RunWithResult(runCtx, run.Request{
 				Prompt:         req.Prompt,
 				StarterAgent:   req.StarterAgent,
 				WorkingDir:     req.WorkingDir,
@@ -289,7 +329,7 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 				graphReq.OverrideActor = req.PolicyOverrideActor
 				graphReq.Continuous = req.Continuous
 				graphReq.MaxRounds = req.MaxRounds
-				runResult, runErr = d.runner.RunGraphWithResult(ctx, graphReq, os.Stdout)
+				runResult, runErr = d.runner.RunGraphWithResult(runCtx, graphReq, os.Stdout)
 			}
 		}
 	} else {
@@ -307,13 +347,20 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 			graphReq.OverrideActor = req.PolicyOverrideActor
 			graphReq.Continuous = req.Continuous
 			graphReq.MaxRounds = req.MaxRounds
-			runResult, runErr = d.runner.RunGraphWithResult(ctx, graphReq, os.Stdout)
+			runResult, runErr = d.runner.RunGraphWithResult(runCtx, graphReq, os.Stdout)
 		}
 	}
 	req.SessionID = runResult.SessionID
 	req.TaskID = runResult.TaskID
 	req.ArtifactIDs = runResult.ArtifactIDs
-	if runErr != nil {
+	wasCanceled := d.consumeCanceled(req.ID)
+	if wasCanceled {
+		req.Status = queue.StatusCancelled
+		req.Error = "cancelled by user"
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+		d.syncCancelledState(context.Background(), req)
+	} else if runErr != nil {
 		req.Status = queue.StatusFailed
 		req.Error = runErr.Error()
 		req.PolicyOverride = false
@@ -329,8 +376,142 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 	if err := d.queue.Update(ctx, req); err != nil {
 		return fmt.Errorf("finalize queue request: %w", err)
 	}
+	log.Printf("romad finalized job id=%s status=%s session=%s task=%s", req.ID, req.Status, req.SessionID, req.TaskID)
 	d.deliverQueueNotification(ctx, req)
 	return nil
+}
+
+// CancelQueueJob interrupts a queued or currently running job.
+func (d *Daemon) CancelQueueJob(ctx context.Context, id string) (queue.Request, error) {
+	req, err := d.queue.Get(ctx, id)
+	if err != nil {
+		return queue.Request{}, err
+	}
+	switch req.Status {
+	case queue.StatusSucceeded, queue.StatusFailed, queue.StatusRejected, queue.StatusCancelled:
+		return req, nil
+	}
+
+	req.Status = queue.StatusCancelled
+	req.Error = "cancelled by user"
+	req.PolicyOverride = false
+	req.PolicyOverrideActor = ""
+	if err := d.queue.Update(ctx, req); err != nil {
+		return queue.Request{}, err
+	}
+	d.markCanceled(id)
+	log.Printf("romad cancelling job id=%s session=%s task=%s", req.ID, req.SessionID, req.TaskID)
+	if cancel := d.runningCancel(id); cancel != nil {
+		cancel()
+	}
+	d.syncCancelledState(ctx, req)
+	return req, nil
+}
+
+func (d *Daemon) trackRunning(id string, cancel context.CancelFunc) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.running[id] = cancel
+	delete(d.canceled, id)
+}
+
+func (d *Daemon) clearRunning(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.running, id)
+	delete(d.canceled, id)
+}
+
+func (d *Daemon) runningCancel(id string) context.CancelFunc {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.running[id]
+}
+
+func (d *Daemon) markCanceled(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.canceled[id] = true
+}
+
+func (d *Daemon) consumeCanceled(id string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	v := d.canceled[id]
+	delete(d.canceled, id)
+	return v
+}
+
+func (d *Daemon) syncCancelledState(ctx context.Context, req queue.Request) {
+	if req.WorkingDir == "" {
+		return
+	}
+	if req.SessionID != "" {
+		sessionStore := newHistoryBackend(req.WorkingDir)
+		if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
+			session.Status = "cancelled"
+			session.UpdatedAt = time.Now().UTC()
+			_ = sessionStore.Save(ctx, session)
+		}
+	}
+	eventStore := newEventBackend(req.WorkingDir)
+	if req.SessionID != "" {
+		_ = eventStore.AppendEvent(ctx, events.Record{
+			ID:         "evt_" + req.ID + "_cancelled",
+			SessionID:  req.SessionID,
+			TaskID:     req.TaskID,
+			Type:       events.TypeQueueCancelled,
+			ActorType:  events.ActorTypeHuman,
+			OccurredAt: time.Now().UTC(),
+			ReasonCode: "manual_cancel",
+			Payload: map[string]any{
+				"job_id": req.ID,
+			},
+		})
+	}
+	taskStore := newTaskBackend(req.WorkingDir)
+	if req.SessionID == "" {
+		return
+	}
+	if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
+		for _, item := range items {
+			switch item.State {
+			case domain.TaskStateSucceeded, domain.TaskStateFailedRecoverable, domain.TaskStateFailedTerminal, domain.TaskStateCancelled:
+				continue
+			default:
+				_ = taskStore.UpdateTaskState(ctx, store.TaskStateUpdate{
+					TaskID: item.ID,
+					State:  domain.TaskStateCancelled,
+				})
+			}
+		}
+	}
+}
+
+func (d *Daemon) startJobHeartbeat(ctx context.Context, req queue.Request) func() {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				current, err := d.queue.Get(context.Background(), req.ID)
+				if err == nil && current.Status == queue.StatusRunning {
+					current.UpdatedAt = time.Now().UTC()
+					_ = d.queue.Update(context.Background(), current)
+				}
+				log.Printf("romad heartbeat job=%s session=%s task=%s status=running", req.ID, req.SessionID, req.TaskID)
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+	}
 }
 
 func (d *Daemon) deliverQueueNotification(ctx context.Context, req queue.Request) {
@@ -365,6 +546,11 @@ func (d *Daemon) deliverQueueNotification(ctx context.Context, req queue.Request
 		notification.Severity = domain.NotificationSeverityMedium
 		notification.Title = "ROMA approval rejected"
 		notification.Summary = fmt.Sprintf("Job %s was rejected and will not run.", req.ID)
+	case queue.StatusCancelled:
+		notification.Type = "task_cancelled"
+		notification.Severity = domain.NotificationSeverityMedium
+		notification.Title = "ROMA task cancelled"
+		notification.Summary = fmt.Sprintf("Job %s was cancelled.", req.ID)
 	default:
 		return
 	}
