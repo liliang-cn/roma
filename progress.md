@@ -157,6 +157,14 @@
   - `workspace.MergeBack`
   - `roma workspaces merge <session_id> <task_id>`
   - `POST /workspaces/{session}/{task}/merge`
+- Expanded top-level status metrics:
+  - `released_leases`
+  - `recovered_leases`
+  - `prepared_workspaces`
+  - `released_workspaces`
+  - `reclaimed_workspaces`
+  - `merged_workspaces`
+  - added API test coverage for the new status buckets
 
 ## Latest Verified Commands
 

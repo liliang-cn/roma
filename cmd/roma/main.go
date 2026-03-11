@@ -1099,8 +1099,14 @@ func runStatus(ctx context.Context) error {
 	artifactCount := 0
 	eventCount := 0
 	activeLeaseCount := 0
+	releasedLeaseCount := 0
+	recoveredLeaseCount := 0
 	pendingApprovalCount := 0
 	recoverableSessionCount := 0
+	preparedWorkspaceCount := 0
+	releasedWorkspaceCount := 0
+	reclaimedWorkspaceCount := 0
+	mergedWorkspaceCount := 0
 	sqlitePath := sqliteutil.DBPath(wd)
 	sqliteBytes := int64(0)
 	sqliteEnabled := false
@@ -1113,8 +1119,14 @@ func runStatus(ctx context.Context) error {
 			artifactCount = status.Artifacts
 			eventCount = status.Events
 			activeLeaseCount = status.ActiveLeases
+			releasedLeaseCount = status.ReleasedLeases
+			recoveredLeaseCount = status.RecoveredLeases
 			pendingApprovalCount = status.PendingApprovalTasks
 			recoverableSessionCount = status.RecoverableSessions
+			preparedWorkspaceCount = status.PreparedWorkspaces
+			releasedWorkspaceCount = status.ReleasedWorkspaces
+			reclaimedWorkspaceCount = status.ReclaimedWorkspaces
+			mergedWorkspaceCount = status.MergedWorkspaces
 			sqliteEnabled = status.SQLiteEnabled
 			sqlitePath = status.SQLitePath
 			sqliteBytes = status.SQLiteBytes
@@ -1145,9 +1157,28 @@ func runStatus(ctx context.Context) error {
 					pendingApprovalCount += len(item.PendingApprovalTaskIDs)
 				}
 			}
+			if items, err := leaseStore.ListByStatus(ctx, scheduler.LeaseStatusReleased); err == nil {
+				releasedLeaseCount = len(items)
+			}
 			if items, err := leaseStore.ListByStatus(ctx, scheduler.LeaseStatusRecovered); err == nil {
+				recoveredLeaseCount = len(items)
 				for _, item := range items {
 					pendingApprovalCount += len(item.PendingApprovalTaskIDs)
+				}
+			}
+		}
+		manager := workspacepkg.NewManager(wd, nil)
+		if items, err := manager.List(ctx); err == nil {
+			for _, item := range items {
+				switch item.Status {
+				case "prepared":
+					preparedWorkspaceCount++
+				case "released":
+					releasedWorkspaceCount++
+				case "reclaimed":
+					reclaimedWorkspaceCount++
+				case "merged":
+					mergedWorkspaceCount++
 				}
 			}
 		}
@@ -1162,8 +1193,14 @@ func runStatus(ctx context.Context) error {
 	fmt.Printf("artifacts=%d\n", artifactCount)
 	fmt.Printf("events=%d\n", eventCount)
 	fmt.Printf("active_leases=%d\n", activeLeaseCount)
+	fmt.Printf("released_leases=%d\n", releasedLeaseCount)
+	fmt.Printf("recovered_leases=%d\n", recoveredLeaseCount)
 	fmt.Printf("pending_approval_tasks=%d\n", pendingApprovalCount)
 	fmt.Printf("recoverable_sessions=%d\n", recoverableSessionCount)
+	fmt.Printf("prepared_workspaces=%d\n", preparedWorkspaceCount)
+	fmt.Printf("released_workspaces=%d\n", releasedWorkspaceCount)
+	fmt.Printf("reclaimed_workspaces=%d\n", reclaimedWorkspaceCount)
+	fmt.Printf("merged_workspaces=%d\n", mergedWorkspaceCount)
 	fmt.Printf("sqlite_enabled=%t\n", sqliteEnabled)
 	fmt.Printf("sqlite_path=%s\n", filepath.Clean(sqlitePath))
 	fmt.Printf("sqlite_bytes=%d\n", sqliteBytes)

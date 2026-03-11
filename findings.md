@@ -142,10 +142,17 @@
   - per-task git worktrees are created
   - the same session then reclaims all stale workspaces
   - this is still not production-scale load testing, but it is a real concurrency regression guard instead of pure reasoning
-  - there is now also a repeated-run soak regression:
-    - multiple concurrent graph sessions run back-to-back
-    - no active scheduler leases remain afterward
-    - all related workspaces can still be reclaimed cleanly
+- there is now also a repeated-run soak regression:
+  - multiple concurrent graph sessions run back-to-back
+  - no active scheduler leases remain afterward
+  - all related workspaces can still be reclaimed cleanly
+- daemon and CLI status now expose lease/workspace buckets directly:
+  - `released_leases`
+  - `recovered_leases`
+  - `prepared_workspaces`
+  - `released_workspaces`
+  - `reclaimed_workspaces`
+  - `merged_workspaces`
 - Curia is still intentionally minimal:
   - quorum and vote selection are lightweight
   - it now detects close-score and veto-driven disputes and can emit `winning_mode=merge`, but arbitration is still human-first

@@ -621,6 +621,7 @@ func TestServerStatus(t *testing.T) {
 	t.Parallel()
 
 	workDir := t.TempDir()
+	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
 	sessionStore := history.NewStore(workDir)
 	server := NewServer(workDir, queueStore, sessionStore)
@@ -656,6 +657,24 @@ func TestServerStatus(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_lease_status", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := leaseStore.Release(context.Background(), "sess_lease_status", "owner_1", []string{"task_status"}); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+	manager := workspacepkg.NewManager(workDir, storepkg.NewMemoryStore())
+	prepared, err := manager.Prepare(context.Background(), "sess_status", "task_status", workDir, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
 
 	status, err := client.Status(context.Background())
 	if err != nil {
@@ -666,6 +685,12 @@ func TestServerStatus(t *testing.T) {
 	}
 	if status.Sessions != 1 {
 		t.Fatalf("sessions = %d, want 1", status.Sessions)
+	}
+	if status.ReleasedLeases != 1 {
+		t.Fatalf("released leases = %d, want 1", status.ReleasedLeases)
+	}
+	if status.ReleasedWorkspaces != 1 {
+		t.Fatalf("released workspaces = %d, want 1", status.ReleasedWorkspaces)
 	}
 	if !status.SQLiteEnabled {
 		t.Fatal("sqlite should be enabled")

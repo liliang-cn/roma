@@ -140,6 +140,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	artifactItems, _ := preferredArtifactStore(workDir).List(r.Context(), "")
 	eventItems, _ := preferredEventStore(workDir).ListEvents(r.Context(), store.EventFilter{})
 	activeLeases := 0
+	releasedLeases := 0
+	recoveredLeases := 0
 	pendingApprovalTasks := 0
 	if leaseStore, err := scheduler.NewLeaseStore(workDir); err == nil {
 		if items, err := leaseStore.ListByStatus(r.Context(), scheduler.LeaseStatusActive); err == nil {
@@ -149,8 +151,30 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if items, err := leaseStore.ListByStatus(r.Context(), scheduler.LeaseStatusRecovered); err == nil {
+			recoveredLeases = len(items)
 			for _, item := range items {
 				pendingApprovalTasks += len(item.PendingApprovalTaskIDs)
+			}
+		}
+		if items, err := leaseStore.ListByStatus(r.Context(), scheduler.LeaseStatusReleased); err == nil {
+			releasedLeases = len(items)
+		}
+	}
+	preparedWorkspaces := 0
+	releasedWorkspaces := 0
+	reclaimedWorkspaces := 0
+	mergedWorkspaces := 0
+	if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
+		for _, item := range items {
+			switch item.Status {
+			case "prepared":
+				preparedWorkspaces++
+			case "released":
+				releasedWorkspaces++
+			case "reclaimed":
+				reclaimedWorkspaces++
+			case "merged":
+				mergedWorkspaces++
 			}
 		}
 	}
@@ -171,8 +195,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Artifacts:            len(artifactItems),
 		Events:               len(eventItems),
 		ActiveLeases:         activeLeases,
+		ReleasedLeases:       releasedLeases,
+		RecoveredLeases:      recoveredLeases,
 		PendingApprovalTasks: pendingApprovalTasks,
 		RecoverableSessions:  recoverableSessions,
+		PreparedWorkspaces:   preparedWorkspaces,
+		ReleasedWorkspaces:   releasedWorkspaces,
+		ReclaimedWorkspaces:  reclaimedWorkspaces,
+		MergedWorkspaces:     mergedWorkspaces,
 		SQLiteEnabled:        sqliteEnabled,
 		SQLitePath:           sqlitePath,
 		SQLiteBytes:          sqliteBytes,

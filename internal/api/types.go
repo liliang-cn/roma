@@ -78,8 +78,14 @@ type StatusResponse struct {
 	Artifacts            int    `json:"artifacts"`
 	Events               int    `json:"events"`
 	ActiveLeases         int    `json:"active_leases"`
+	ReleasedLeases       int    `json:"released_leases"`
+	RecoveredLeases      int    `json:"recovered_leases"`
 	PendingApprovalTasks int    `json:"pending_approval_tasks"`
 	RecoverableSessions  int    `json:"recoverable_sessions"`
+	PreparedWorkspaces   int    `json:"prepared_workspaces"`
+	ReleasedWorkspaces   int    `json:"released_workspaces"`
+	ReclaimedWorkspaces  int    `json:"reclaimed_workspaces"`
+	MergedWorkspaces     int    `json:"merged_workspaces"`
 	SQLiteEnabled        bool   `json:"sqlite_enabled"`
 	SQLitePath           string `json:"sqlite_path"`
 	SQLiteBytes          int64  `json:"sqlite_bytes"`
