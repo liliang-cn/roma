@@ -1,0 +1,15 @@
+{
+  "prompt": "Resolve two competing API implementation proposals with automatic arbitration.",
+  "nodes": [
+    {
+      "id": "curia_auto",
+      "title": "Automatic Curia Arbitration",
+      "agent": "codex",
+      "strategy": "curia",
+      "senators": ["codex", "gemini", "copilot"],
+      "quorum": 2,
+      "arbitration_mode": "augustus",
+      "arbitrator": "claude"
+    }
+  ]
+}

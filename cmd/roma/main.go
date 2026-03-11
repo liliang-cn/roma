@@ -2158,6 +2158,13 @@ func queueCuriaSuffix(items []domain.ArtifactEnvelope) string {
 	if latestDecision != nil && latestDecision.WinningMode != "" {
 		parts = append(parts, "mode="+latestDecision.WinningMode)
 	}
+	if latestDecision != nil && latestDecision.Arbitrated {
+		if latestDecision.ArbitratorID != "" {
+			parts = append(parts, "arbitrated="+latestDecision.ArbitratorID)
+		} else {
+			parts = append(parts, "arbitrated=true")
+		}
+	}
 	if latestDebate != nil && latestDebate.DisputeClass != "" && latestDebate.DisputeClass != "none" {
 		parts = append(parts, "dispute="+latestDebate.DisputeClass)
 	}

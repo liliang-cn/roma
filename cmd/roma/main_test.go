@@ -20,13 +20,15 @@ func TestQueueCuriaSuffix(t *testing.T) {
 		{
 			Kind: domain.ArtifactKindDecisionPack,
 			Payload: artifacts.DecisionPackPayload{
-				WinningMode: "merge",
+				WinningMode:  "merge",
+				Arbitrated:   true,
+				ArbitratorID: "claude-code",
 			},
 		},
 	}
 
 	got := queueCuriaSuffix(items)
-	want := "curia mode=merge dispute=close_score"
+	want := "curia mode=merge arbitrated=claude-code dispute=close_score"
 	if got != want {
 		t.Fatalf("queueCuriaSuffix() = %q, want %q", got, want)
 	}
