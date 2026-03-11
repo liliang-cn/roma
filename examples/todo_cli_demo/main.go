@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,37 +26,37 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	filePath, rest, err := parseArgs(args)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		printUsage(stdout)
-		return 1
+	filePath := ".todo.json"
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--file" && i+1 < len(args) {
+			filePath = args[i+1]
+			i++
+		} else {
+			rest = append(rest, args[i])
+		}
 	}
+
 	if len(rest) == 0 {
-		printUsage(stdout)
+		fmt.Fprintf(stderr, "Usage: todo <command> [args]\n\nCommands:\n  add <title>   Add a new todo\n  list          List all todos\n  done <id>     Mark a todo as done\n  remove <id>   Remove a todo\n")
 		return 1
 	}
 
-	store, err := loadTodos(filePath)
-	if err != nil {
-		fmt.Fprintf(stderr, "load todos: %v\n", err)
-		return 1
-	}
+	store, _ := loadTodos(filePath)
 
 	switch rest[0] {
 	case "add":
-		if len(rest) < 2 || strings.TrimSpace(strings.Join(rest[1:], " ")) == "" {
-			fmt.Fprintln(stderr, "add requires todo text")
+		if len(rest) < 2 {
 			return 1
 		}
 		title := strings.TrimSpace(strings.Join(rest[1:], " "))
+		if title == "" {
+			return 1
+		}
 		item := todo{ID: store.NextID, Title: title}
 		store.NextID++
 		store.Items = append(store.Items, item)
-		if err := saveTodos(filePath, store); err != nil {
-			fmt.Fprintf(stderr, "save todos: %v\n", err)
-			return 1
-		}
+		saveTodos(filePath, store)
 		fmt.Fprintf(stdout, "added %d\n", item.ID)
 		return 0
 	case "list":
@@ -74,135 +73,66 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "done":
-		id, err := parseID(rest)
+		if len(rest) < 2 {
+			return 1
+		}
+		id, err := strconv.Atoi(rest[1])
 		if err != nil {
-			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		for i := range store.Items {
 			if store.Items[i].ID == id {
 				store.Items[i].Done = true
-				if err := saveTodos(filePath, store); err != nil {
-					fmt.Fprintf(stderr, "save todos: %v\n", err)
-					return 1
-				}
+				saveTodos(filePath, store)
 				fmt.Fprintf(stdout, "completed %d\n", id)
 				return 0
 			}
 		}
-		fmt.Fprintf(stderr, "todo %d not found\n", id)
 		return 1
 	case "remove":
-		id, err := parseID(rest)
+		if len(rest) < 2 {
+			return 1
+		}
+		id, err := strconv.Atoi(rest[1])
 		if err != nil {
-			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		for i := range store.Items {
 			if store.Items[i].ID == id {
 				store.Items = append(store.Items[:i], store.Items[i+1:]...)
-				if err := saveTodos(filePath, store); err != nil {
-					fmt.Fprintf(stderr, "save todos: %v\n", err)
-					return 1
-				}
+				saveTodos(filePath, store)
 				fmt.Fprintf(stdout, "removed %d\n", id)
 				return 0
 			}
 		}
-		fmt.Fprintf(stderr, "todo %d not found\n", id)
 		return 1
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n", rest[0])
-		printUsage(stdout)
 		return 1
 	}
-}
-
-func parseArgs(args []string) (string, []string, error) {
-	filePath := strings.TrimSpace(os.Getenv("TODO_FILE"))
-	if filePath == "" {
-		filePath = ".todo.json"
-	}
-
-	rest := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--file":
-			i++
-			if i >= len(args) {
-				return "", nil, errors.New("--file requires a value")
-			}
-			filePath = args[i]
-		default:
-			rest = append(rest, args[i])
-		}
-	}
-
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve todo file: %w", err)
-	}
-	return absPath, rest, nil
-}
-
-func parseID(args []string) (int, error) {
-	if len(args) < 2 {
-		return 0, fmt.Errorf("%s requires a numeric id", args[0])
-	}
-	id, err := strconv.Atoi(args[1])
-	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("%s requires a numeric id", args[0])
-	}
-	return id, nil
 }
 
 func loadTodos(path string) (todoFile, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return todoFile{NextID: 1, Items: []todo{}}, nil
-		}
-		return todoFile{}, err
+		return todoFile{NextID: 1, Items: []todo{}}, nil
 	}
-
 	var data todoFile
 	if err := json.Unmarshal(raw, &data); err != nil {
-		return todoFile{}, err
+		return todoFile{NextID: 1, Items: []todo{}}, nil
 	}
 	if data.NextID <= 0 {
-		data.NextID = nextID(data.Items)
+		data.NextID = 1
+		for _, item := range data.Items {
+			if item.ID >= data.NextID {
+				data.NextID = item.ID + 1
+			}
+		}
 	}
 	return data, nil
 }
 
 func saveTodos(path string, data todoFile) error {
-	if data.NextID <= 0 {
-		data.NextID = nextID(data.Items)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
-}
-
-func nextID(items []todo) int {
-	next := 1
-	for _, item := range items {
-		if item.ID >= next {
-			next = item.ID + 1
-		}
-	}
-	return next
-}
-
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  todo [--file path] add <text>")
-	fmt.Fprintln(w, "  todo [--file path] list")
-	fmt.Fprintln(w, "  todo [--file path] done <id>")
-	fmt.Fprintln(w, "  todo [--file path] remove <id>")
+	os.MkdirAll(filepath.Dir(path), 0755)
+	raw, _ := json.MarshalIndent(data, "", "  ")
+	return os.WriteFile(path, raw, 0644)
 }

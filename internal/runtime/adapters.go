@@ -73,8 +73,8 @@ func (GeminiAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.
 	return exec.CommandContext(
 		ctx,
 		req.Profile.Command,
+		"-y",
 		"-p", req.Prompt,
-		"--approval-mode", "auto_edit",
 	), nil
 }
 
@@ -97,9 +97,9 @@ func (CopilotAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec
 		ctx,
 		req.Profile.Command,
 		"-p", req.Prompt,
-		"--allow-all-tools",
-		"--allow-all-paths",
-		"--allow-all-urls",
+		"--yolo",
+		"--autopilot",
+		"--no-ask-user",
 		"-s",
 	), nil
 }

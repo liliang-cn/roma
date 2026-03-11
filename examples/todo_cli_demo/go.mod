@@ -1,3 +1,3 @@
-module github.com/liliang/roma/examples/todo_cli_demo
+module todo-cli-demo
 
-go 1.25.0
+go 1.25.4
