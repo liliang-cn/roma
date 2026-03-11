@@ -20,6 +20,7 @@ import (
 	"github.com/liliang-cn/roma/internal/plans"
 	"github.com/liliang-cn/roma/internal/policy"
 	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/sqliteutil"
 	"github.com/liliang-cn/roma/internal/store"
@@ -50,9 +51,9 @@ type Server struct {
 
 // NewServer constructs the API server.
 func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Backend) *Server {
-	socketPath := filepath.Join(workDir, ".roma", "run", "romad.sock")
+	socketPath := romapath.Join(workDir, "run", "romad.sock")
 	server := &Server{
-		metaPath:     filepath.Join(workDir, ".roma", "run", "api.json"),
+		metaPath:     romapath.Join(workDir, "run", "api.json"),
 		socketPath:   socketPath,
 		queueStore:   queueStore,
 		sessionStore: sessionStore,

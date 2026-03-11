@@ -16,8 +16,8 @@ type AgentProfile struct {
 	DisplayName        string            `json:"display_name"`
 	Command            string            `json:"command"`
 	Args               []string          `json:"args,omitempty"`
+	HealthcheckArgs    []string          `json:"healthcheck_args,omitempty"`
 	Aliases            []string          `json:"aliases,omitempty"`
-	Default            bool              `json:"default,omitempty"`
 	UsePTY             bool              `json:"use_pty,omitempty"`
 	SupportsMCP        bool              `json:"supports_mcp"`
 	SupportsJSONOutput bool              `json:"supports_json_output"`

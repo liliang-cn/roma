@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/liliang-cn/roma/internal/romapath"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // DBPath returns the canonical SQLite database path for a workspace.
 func DBPath(workDir string) string {
-	return filepath.Join(workDir, ".roma", "roma.db")
+	return romapath.Join(workDir, "roma.db")
 }
 
 // Open opens the workspace SQLite database and applies the base schema.

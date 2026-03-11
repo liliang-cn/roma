@@ -32,3 +32,31 @@ func TestResolveByAlias(t *testing.T) {
 		t.Fatalf("Resolve() id = %s, want my-codex", profile.ID)
 	}
 }
+
+func TestAvailabilityForProfileUsesHealthcheck(t *testing.T) {
+	t.Parallel()
+
+	got := availabilityForProfile(context.Background(), domain.AgentProfile{
+		ID:              "go-agent",
+		DisplayName:     "Go Agent",
+		Command:         "go",
+		HealthcheckArgs: []string{"version"},
+	})
+	if got != domain.AgentAvailabilityAvailable {
+		t.Fatalf("availabilityForProfile() = %s, want %s", got, domain.AgentAvailabilityAvailable)
+	}
+}
+
+func TestAvailabilityForProfileMissingCommand(t *testing.T) {
+	t.Parallel()
+
+	got := availabilityForProfile(context.Background(), domain.AgentProfile{
+		ID:              "missing-agent",
+		DisplayName:     "Missing Agent",
+		Command:         "roma-command-that-does-not-exist",
+		HealthcheckArgs: []string{"version"},
+	})
+	if got != domain.AgentAvailabilityPlanned {
+		t.Fatalf("availabilityForProfile() = %s, want %s", got, domain.AgentAvailabilityPlanned)
+	}
+}

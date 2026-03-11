@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 
@@ -137,6 +138,10 @@ func ResumeRecoverableSessions(ctx context.Context, workDir string, queueStore q
 	if runner == nil {
 		return nil
 	}
+	var sessionStore history.Backend
+	if store, err := history.NewSQLiteStore(workDir); err == nil {
+		sessionStore = store
+	}
 	items, err := RecoverableSessions(ctx, workDir)
 	if err != nil {
 		return err
@@ -175,7 +180,15 @@ func ResumeRecoverableSessions(ctx context.Context, workDir string, queueStore q
 			continue
 		}
 		if err := runner.ResumeSession(ctx, workDir, item.SessionID, os.Stdout); err != nil {
-			return fmt.Errorf("resume recoverable session %s: %w", item.SessionID, err)
+			log.Printf("romad skipping recoverable session=%s: %v", item.SessionID, err)
+			if sessionStore != nil {
+				if record, getErr := sessionStore.Get(ctx, item.SessionID); getErr == nil {
+					record.Status = "failed"
+					record.UpdatedAt = time.Now().UTC()
+					_ = sessionStore.Save(ctx, record)
+				}
+			}
+			continue
 		}
 	}
 	return nil

@@ -205,9 +205,9 @@
   - daemon-managed cancellation now propagates through the shared job context, so all agent processes launched under the same job are interrupted together
 - Agent registry is now fully user-provided:
   - there are no built-in coding-agent profiles anymore
-  - user-defined agents persist in `~/.config/roma/agents.json`
+  - user-defined agents now default to `$HOME/.roma/agents.json`
   - runtime launch now comes from profile `command` + `args` templates instead of hard-coded per-agent adapters
-  - a profile can now mark itself as `default` and `use_pty`
+  - the first configured profile is the implicit default, and profiles can still request PTY behavior
   - `roma agent add/remove/inspect` target that per-user config path
 - CLI discoverability was becoming a product problem:
   - top-level help exposed too many internal inspection nouns at once
@@ -218,6 +218,7 @@
   - stale local `.roma/run/api.json` could shadow a healthy global daemon
   - `systemd --user` service needed explicit PATH for `codex/gemini/copilot`
   - daemon discovery now falls back to a global daemon home, but live progress UX still needs work on top of that fix
+- ROMA home paths were previously split across `~/.config/roma`, `~/.local/share/roma`, and repo-local `.roma/`; the current code now uses `$HOME/.roma` as the single default home path.
 - the concurrent DAG soak baseline is stronger now:
   - repeated graph runs already existed
   - parallel multi-session dispatcher soak now also verifies lease drain and workspace reclaim invariants under concurrent session execution

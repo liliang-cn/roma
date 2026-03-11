@@ -29,7 +29,7 @@ In the Curia metaphor:
 The intended user flow is:
 
 1. `roma run ...` or `roma submit ...`
-2. `romad` schedules agents and records everything under `.roma/`
+2. `romad` schedules agents and records everything under the ROMA state root
 3. inspect with `roma queue ...` or `roma debug ...`
 4. approve or reject when policy or plan gates require it
 5. preview, apply, or roll back the resulting execution plan
@@ -65,11 +65,12 @@ make test
 
 ## Run `romad`
 
-`romad` uses the current working directory as its workspace root and stores runtime state under `.roma/`.
+`romad` keeps its own state under `$HOME/.roma` by default. If you intentionally run it from a repository root, ROMA still uses that repository's `.roma/` directory instead.
 That means there are two separate paths to think about:
 
 - binary path: where `romad` is installed, for example `~/.local/bin/romad`
-- workspace root: the directory where `romad` runs and writes `.roma/`
+- ROMA home: `$HOME/.roma`
+- repo-local mode: the directory where `romad` runs and writes `.roma/`
 
 Run it directly:
 
@@ -91,7 +92,7 @@ Install it:
 
 ```bash
 make install
-mkdir -p ~/.local/share/roma
+mkdir -p ~/.roma
 mkdir -p ~/.config/systemd/user
 cp deploy/systemd/romad.service ~/.config/systemd/user/romad.service
 systemctl --user daemon-reload
@@ -110,9 +111,9 @@ systemctl --user stop romad
 The unit assumes:
 
 - binary path: `$HOME/.local/bin/romad`
-- workspace root: `$HOME/.local/share/roma`
+- ROMA home: `$HOME/.roma`
 
-If you want `romad` to own a different workspace root, edit `WorkingDirectory=` in the unit.
+If you want `romad` to own a different state root, edit `WorkingDirectory=` in the unit.
 
 ## macOS
 
@@ -141,7 +142,7 @@ launchctl bootout "gui/$(id -u)/com.roma.romad"
 The LaunchAgent assumes:
 
 - binary path: `$HOME/.local/bin/romad`
-- workspace root: `$HOME/.local/share/roma`
+- ROMA home: `$HOME/.roma`
 
 ## Windows
 

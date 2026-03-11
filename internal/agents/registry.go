@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 // Registry provides discoverable agent profiles.
@@ -21,14 +22,7 @@ type Registry struct {
 
 // DefaultUserConfigPath returns the per-user registry config location.
 func DefaultUserConfigPath() string {
-	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
-		return filepath.Join(base, "roma", "agents.json")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return filepath.Join(".roma", "agents.json")
-	}
-	return filepath.Join(home, ".config", "roma", "agents.json")
+	return filepath.Join(romapath.HomeDir(), "agents.json")
 }
 
 // NewRegistry constructs a registry from agent profiles.
@@ -153,9 +147,6 @@ func (r *Registry) Add(profile domain.AgentProfile) error {
 	if err := domain.ValidateAgentProfile(profile); err != nil {
 		return err
 	}
-	if profile.Default {
-		r.clearDefaultFlag()
-	}
 	r.users[profile.ID] = profile
 	return nil
 }
@@ -220,38 +211,13 @@ func (r *Registry) List(_ context.Context) []domain.AgentProfile {
 	return out
 }
 
-// DefaultProfile returns the configured default agent or infers one when only one agent exists.
+// DefaultProfile returns the first configured agent.
 func (r *Registry) DefaultProfile(ctx context.Context) (domain.AgentProfile, error) {
 	profiles := r.List(ctx)
 	if len(profiles) == 0 {
 		return domain.AgentProfile{}, fmt.Errorf("no agents configured; use roma agent add <id> <name> <path> ...")
 	}
-	defaults := make([]domain.AgentProfile, 0, 1)
-	for _, profile := range profiles {
-		if profile.Default {
-			defaults = append(defaults, profile)
-		}
-	}
-	switch len(defaults) {
-	case 1:
-		return defaults[0], nil
-	case 0:
-		if len(profiles) == 1 {
-			return profiles[0], nil
-		}
-		return domain.AgentProfile{}, fmt.Errorf("multiple agents configured; use --agent or mark one agent as default")
-	default:
-		return domain.AgentProfile{}, fmt.Errorf("multiple default agents configured; keep only one default agent")
-	}
-}
-
-func (r *Registry) clearDefaultFlag() {
-	for id, profile := range r.users {
-		if profile.Default {
-			profile.Default = false
-			r.users[id] = profile
-		}
-	}
+	return profiles[0], nil
 }
 
 func matchesProfile(profile domain.AgentProfile, needle string) bool {

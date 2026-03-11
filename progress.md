@@ -187,9 +187,13 @@
   - singular command names remain the primary surface
 - Removed built-in coding-agent assumptions:
   - `DefaultRegistry()` is now empty until user config is loaded
-  - `romad` and `roma` both load agents from `~/.config/roma/agents.json`
+  - `romad` and `roma` now prefer `$HOME/.roma/agents.json`
   - runtime launch now uses generic profile-driven `command + args` templates with placeholders such as `{prompt}` and `{cwd}`
-  - profiles can mark `default` and `use_pty`, so starter selection and PTY behavior are now user-configured
+  - the first configured profile is the implicit default, and `use_pty` remains user-configured
+- Unified ROMA's own default state root toward `$HOME/.roma`:
+  - agent config now defaults to `$HOME/.roma/agents.json`
+  - daemon discovery now prefers `$HOME/.roma/run/api.json`
+  - systemd and launchd templates now point at `$HOME/.roma`
 
 ## Latest Verified Commands
 
@@ -297,5 +301,5 @@
   - `romad` now emits `romad heartbeat job=... session=... task=... status=running` to journald
 - Moved the agent registry to a global per-user config flow:
   - built-in defaults still load automatically
-  - user-defined agents now persist in `~/.config/roma/agents.json`
+  - user-defined agents now default to `$HOME/.roma/agents.json`
   - `roma agents inspect` now reports the active config path alongside the profile payload

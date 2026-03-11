@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/store"
 )
 
@@ -311,8 +312,16 @@ func isEffectiveDirAllowed(baseDir, effectiveDir string) bool {
 	if effectiveDir == baseDir {
 		return true
 	}
-	worktreeRoot := filepath.Join(baseDir, ".roma", "workspaces")
-	return effectiveDir == worktreeRoot || strings.HasPrefix(effectiveDir, worktreeRoot+string(filepath.Separator))
+	allowedRoots := []string{
+		romapath.Join(baseDir, "workspaces"),
+		romapath.Join(romapath.HomeDir(), "workspaces"),
+	}
+	for _, worktreeRoot := range allowedRoots {
+		if effectiveDir == worktreeRoot || strings.HasPrefix(effectiveDir, worktreeRoot+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectProtectedPaths(req Request) []string {

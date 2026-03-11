@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 type ReputationRecord struct {
@@ -34,7 +35,7 @@ func NewReputationStore(workDir string) *ReputationStore {
 		return nil
 	}
 	return &ReputationStore{
-		path: filepath.Join(workDir, ".roma", "curia-reputation.json"),
+		path: romapath.Join(workDir, "curia-reputation.json"),
 		now:  func() time.Time { return time.Now().UTC() },
 	}
 }

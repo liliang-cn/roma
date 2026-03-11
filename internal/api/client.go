@@ -18,6 +18,7 @@ import (
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/workspace"
 )
@@ -746,25 +747,38 @@ func (c *Client) httpClient() (*http.Client, string, error) {
 func candidateMetaPaths(workDir string) []string {
 	paths := make([]string, 0, 3)
 	seen := make(map[string]struct{}, 3)
-	add := func(root string) {
-		root = strings.TrimSpace(root)
-		if root == "" {
+	addPath := func(metaPath string) {
+		metaPath = strings.TrimSpace(metaPath)
+		if metaPath == "" {
 			return
 		}
-		metaPath := filepath.Join(root, ".roma", "run", "api.json")
 		if _, ok := seen[metaPath]; ok {
 			return
 		}
 		seen[metaPath] = struct{}{}
 		paths = append(paths, metaPath)
 	}
+	addStateRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		addPath(filepath.Join(root, "run", "api.json"))
+	}
+	addWorkspaceRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		addPath(romapath.Join(root, "run", "api.json"))
+	}
 
 	if override := daemonHomeOverride(); override != "" {
-		add(override)
+		addStateRoot(override)
 	}
-	add(workDir)
+	addWorkspaceRoot(workDir)
 	if fallback := defaultDaemonHome(); fallback != "" {
-		add(fallback)
+		addStateRoot(fallback)
 	}
 	return paths
 }
@@ -779,13 +793,7 @@ func daemonHomeOverride() string {
 }
 
 func defaultDaemonHome() string {
-	if xdg := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); xdg != "" {
-		return filepath.Join(xdg, "roma")
-	}
-	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
-		return filepath.Join(home, ".local", "share", "roma")
-	}
-	return ""
+	return romapath.HomeDir()
 }
 
 func clientFromMeta(metaPath string) (*http.Client, string, error) {

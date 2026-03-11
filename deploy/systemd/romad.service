@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/share/roma
+WorkingDirectory=%h/.roma
 ExecStart=%h/.local/bin/romad
 Restart=on-failure
 RestartSec=2

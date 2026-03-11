@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 // FileEventStore persists events as append-only JSONL.
@@ -21,7 +22,7 @@ type FileEventStore struct {
 // NewFileEventStore constructs a file-backed event store.
 func NewFileEventStore(workDir string) *FileEventStore {
 	return &FileEventStore{
-		path: filepath.Join(workDir, ".roma", "events", "events.jsonl"),
+		path: romapath.Join(workDir, "events", "events.jsonl"),
 	}
 }
 

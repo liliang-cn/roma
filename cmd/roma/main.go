@@ -168,7 +168,7 @@ func runAgents(ctx context.Context, registry *agents.Registry, args []string) er
 	switch args[0] {
 	case "add":
 		if len(args) < 4 {
-			return fmt.Errorf("usage: roma agent add <id> <display_name> <path> [--arg <arg>] [--alias <alias>] [--default] [--pty] [--mcp] [--json]")
+			return fmt.Errorf("usage: roma agent add <id> <display_name> <path> [--arg <arg>] [--alias <alias>] [--pty] [--mcp] [--json]")
 		}
 		profile := domain.AgentProfile{
 			ID:                 args[1],
@@ -192,8 +192,6 @@ func runAgents(ctx context.Context, registry *agents.Registry, args []string) er
 					return fmt.Errorf("--alias requires a value")
 				}
 				profile.Aliases = strings.Split(args[i], ",")
-			case "--default":
-				profile.Default = true
 			case "--pty":
 				profile.UsePTY = true
 			case "--mcp":
@@ -2591,7 +2589,7 @@ func printUsage() {
 	fmt.Println("  roma help queue")
 	fmt.Println("  roma help agent")
 	fmt.Println("  roma help debug")
-	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --default --pty`)
+	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
 	fmt.Println(`  roma run --agent my-codex "build a feature"`)
 }
 
@@ -2600,7 +2598,7 @@ func printTopicUsage(topic string) {
 	case "agent", "agents":
 		fmt.Println("roma agent usage:")
 		fmt.Println("  roma agent list")
-		fmt.Println("  roma agent add <id> <name> <path> [--arg <arg>] [--alias <a1,a2>] [--default] [--pty] [--mcp] [--json]")
+		fmt.Println("  roma agent add <id> <name> <path> [--arg <arg>] [--alias <a1,a2>] [--pty] [--mcp] [--json]")
 		fmt.Println("  roma agent remove <id>")
 		fmt.Println("  roma agent inspect <id>")
 	case "artifact", "artifacts":

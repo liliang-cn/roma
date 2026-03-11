@@ -29,7 +29,7 @@ func TestClientFallsBackToGlobalDaemonHome(t *testing.T) {
 		t.Fatalf("write stale meta: %v", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(globalHome, ".roma", "run"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(globalHome, "run"), 0o755); err != nil {
 		t.Fatalf("mkdir global run dir: %v", err)
 	}
 	globalMeta := map[string]string{
@@ -40,7 +40,7 @@ func TestClientFallsBackToGlobalDaemonHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal global meta: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(globalHome, ".roma", "run", "api.json"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(globalHome, "run", "api.json"), raw, 0o644); err != nil {
 		t.Fatalf("write global meta: %v", err)
 	}
 

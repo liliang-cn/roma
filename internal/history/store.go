@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 // SessionRecord is the persisted metadata for one local ROMA run.
@@ -33,7 +35,7 @@ type Store struct {
 // NewStore constructs a file-backed session store.
 func NewStore(workDir string) *Store {
 	return &Store{
-		rootDir: filepath.Join(workDir, ".roma", "sessions"),
+		rootDir: romapath.Join(workDir, "sessions"),
 	}
 }
 

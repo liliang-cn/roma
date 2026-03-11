@@ -15,6 +15,7 @@ Continue evolving ROMA from a local prototype into a daemon-first multi-agent or
 - Queue jobs now carry `session_id`, `task_id`, and `artifact_ids`.
 - Session/task/event writes now mirror into `.roma/roma.db` in addition to existing file persistence.
 - Direct, delegated, and graph runs can now opt into `--continuous` multi-round execution with `--max-rounds`.
+- ROMA's own default state root is now converging on `$HOME/.roma`, while repository-targeted task execution still keeps `--cwd` semantics separate from ROMA home.
 
 ## Phases
 
@@ -213,4 +214,5 @@ Status: in_progress
 1. Implement Phase 19 heartbeat and live runtime metadata so running jobs stop looking like hung queue records.
 2. Finish live inspection and one minimal `tail/attach` command for active jobs.
 3. Keep tightening the simplified CLI so `run` stays the obvious default and advanced inspection remains under `debug`, while agent execution stays fully user-configured.
-4. After runtime visibility is in place, continue Curia arbitration refinement and conflict UX work.
+4. Finish the remaining `$HOME/.roma` convergence work so installed services, config discovery, and state-path inspection all behave the same by default.
+5. After runtime visibility is in place, continue Curia arbitration refinement and conflict UX work.

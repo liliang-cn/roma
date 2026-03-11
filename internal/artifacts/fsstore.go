@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 // FileStore persists artifacts under the workspace .roma directory.
@@ -21,7 +22,7 @@ type FileStore struct {
 // NewFileStore constructs a file-backed artifact store.
 func NewFileStore(workDir string) *FileStore {
 	return &FileStore{
-		rootDir: filepath.Join(workDir, ".roma", "artifacts"),
+		rootDir: romapath.Join(workDir, "artifacts"),
 	}
 }
 

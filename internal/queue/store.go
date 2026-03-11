@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 // Status is the lifecycle state of a queued run request.
@@ -73,7 +75,7 @@ type Store struct {
 // NewStore constructs a file-backed queue store.
 func NewStore(workDir string) *Store {
 	return &Store{
-		rootDir: filepath.Join(workDir, ".roma", "queue"),
+		rootDir: romapath.Join(workDir, "queue"),
 	}
 }
 

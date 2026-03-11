@@ -9,7 +9,7 @@
 	<array>
 		<string>/bin/zsh</string>
 		<string>-lc</string>
-		<string>mkdir -p "$HOME/.local/share/roma" &amp;&amp; cd "$HOME/.local/share/roma" &amp;&amp; exec "$HOME/.local/bin/romad"</string>
+		<string>mkdir -p "$HOME/.roma" &amp;&amp; cd "$HOME/.roma" &amp;&amp; exec "$HOME/.local/bin/romad"</string>
 	</array>
 
 	<key>RunAtLoad</key>

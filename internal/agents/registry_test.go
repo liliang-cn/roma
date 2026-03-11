@@ -92,9 +92,9 @@ func TestRegistryLoadSave(t *testing.T) {
 }
 
 func TestDefaultUserConfigPath(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "/tmp/roma-config")
-	if got := DefaultUserConfigPath(); got != "/tmp/roma-config/roma/agents.json" {
-		t.Fatalf("DefaultUserConfigPath() = %q, want %q", got, "/tmp/roma-config/roma/agents.json")
+	t.Setenv("ROMA_HOME", "/tmp/roma-home")
+	if got := DefaultUserConfigPath(); got != "/tmp/roma-home/agents.json" {
+		t.Fatalf("DefaultUserConfigPath() = %q, want %q", got, "/tmp/roma-home/agents.json")
 	}
 }
 
@@ -150,7 +150,7 @@ func TestRegistryGetAlias(t *testing.T) {
 	}
 }
 
-func TestRegistryDefaultProfile(t *testing.T) {
+func TestRegistryDefaultProfileUsesFirstConfiguredAgent(t *testing.T) {
 	t.Parallel()
 
 	registry, _ := DefaultRegistry()
@@ -166,7 +166,6 @@ func TestRegistryDefaultProfile(t *testing.T) {
 		ID:           "agent-b",
 		DisplayName:  "Agent B",
 		Command:      "agent-b",
-		Default:      true,
 		Availability: domain.AgentAvailabilityPlanned,
 	}); err != nil {
 		t.Fatalf("Add(agent-b) error = %v", err)
@@ -175,7 +174,7 @@ func TestRegistryDefaultProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultProfile() error = %v", err)
 	}
-	if profile.ID != "agent-b" {
-		t.Fatalf("DefaultProfile() = %s, want agent-b", profile.ID)
+	if profile.ID != "agent-a" {
+		t.Fatalf("DefaultProfile() = %s, want agent-a", profile.ID)
 	}
 }
