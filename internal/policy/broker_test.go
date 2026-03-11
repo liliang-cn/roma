@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 func TestSimpleBrokerBlocksRootWorkingDir(t *testing.T) {

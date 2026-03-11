@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/sqliteutil"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/sqliteutil"
 )
 
 // SQLiteStore persists artifact envelopes into the shared workspace SQLite database.

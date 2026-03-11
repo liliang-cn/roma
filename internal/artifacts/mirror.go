@@ -3,7 +3,7 @@ package artifacts
 import (
 	"context"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // MirrorStore mirrors artifact persistence into multiple backends.

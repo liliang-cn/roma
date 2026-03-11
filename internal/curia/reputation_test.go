@@ -3,7 +3,7 @@ package curia
 import (
 	"testing"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 func TestReviewerWeightUsesMetadataOverride(t *testing.T) {

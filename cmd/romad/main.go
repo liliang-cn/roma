@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/liliang/roma/internal/app"
+	"github.com/liliang-cn/roma/internal/app"
 )
 
 func main() {

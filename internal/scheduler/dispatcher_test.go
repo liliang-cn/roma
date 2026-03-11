@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/runtime"
-	"github.com/liliang/roma/internal/store"
-	workspacepkg "github.com/liliang/roma/internal/workspace"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/runtime"
+	"github.com/liliang-cn/roma/internal/store"
+	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
 type dispatcherFakeAdapter struct{}

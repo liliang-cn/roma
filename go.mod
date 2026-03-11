@@ -1,4 +1,4 @@
-module github.com/liliang/roma
+module github.com/liliang-cn/roma
 
 go 1.23.0
 

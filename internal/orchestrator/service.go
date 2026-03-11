@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang/roma/internal/artifacts"
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/runtime"
+	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/runtime"
 )
 
 // Request describes a multi-agent execution request.

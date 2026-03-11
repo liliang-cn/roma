@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/events"
 )
 
 func TestFileEventStoreAppendAndList(t *testing.T) {

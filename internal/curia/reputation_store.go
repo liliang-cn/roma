@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 type ReputationRecord struct {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // Registry provides discoverable agent profiles.

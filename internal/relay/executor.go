@@ -3,10 +3,10 @@ package relay
 import (
 	"context"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/runtime"
-	"github.com/liliang/roma/internal/scheduler"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/runtime"
+	"github.com/liliang-cn/roma/internal/scheduler"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // NodeAssignment is the compatibility alias for scheduler-owned node execution input.

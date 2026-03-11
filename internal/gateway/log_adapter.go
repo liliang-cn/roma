@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // LogAdapter is a bootstrap adapter that logs outbound notifications.

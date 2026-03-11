@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // DecisionKind identifies the policy outcome.

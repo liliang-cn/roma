@@ -3,11 +3,11 @@ package syncdb
 import (
 	"context"
 
-	"github.com/liliang/roma/internal/artifacts"
-	"github.com/liliang/roma/internal/history"
-	"github.com/liliang/roma/internal/queue"
-	"github.com/liliang/roma/internal/store"
-	"github.com/liliang/roma/internal/taskstore"
+	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/history"
+	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/taskstore"
 )
 
 // Workspace imports file-backed metadata into SQLite so newer read paths can use one store.

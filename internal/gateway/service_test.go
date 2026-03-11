@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang/roma/internal/artifacts"
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/plans"
-	"github.com/liliang/roma/internal/store"
-	workspacepkg "github.com/liliang/roma/internal/workspace"
+	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/plans"
+	"github.com/liliang-cn/roma/internal/store"
+	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
 type fakeAdapter struct {

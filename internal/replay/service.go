@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // TaskSnapshot is the replayed task-level view derived from persisted events.

@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang/roma/internal/curia"
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/history"
-	"github.com/liliang/roma/internal/queue"
-	"github.com/liliang/roma/internal/scheduler"
-	"github.com/liliang/roma/internal/workspace"
+	"github.com/liliang-cn/roma/internal/curia"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/history"
+	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/scheduler"
+	"github.com/liliang-cn/roma/internal/workspace"
 )
 
 // Client talks to romad over a Unix domain socket.

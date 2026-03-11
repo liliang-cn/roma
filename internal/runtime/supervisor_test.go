@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 func TestBuildCommandForCodex(t *testing.T) {

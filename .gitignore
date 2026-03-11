@@ -5,3 +5,5 @@ todo_cli_demo/
 romad.log
 
 .snapshots/
+
+bin/

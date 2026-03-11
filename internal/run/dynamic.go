@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/liliang/roma/internal/artifacts"
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/scheduler"
+	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/scheduler"
 )
 
 const maxDynamicDelegationPasses = 3

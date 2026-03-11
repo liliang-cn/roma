@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // FileStore persists artifacts under the workspace .roma directory.

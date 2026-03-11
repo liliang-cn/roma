@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/liliang/roma/internal/artifacts"
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 func TestQueueCuriaSuffix(t *testing.T) {

@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // NodeAssignment binds a task node to an agent profile and runtime settings.

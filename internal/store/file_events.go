@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/liliang/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/events"
 )
 
 // FileEventStore persists events as append-only JSONL.

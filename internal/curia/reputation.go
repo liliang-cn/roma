@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 func reviewerWeight(profile domain.AgentProfile) int {

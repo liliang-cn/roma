@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // Store persists task records under .roma/tasks.

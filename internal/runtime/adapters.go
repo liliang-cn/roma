@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // CodexAdapter launches Codex CLI in non-interactive exec mode.

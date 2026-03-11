@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 func TestGraphLifecycleTransitions(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 func TestListReadyTasks(t *testing.T) {

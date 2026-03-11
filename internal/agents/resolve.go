@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // Resolve finds an agent by id, command, or alias and refreshes availability from PATH.

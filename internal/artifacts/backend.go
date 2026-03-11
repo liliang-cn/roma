@@ -3,7 +3,7 @@ package artifacts
 import (
 	"context"
 
-	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/domain"
 )
 
 // Backend captures artifact persistence used by ROMA.

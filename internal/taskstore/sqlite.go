@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/sqliteutil"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/sqliteutil"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // SQLiteStore persists task records into the shared workspace SQLite database.

@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
-	"github.com/liliang/roma/internal/plans"
-	"github.com/liliang/roma/internal/store"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/plans"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 // Adapter delivers normalized notifications to a remote endpoint.

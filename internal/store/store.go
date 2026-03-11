@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
 )
 
 var (

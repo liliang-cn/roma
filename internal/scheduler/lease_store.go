@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang/roma/internal/sqliteutil"
+	"github.com/liliang-cn/roma/internal/sqliteutil"
 )
 
 // LeaseStatus identifies scheduler lease state.

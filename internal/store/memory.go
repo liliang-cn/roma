@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang/roma/internal/domain"
-	"github.com/liliang/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
 )
 
 // MemoryStore is a bootstrap in-memory implementation for early wiring and tests.
