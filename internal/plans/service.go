@@ -214,6 +214,14 @@ func (s *Service) Inspect(ctx context.Context, artifactID string) (domain.Artifa
 }
 
 func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID string, opts ApplyOptions) (ApplyResult, error) {
+	return s.apply(ctx, sessionID, taskID, artifactID, opts, true)
+}
+
+func (s *Service) Preview(ctx context.Context, sessionID, taskID, artifactID string) (ApplyResult, error) {
+	return s.apply(ctx, sessionID, taskID, artifactID, ApplyOptions{DryRun: true}, false)
+}
+
+func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID string, opts ApplyOptions, recordEvents bool) (ApplyResult, error) {
 	envelope, plan, err := s.Inspect(ctx, artifactID)
 	if err != nil {
 		return ApplyResult{}, err
@@ -253,18 +261,24 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		case rejected:
 			err := &ApplyError{Kind: ErrorKindApprovalRequired, Message: "execution plan has been explicitly rejected"}
 			result.RemediationHint = "Review the rejection, revise the execution plan, and request approval again."
-			s.appendRejectedEvent(ctx, result, plan, err)
+			if recordEvents {
+				s.appendRejectedEvent(ctx, result, plan, err)
+			}
 			return result, err
 		case approved:
 		case !opts.PolicyOverride:
 			err := &ApplyError{Kind: ErrorKindApprovalRequired, Message: "execution plan requires approval override or explicit approval"}
 			result.RemediationHint = "Approve the execution plan from the inbox or rerun with an authorized override actor."
-			s.appendRejectedEvent(ctx, result, plan, err)
+			if recordEvents {
+				s.appendRejectedEvent(ctx, result, plan, err)
+			}
 			return result, err
 		case !policy.CanOverrideActor(opts.PolicyOverrideActor):
 			err := &ApplyError{Kind: ErrorKindOverrideForbidden, Message: "execution plan override actor forbidden"}
 			result.RemediationHint = "Use an allowed override actor or get an explicit plan approval first."
-			s.appendRejectedEvent(ctx, result, plan, err)
+			if recordEvents {
+				s.appendRejectedEvent(ctx, result, plan, err)
+			}
 			return result, err
 		}
 	}
@@ -277,7 +291,9 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.Violations = append([]string(nil), violations...)
 		result.RemediationHint = "Restrict the workspace diff to expected files or update the execution plan contract."
 		err := &ApplyError{Kind: ErrorKindValidation, Message: strings.Join(violations, "; "), Violations: append([]string(nil), violations...)}
-		s.appendRejectedEvent(ctx, result, plan, err)
+		if recordEvents {
+			s.appendRejectedEvent(ctx, result, plan, err)
+		}
 		return result, err
 	}
 	result.PatchBytes = preview.PatchBytes
@@ -291,7 +307,9 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		} else {
 			result.RemediationHint = "Preview passed. Approve and apply the execution plan when ready."
 		}
-		s.appendAppliedEvent(ctx, result, plan, "dry_run")
+		if recordEvents {
+			s.appendAppliedEvent(ctx, result, plan, "dry_run")
+		}
 		return result, nil
 	}
 	if preview.Conflict {
@@ -299,7 +317,9 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.ConflictDetail = preview.ConflictDetail
 		result.RemediationHint = "Resolve the merge conflict in the worktree or regenerate the plan against the latest base."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: preview.ConflictDetail}
-		s.appendRejectedEvent(ctx, result, plan, applyErr)
+		if recordEvents {
+			s.appendRejectedEvent(ctx, result, plan, applyErr)
+		}
 		return result, applyErr
 	}
 	if err := s.workspaces.MergeBack(ctx, prepared); err != nil {
@@ -307,7 +327,9 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.ConflictDetail = err.Error()
 		result.RemediationHint = "Inspect the worktree patch, update the base branch, and retry plan preview."
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: err.Error()}
-		s.appendRejectedEvent(ctx, result, plan, applyErr)
+		if recordEvents {
+			s.appendRejectedEvent(ctx, result, plan, applyErr)
+		}
 		return result, applyErr
 	}
 	if err := runRequiredChecks(ctx, prepared.BaseDir, plan.RequiredChecks); err != nil {
@@ -315,12 +337,16 @@ func (s *Service) Apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.RolledBack = true
 		result.RemediationHint = "Fix the failing required checks in the isolated workspace and rerun preview/apply."
 		applyErr := &ApplyError{Kind: ErrorKindCheckFailed, Message: err.Error()}
-		s.appendRejectedEvent(ctx, result, plan, applyErr)
+		if recordEvents {
+			s.appendRejectedEvent(ctx, result, plan, applyErr)
+		}
 		return result, applyErr
 	}
 	result.Applied = true
 	result.RemediationHint = "Apply succeeded. Review the merged result and keep the rollback hint for follow-up validation."
-	s.appendAppliedEvent(ctx, result, plan, "applied")
+	if recordEvents {
+		s.appendAppliedEvent(ctx, result, plan, "applied")
+	}
 	return result, nil
 }
 

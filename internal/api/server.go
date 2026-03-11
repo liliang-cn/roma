@@ -473,9 +473,7 @@ func (s *Server) handlePlanPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
 	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
-	result, err := service.Apply(r.Context(), req.SessionID, req.TaskID, req.ArtifactID, plans.ApplyOptions{
-		DryRun: true,
-	})
+	result, err := service.Preview(r.Context(), req.SessionID, req.TaskID, req.ArtifactID)
 	if err != nil {
 		writePlanError(w, err)
 		return

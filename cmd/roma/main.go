@@ -1495,7 +1495,7 @@ func runPlans(ctx context.Context, args []string) error {
 			fmt.Println(string(raw))
 			return nil
 		}
-		result, err := service.Apply(ctx, args[1], args[2], args[3], plans.ApplyOptions{DryRun: true})
+		result, err := service.Preview(ctx, args[1], args[2], args[3])
 		if err != nil {
 			return err
 		}

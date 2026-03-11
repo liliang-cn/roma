@@ -185,6 +185,68 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	}
 }
 
+func TestServicePreviewDoesNotAppendPlanAppliedEvent(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	eventStore := store.NewMemoryStore()
+	manager := workspacepkg.NewManager(root, eventStore)
+	prepared, err := manager.Prepare(context.Background(), "sess_preview", "task_preview", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared.EffectiveDir, "README.md"), []byte("preview change\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	artifactStore := artifacts.NewFileStore(root)
+	artifactSvc := artifacts.NewService()
+	envelope, err := artifactSvc.BuildExecutionPlan(context.Background(), artifacts.BuildExecutionPlanRequest{
+		SessionID: "sess_preview",
+		TaskID:    "task_preview",
+		RunID:     "task_preview",
+		Goal:      "Preview README change",
+		Proposal: artifacts.ProposalPayload{
+			ProposalID:     "prop_task_preview",
+			Summary:        "Change README",
+			EstimatedSteps: []string{"Edit README"},
+			AffectedFiles:  []string{"README.md"},
+		},
+		HumanApprovalRequired: false,
+	})
+	if err != nil {
+		t.Fatalf("BuildExecutionPlan() error = %v", err)
+	}
+	payload, ok := artifacts.ExecutionPlanFromEnvelope(envelope)
+	if !ok {
+		t.Fatal("ExecutionPlanFromEnvelope() = false")
+	}
+	payload.RequiredChecks = nil
+	envelope.Payload = payload
+	if err := artifactStore.Save(context.Background(), envelope); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	svc := NewService(artifactStore, manager, eventStore)
+	result, err := svc.Preview(context.Background(), "sess_preview", "task_preview", envelope.ID)
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if !result.DryRun || result.Applied {
+		t.Fatalf("result = %#v, want dry-run preview only", result)
+	}
+
+	items, err := eventStore.ListEvents(context.Background(), store.EventFilter{SessionID: "sess_preview"})
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, item := range items {
+		if item.Type == events.TypePlanApplied {
+			t.Fatalf("Preview() appended unexpected PlanApplied event: %#v", item)
+		}
+	}
+}
+
 func TestServiceInboxSummarizesLatestPlanState(t *testing.T) {
 	root := t.TempDir()
 	initGitRepo(t, root)

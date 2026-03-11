@@ -173,6 +173,7 @@
   - daemon exposes `/plans/preview`
   - CLI exposes `roma plans preview <session> <task> <artifact>`
   - apply/preview/rollback results now carry `remediation_hint`, so conflict and approval failures come back with an explicit next step instead of only raw error text
+  - preview must stay side-effect free: reusing `Apply(DryRun=true)` for `/plans/preview` polluted audit trails with an extra `PlanApplied(dry_run)` event and broke API tests until preview was split into a non-recording service path
 - there is now a deterministic Curia decision-flow regression:
   - `TestServerCuriaDecisionFlowProducesPlanInboxApproval`
   - it proves `proposal -> ballot -> debate_log -> decision_pack -> execution_plan -> plans inbox`

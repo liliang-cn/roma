@@ -151,6 +151,7 @@
   - new `roma plans approve|reject <artifact_id>` and daemon `/plans/{artifact_id}/approve|reject` turn that inbox into an actual approval path
   - new `roma plans preview <session_id> <task_id> <artifact_id>` and daemon `/plans/preview` expose dry-run merge preview as a first-class endpoint
   - plan preview/apply/rollback results now include `remediation_hint`
+  - plan preview is now side-effect free and no longer appends `PlanApplied(dry_run)` audit events, keeping preview separate from dry-run apply in API tests and inbox state
   - gateway remote commands can now bridge `plan_approve` / `plan_reject` into that same plan approval path
   - scheduler now has a concurrent DAG/workspace soak baseline test covering parallel ready nodes plus worktree reclaim for one session
   - scheduler now also has a repeated concurrent soak regression that runs multiple graph sessions back-to-back and verifies no active lease leakage plus successful stale workspace reclaim
