@@ -1,0 +1,114 @@
+package workspace
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/liliang/roma/internal/domain"
+	"github.com/liliang/roma/internal/events"
+	"github.com/liliang/roma/internal/store"
+)
+
+func TestManagerPreparePersistsMetadataAndEvent(t *testing.T) {
+	root := t.TempDir()
+	eventStore := store.NewMemoryStore()
+	manager := NewManager(root, eventStore)
+
+	prepared, err := manager.Prepare(context.Background(), "sess_1", "task_1", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	if prepared.EffectiveDir != root {
+		t.Fatalf("expected effective dir %q, got %q", root, prepared.EffectiveDir)
+	}
+	if prepared.Requested != ModeIsolatedWrite {
+		t.Fatalf("expected requested mode %q, got %q", ModeIsolatedWrite, prepared.Requested)
+	}
+	if prepared.Effective != ModeSharedRead {
+		t.Fatalf("expected effective mode %q, got %q", ModeSharedRead, prepared.Effective)
+	}
+	if prepared.Provider != "shared_read" {
+		t.Fatalf("expected provider shared_read, got %q", prepared.Provider)
+	}
+	if prepared.Fallback == "" {
+		t.Fatal("expected fallback reason for non-git workspace")
+	}
+
+	path := filepath.Join(root, ".roma", "workspaces", "sess_1", "task_1", "workspace.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected workspace metadata file: %v", err)
+	}
+
+	items, err := eventStore.ListEvents(context.Background(), store.EventFilter{SessionID: "sess_1", Type: events.TypeWorkspacePrepared})
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 workspace event, got %d", len(items))
+	}
+
+	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
+		t.Fatalf("Release returned error: %v", err)
+	}
+	items, err = eventStore.ListEvents(context.Background(), store.EventFilter{SessionID: "sess_1", Type: events.TypeWorkspaceReleased})
+	if err != nil {
+		t.Fatalf("ListEvents after release returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 workspace release event, got %d", len(items))
+	}
+}
+
+func TestManagerPrepareCreatesGitWorktreeForIsolatedWrite(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	eventStore := store.NewMemoryStore()
+	manager := NewManager(root, eventStore)
+
+	prepared, err := manager.Prepare(context.Background(), "sess_git", "task_git", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	if prepared.Effective != ModeIsolatedWrite {
+		t.Fatalf("expected effective mode %q, got %q", ModeIsolatedWrite, prepared.Effective)
+	}
+	if prepared.Provider != "git_worktree" {
+		t.Fatalf("expected provider git_worktree, got %q", prepared.Provider)
+	}
+	if prepared.Fallback != "" {
+		t.Fatalf("expected empty fallback, got %q", prepared.Fallback)
+	}
+	if prepared.EffectiveDir == root {
+		t.Fatal("expected isolated effective dir, got base dir")
+	}
+	if _, err := os.Stat(filepath.Join(prepared.EffectiveDir, ".git")); err != nil {
+		t.Fatalf("expected git worktree checkout: %v", err)
+	}
+}
+
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runGitCommand(t, dir, "init")
+	runGitCommand(t, dir, "config", "user.email", "roma@example.com")
+	runGitCommand(t, dir, "config", "user.name", "ROMA")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("roma\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runGitCommand(t, dir, "add", "README.md")
+	runGitCommand(t, dir, "commit", "-m", "init")
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s error = %v (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+}

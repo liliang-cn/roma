@@ -1,0 +1,131 @@
+# Progress
+
+## 2026-03-11
+
+- Added PTY provider abstraction and Unix implementation with `github.com/creack/pty`.
+- Wired supervisor runtime events into session/task scoped event records.
+- Added `roma events list/show`.
+- Made direct runs persist session/artifact/event truth instead of raw process execution only.
+- Added `roma graph run --file ...` and executed a successful relay graph end-to-end.
+- Routed graph runs through daemon queue submission.
+- Added queue back-links to execution truth:
+  - `session_id`
+  - `task_id`
+  - `artifact_ids`
+- Added `roma queue inspect <job_id>` aggregated output.
+- Added queue filters: `roma queue list --mode ... --status ...`.
+- Added first-class inline graph submission through daemon `/submit`.
+- Verified daemon consumes inline graph jobs and persists structured graph payload in queue records.
+- Added persisted task records for graph node execution and `roma tasks list/show`.
+- Moved task state transitions behind scheduler lifecycle control and added `TaskStateChanged` events for node progression.
+- Added `roma replay <session_id>` backed by event-store reconstruction instead of file-only inference.
+- Added minimum `policy` broker with:
+  - pre-flight working-directory checks
+  - prompt risk warnings
+  - runtime command classification hooks
+  - `PolicyDecisionRecorded` events
+- Routed delegated relay runs through scheduler lifecycle-backed execution, not plain relay state mutation.
+- Added daemon queue completion notifications to gateway with artifact refs and success/failure summaries.
+- Added SQLite-backed mirrored persistence for:
+  - session history
+  - task records
+  - event records
+- Added `sqlite_enabled`, `sqlite_path`, and `sqlite_bytes` to `roma status`.
+- Switched CLI/API inspection to SQLite-preferred reads for:
+  - `sessions`
+  - `tasks`
+  - `events`
+  - `replay`
+  - `queue inspect` metadata
+- Added daemon API support for `tasks list/show`.
+- Added SQLite-backed queue and artifact stores, plus compatibility mirror/fallback behavior so historical file-only runs remain queryable.
+- Added `internal/syncdb` workspace backfill to import old file-backed metadata into SQLite before daemon recovery and CLI inspection.
+- Added SQLite-authoritative scheduler recovery snapshots plus `roma recover`.
+- Added `roma policy check --agent ... "<prompt>"` for direct pre-flight policy inspection.
+- Added enforceable policy approval flow for queue-backed daemon runs:
+  - queue status `awaiting_approval`
+  - `roma approve <job_id>`
+  - `roma reject <job_id>`
+  - persisted human approval/rejection events
+- Added reserved `session_id` / `task_id` assignment before daemon execution starts, so approvals and crash recovery bind back to the same session.
+- Added scheduler recovery execution, not only inspection:
+  - interrupted `Running` tasks normalize back to `Ready`
+  - `romad` resumes recoverable sessions from SQLite-backed session/task/artifact state
+- Added relay resume path in `run.Service` / `relay.Executor`.
+- Added opt-in continuous coding-agent execution:
+  - `roma run --continuous --max-rounds N ...`
+  - `roma submit --continuous --max-rounds N ...`
+  - graph/delegate nodes can also inherit continuous multi-round execution
+- Added runtime supervision loop that keeps prompting until an agent emits `ROMA_DONE:` or the round limit is reached.
+- Added concurrent ready-batch relay dispatch and a runtime test for continuous multi-round execution.
+- Moved ready-batch planning into scheduler lifecycle:
+  - relay now consumes ready task records from scheduler-owned lifecycle logic
+  - scheduler emits `SchedulerCheckpointRecorded` events for each ready batch
+- Added `internal/scheduler/dispatcher.go` and moved the main run paths (`run`, `graph`, recovery resume) onto scheduler-owned dispatch loops instead of calling relay executor directly.
+- Fixed `MemoryStore.ListEvents` so `EventFilter.Type` works consistently in tests and in-memory wiring.
+- Added persisted scheduler dispatch leases:
+  - new SQLite-backed `scheduler_leases` table
+  - `Acquire` / `Renew` / `Release`
+  - daemon restart recovery of orphaned active leases
+  - `SchedulerLeaseRecorded` events
+- Added node-level scheduler approval gates:
+  - risky ready nodes are marked `AwaitingApproval` before execution
+  - `scheduler.Dispatcher` now returns `ApprovalPendingError` when the graph is blocked on human approval
+  - `roma tasks approve <task_id>` and `roma tasks reject <task_id>` update task/session/queue state through daemon API or fallback
+  - task records now persist `approval_granted`
+- Added initial scheduler workspace hooks:
+  - per-task workspace metadata now persists under `.roma/workspaces/<session>/<task>/workspace.json`
+  - scheduler emits `WorkspacePrepared` before runtime launch and `WorkspaceReleased` after task completion
+  - dispatcher now resolves each task through a workspace manager before invoking the coding agent runtime
+- Upgraded workspace preparation to be Git-aware:
+  - direct/write tasks now create detached `git worktree` checkouts when the base directory is a Git repository
+  - existing task worktrees are reused on repeated prepare calls
+  - non-Git directories now persist explicit fallback reasons in workspace metadata
+- Removed the main execution path's compile-time dependency on `internal/relay`:
+  - scheduler now owns `NodeAssignment` and `DispatchResult`
+  - direct run, graph run, recovery, and scheduler tests now use scheduler-native execution types
+
+## Latest Verified Commands
+
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue inspect job_1773190497370443455`
+- `timeout 35s env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/romad`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma graph run --file examples/relay-graph.json`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue list --mode graph --status succeeded`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue show job_1773190900412761177`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma tasks list --session sess_1773191091326391418`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma tasks show sess_1773191091326391418__plan`
+- `tail -n 20 .roma/events/events.jsonl` confirming `TaskStateChanged` transitions for graph nodes
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma replay sess_1773191847017378066`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma --cwd / "say one short sentence"` returning `policy blocked execution: working_dir_root_forbidden`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/romad` followed by `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma submit --agent codex "reply with one short sentence mentioning gateway notification"` showing `gateway notify ... task succeeded`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma "reply with one short sentence saying sqlite mirror active"`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma graph run --file examples/relay-graph.json`
+- `sqlite3 .roma/roma.db "select (select count(*) from session_history), (select count(*) from task_records), (select count(*) from event_records);"` returning `2|2|33`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma tasks list --session sess_1773192852835721105`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma events list --session sess_1773192852835721105`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma sessions show sess_1773192852835721105`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma artifacts list --session sess_1773192852835721105`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue show job_1773190497370443455`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma replay sess_1773190498528857076`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma recover`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma policy check --agent codex "drop database and rebuild everything"`
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma submit --agent codex "drop database and then reply with one short sentence"` followed by `roma approve <job_id>` showing queue/session transition through `awaiting_approval` into resumed execution
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma events list --session sess_1773194736393035791` showing:
+  - `SessionStateChanged` to `awaiting_approval`
+  - `PolicyDecisionRecorded` by `human`
+  - `PolicyDecisionRecorded` override acceptance
+  - resumed `RuntimeStarted`
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding continuous execution and concurrent relay batches
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after moving ready-batch planning into scheduler lifecycle and adding checkpoint events
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after moving run/graph/recovery entrypoints onto `scheduler.Dispatcher`
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding persisted scheduler leases and daemon lease recovery
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding node-level scheduler approval gates
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding scheduler workspace preparation hooks
+- `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
+
+## Current Focus
+
+- Persist workspace lifecycle for daemon recovery and cleanup.
+- Add explicit workspace cleanup/reclaim operations for released or orphaned worktrees.
+- Tighten task-level approval recovery so resumed sessions can re-enter dispatch without queue-only mediation.

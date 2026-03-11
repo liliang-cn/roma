@@ -1,0 +1,19 @@
+{
+  "prompt": "Reply with one short sentence describing how the second node builds on the first.",
+  "working_dir": ".",
+  "nodes": [
+    {
+      "id": "plan",
+      "title": "Planning node",
+      "agent": "codex",
+      "strategy": "direct"
+    },
+    {
+      "id": "refine",
+      "title": "Refinement node",
+      "agent": "codex",
+      "strategy": "relay",
+      "dependencies": ["plan"]
+    }
+  ]
+}
