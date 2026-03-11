@@ -3,13 +3,16 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/runtime"
 	"github.com/liliang/roma/internal/store"
+	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
 
 type dispatcherFakeAdapter struct{}
@@ -26,6 +29,26 @@ func (dispatcherSlowAdapter) Supports(domain.AgentProfile) bool { return true }
 
 func (dispatcherSlowAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, "python3", "-c", "import sys,time; time.sleep(float(sys.argv[1])); print(sys.argv[2])", "0.2", req.Prompt), nil
+}
+
+type dispatcherCuriaAdapter struct{}
+
+func (dispatcherCuriaAdapter) Supports(domain.AgentProfile) bool { return true }
+
+func (dispatcherCuriaAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
+	script := `
+import re, sys
+prompt = sys.argv[1]
+if "blind review phase" in prompt:
+    match = re.search(r"(prop_[A-Za-z0-9_]+)", prompt)
+    if match:
+        print(match.group(1) + " is the best proposal with strong safety")
+    else:
+        print("best proposal")
+else:
+    print("Implement the plan\\ninternal/api/server.go\\nrisk: approval flow\\ntradeoff: more explicit schema")
+`
+	return exec.CommandContext(ctx, "python3", "-c", script, req.Prompt), nil
 }
 
 func TestDispatcherExecute(t *testing.T) {
@@ -87,7 +110,7 @@ func TestDispatcherPersistsLease(t *testing.T) {
 	workDir := t.TempDir()
 	mem := store.NewMemoryStore()
 	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherFakeAdapter{}), mem, mem)
-	_, err := dispatcher.Execute(context.Background(), "sess_lease", ".", "build feature", []NodeAssignment{
+	_, err := dispatcher.Execute(context.Background(), "sess_lease", workDir, "build feature", []NodeAssignment{
 		{
 			Node:    domain.TaskNodeSpec{ID: "task_a", Title: "Starter", Strategy: domain.TaskStrategyDirect},
 			Profile: domain.AgentProfile{ID: "starter", DisplayName: "Starter", Command: "starter"},
@@ -145,5 +168,139 @@ func TestDispatcherReturnsApprovalPendingForRiskyNode(t *testing.T) {
 	}
 	if len(lease.PendingApprovalTaskIDs) != 1 || lease.PendingApprovalTaskIDs[0] != "sess_gate__task_a" {
 		t.Fatalf("pending approvals = %#v, want [sess_gate__task_a]", lease.PendingApprovalTaskIDs)
+	}
+	records, err := mem.ListEvents(context.Background(), store.EventFilter{SessionID: "sess_gate", Type: "SchedulerLeaseRecorded"})
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("missing scheduler lease events")
+	}
+	last := records[len(records)-1]
+	items, ok := last.Payload["pending_approval_task_ids"].([]string)
+	if !ok || len(items) != 1 || items[0] != "sess_gate__task_a" {
+		t.Fatalf("event pending approvals = %#v, want [sess_gate__task_a]", last.Payload["pending_approval_task_ids"])
+	}
+}
+
+func TestDispatcherExecutesCuriaNode(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	mem := store.NewMemoryStore()
+	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherCuriaAdapter{}), mem, mem)
+	result, err := dispatcher.Execute(context.Background(), "sess_curia", workDir, "design a safer API", []NodeAssignment{
+		{
+			Node: domain.TaskNodeSpec{
+				ID:       "task_curia",
+				Title:    "Curia Review",
+				Strategy: domain.TaskStrategyCuria,
+				Quorum:   2,
+			},
+			Profile: domain.AgentProfile{ID: "codex-cli", DisplayName: "Codex CLI", Command: "codex"},
+			CuriaProfiles: []domain.AgentProfile{
+				{ID: "codex-cli", DisplayName: "Codex CLI", Command: "codex"},
+				{ID: "gemini-cli", DisplayName: "Gemini CLI", Command: "gemini"},
+			},
+			CuriaQuorum: 2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	artifact, ok := result.Artifacts["task_curia"]
+	if !ok {
+		t.Fatal("missing curia primary artifact")
+	}
+	if artifact.Kind != domain.ArtifactKindExecutionPlan {
+		t.Fatalf("kind = %s, want %s", artifact.Kind, domain.ArtifactKindExecutionPlan)
+	}
+	if len(result.RelatedArtifacts["task_curia"]) < 4 {
+		t.Fatalf("related artifact count = %d, want at least 4", len(result.RelatedArtifacts["task_curia"]))
+	}
+}
+
+func TestDispatcherConcurrentGraphSoakBaseline(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initDispatcherGitRepo(t, workDir)
+
+	mem := store.NewMemoryStore()
+	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherSlowAdapter{}), mem, mem)
+
+	assignments := make([]NodeAssignment, 0, 12)
+	for i := 0; i < 12; i++ {
+		id := "task_" + strconv.Itoa(i)
+		assignments = append(assignments, NodeAssignment{
+			Node:    domain.TaskNodeSpec{ID: id, Title: "Node " + id, Strategy: domain.TaskStrategyDirect},
+			Profile: domain.AgentProfile{ID: "agent-" + id, DisplayName: "Agent " + id, Command: "agent"},
+		})
+	}
+
+	result, err := dispatcher.Execute(context.Background(), "sess_soak", workDir, "parallel soak", assignments)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(result.Order) != len(assignments) {
+		t.Fatalf("order len = %d, want %d", len(result.Order), len(assignments))
+	}
+
+	manager := workspacepkg.NewManager(workDir, mem)
+	workspaces, err := manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var sessionCount int
+	for _, item := range workspaces {
+		if item.SessionID != "sess_soak" {
+			continue
+		}
+		sessionCount++
+		if item.Status != "released" && item.Status != "merged" {
+			t.Fatalf("workspace status = %q, want released/merged", item.Status)
+		}
+		if item.Provider != "git_worktree" {
+			t.Fatalf("workspace provider = %q, want git_worktree", item.Provider)
+		}
+	}
+	if sessionCount != len(assignments) {
+		t.Fatalf("workspace count = %d, want %d", sessionCount, len(assignments))
+	}
+
+	if err := manager.ReclaimStale(context.Background()); err != nil {
+		t.Fatalf("ReclaimStale() error = %v", err)
+	}
+	for i := 0; i < 12; i++ {
+		taskID := "task_" + strconv.Itoa(i)
+		item, err := manager.Get(context.Background(), "sess_soak", taskID)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", taskID, err)
+		}
+		if item.Status != "reclaimed" {
+			t.Fatalf("workspace %s status = %q, want reclaimed", taskID, item.Status)
+		}
+	}
+}
+
+func initDispatcherGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runDispatcherGit(t, dir, "init")
+	runDispatcherGit(t, dir, "config", "user.email", "roma@example.com")
+	runDispatcherGit(t, dir, "config", "user.name", "ROMA")
+	if err := os.WriteFile(dir+"/README.md", []byte("roma\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runDispatcherGit(t, dir, "add", "README.md")
+	runDispatcherGit(t, dir, "commit", "-m", "init")
+}
+
+func runDispatcherGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v error = %v (%s)", args, err, output)
 	}
 }

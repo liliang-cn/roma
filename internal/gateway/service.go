@@ -9,6 +9,7 @@ import (
 
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
+	"github.com/liliang/roma/internal/plans"
 	"github.com/liliang/roma/internal/store"
 )
 
@@ -21,6 +22,7 @@ type Adapter interface {
 // Service is the in-process gateway control surface.
 type Service struct {
 	eventStore store.EventStore
+	planSvc    *plans.Service
 
 	mu            sync.RWMutex
 	endpoints     map[string]domain.GatewayEndpoint
@@ -30,7 +32,7 @@ type Service struct {
 }
 
 // NewService constructs a gateway service.
-func NewService(eventStore store.EventStore, adapters ...Adapter) *Service {
+func NewService(eventStore store.EventStore, planSvc *plans.Service, adapters ...Adapter) *Service {
 	adapterMap := make(map[domain.GatewayEndpointType]Adapter, len(adapters))
 	for _, adapter := range adapters {
 		adapterMap[adapter.Type()] = adapter
@@ -38,6 +40,7 @@ func NewService(eventStore store.EventStore, adapters ...Adapter) *Service {
 
 	return &Service{
 		eventStore:    eventStore,
+		planSvc:       planSvc,
 		endpoints:     make(map[string]domain.GatewayEndpoint),
 		subscriptions: make(map[string]domain.RemoteSubscription),
 		adapters:      adapterMap,
@@ -148,6 +151,12 @@ func (s *Service) SubmitRemoteCommand(ctx context.Context, cmd domain.RemoteComm
 
 	if err := s.appendRemoteCommandEvent(ctx, cmd, true, "accepted_for_romad_validation"); err != nil {
 		return err
+	}
+	switch cmd.Action {
+	case domain.RemoteCommandActionPlanApprove:
+		return s.planSvc.Approve(ctx, cmd.TaskID, cmd.Actor)
+	case domain.RemoteCommandActionPlanReject:
+		return s.planSvc.Reject(ctx, cmd.TaskID, cmd.Actor)
 	}
 	return nil
 }

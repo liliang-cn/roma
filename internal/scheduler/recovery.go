@@ -18,6 +18,7 @@ import (
 type RecoverySnapshot struct {
 	SessionID              string              `json:"session_id"`
 	Status                 string              `json:"status"`
+	Lease                  *LeaseRecord        `json:"lease,omitempty"`
 	ReadyTasks             []domain.TaskRecord `json:"ready_tasks,omitempty"`
 	PendingApprovalTaskIDs []string            `json:"pending_approval_task_ids,omitempty"`
 	ApprovalResumeReady    bool                `json:"approval_resume_ready"`
@@ -44,7 +45,7 @@ func RecoverableSessions(ctx context.Context, workDir string) ([]RecoverySnapsho
 	}
 	out := make([]RecoverySnapshot, 0)
 	for _, session := range sessions {
-		if session.Status == "succeeded" || session.Status == "failed" || session.Status == "rejected" || session.Status == "awaiting_approval" {
+		if session.Status == "succeeded" || session.Status == "failed" || session.Status == "rejected" {
 			continue
 		}
 		tasks, err := taskStore.ListTasksBySession(ctx, session.ID)
@@ -53,9 +54,11 @@ func RecoverableSessions(ctx context.Context, workDir string) ([]RecoverySnapsho
 		}
 		ready := make([]domain.TaskRecord, 0)
 		pendingApprovalTaskIDs := make([]string, 0)
+		var lease *LeaseRecord
 		if leaseStore != nil {
-			if lease, err := leaseStore.Get(ctx, session.ID); err == nil {
-				pendingApprovalTaskIDs = append(pendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+			if item, err := leaseStore.Get(ctx, session.ID); err == nil {
+				lease = &item
+				pendingApprovalTaskIDs = append(pendingApprovalTaskIDs, item.PendingApprovalTaskIDs...)
 			}
 		}
 		for _, task := range tasks {
@@ -69,6 +72,7 @@ func RecoverableSessions(ctx context.Context, workDir string) ([]RecoverySnapsho
 		out = append(out, RecoverySnapshot{
 			SessionID:              session.ID,
 			Status:                 session.Status,
+			Lease:                  lease,
 			ReadyTasks:             ready,
 			PendingApprovalTaskIDs: pendingApprovalTaskIDs,
 			ApprovalResumeReady:    len(pendingApprovalTaskIDs) == 0,

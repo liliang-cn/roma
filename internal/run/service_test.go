@@ -11,6 +11,7 @@ import (
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/runtime"
 	"github.com/liliang/roma/internal/scheduler"
+	"github.com/liliang/roma/internal/taskstore"
 )
 
 func TestRunRejectsUnknownAgent(t *testing.T) {
@@ -123,5 +124,27 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 	}
 	if record.Status != "awaiting_approval" {
 		t.Fatalf("record status = %s, want awaiting_approval", record.Status)
+	}
+	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	tasks, err := taskStore.ListTasksBySession(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("ListTasksBySession() error = %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].State != domain.TaskStateAwaitingApproval {
+		t.Fatalf("tasks = %#v, want one awaiting approval task", tasks)
+	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	lease, err := leaseStore.Get(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(lease.PendingApprovalTaskIDs) != 1 || lease.PendingApprovalTaskIDs[0] != tasks[0].ID {
+		t.Fatalf("pending approvals = %#v, want [%s]", lease.PendingApprovalTaskIDs, tasks[0].ID)
 	}
 }

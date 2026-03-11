@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,23 +16,31 @@ import (
 
 // DecisionKind identifies the policy outcome.
 type DecisionKind string
+type Action string
 
 const (
 	DecisionAllow DecisionKind = "allow"
 	DecisionWarn  DecisionKind = "warn"
 	DecisionBlock DecisionKind = "block"
+
+	ActionRun       Action = "run"
+	ActionPlanApply Action = "plan_apply"
 )
 
 // Request describes the execution intent to be classified.
 type Request struct {
-	SessionID    string
-	TaskID       string
-	Mode         string
-	Prompt       string
-	WorkingDir   string
-	StarterAgent string
-	Delegates    []string
-	NodeCount    int
+	SessionID      string
+	TaskID         string
+	Mode           string
+	Prompt         string
+	WorkingDir     string
+	EffectiveDir   string
+	PathHints      []string
+	StarterAgent   string
+	Delegates      []string
+	NodeCount      int
+	PolicyOverride bool
+	OverrideActor  string
 }
 
 // Decision is the normalized broker output.
@@ -73,13 +82,17 @@ func (b *SimpleBroker) Evaluate(ctx context.Context, req Request) (Decision, err
 			OccurredAt: b.now(),
 			ReasonCode: decision.Reason,
 			Payload: map[string]any{
-				"decision":      decision.Kind,
-				"warnings":      decision.Warnings,
-				"mode":          req.Mode,
-				"working_dir":   req.WorkingDir,
-				"starter_agent": req.StarterAgent,
-				"delegates":     req.Delegates,
-				"node_count":    req.NodeCount,
+				"decision":           decision.Kind,
+				"warnings":           decision.Warnings,
+				"mode":               req.Mode,
+				"working_dir":        req.WorkingDir,
+				"effective_dir":      req.EffectiveDir,
+				"path_hints":         req.PathHints,
+				"starter_agent":      req.StarterAgent,
+				"delegates":          req.Delegates,
+				"node_count":         req.NodeCount,
+				"override_requested": req.PolicyOverride,
+				"override_actor":     req.OverrideActor,
 			},
 		})
 	}
@@ -120,12 +133,26 @@ func evaluate(req Request) Decision {
 	if cleaned == string(filepath.Separator) {
 		return Decision{Kind: DecisionBlock, Reason: "working_dir_root_forbidden"}
 	}
+	effectiveDir := strings.TrimSpace(req.EffectiveDir)
+	if effectiveDir == "" {
+		effectiveDir = req.WorkingDir
+	}
+	effectiveClean := filepath.Clean(effectiveDir)
 	info, err := os.Stat(req.WorkingDir)
 	if err != nil || !info.IsDir() {
 		return Decision{Kind: DecisionBlock, Reason: "working_dir_missing"}
 	}
+	if effectiveClean == string(filepath.Separator) {
+		return Decision{Kind: DecisionBlock, Reason: "effective_dir_root_forbidden"}
+	}
+	if strings.HasSuffix(effectiveClean, string(filepath.Separator)+".git") || filepath.Base(effectiveClean) == ".git" {
+		return Decision{Kind: DecisionBlock, Reason: "git_dir_execution_forbidden"}
+	}
+	if !isEffectiveDirAllowed(cleaned, effectiveClean) {
+		return Decision{Kind: DecisionBlock, Reason: "effective_dir_outside_workspace_boundary"}
+	}
 
-	warnings := make([]string, 0, 2)
+	warnings := make([]string, 0, 4)
 	lowered := strings.ToLower(req.Prompt)
 	for _, token := range []string{
 		"rm -rf",
@@ -148,7 +175,24 @@ func evaluate(req Request) Decision {
 	if len(req.Delegates) > 2 {
 		warnings = append(warnings, "wide_delegate_fanout")
 	}
+	if protected := detectProtectedPaths(req); len(protected) > 0 {
+		warnings = append(warnings, "protected_path_scope")
+	}
 	if len(warnings) > 0 {
+		if req.PolicyOverride {
+			if !canOverride(req.OverrideActor) {
+				return Decision{
+					Kind:     DecisionBlock,
+					Reason:   "override_actor_forbidden",
+					Warnings: warnings,
+				}
+			}
+			return Decision{
+				Kind:     DecisionAllow,
+				Reason:   "approved_override",
+				Warnings: warnings,
+			}
+		}
 		return Decision{
 			Kind:     DecisionWarn,
 			Reason:   warnings[0],
@@ -156,6 +200,152 @@ func evaluate(req Request) Decision {
 		}
 	}
 	return Decision{Kind: DecisionAllow, Reason: "allowed"}
+}
+
+func OverrideActor() string {
+	if actor := strings.TrimSpace(os.Getenv("ROMA_POLICY_OVERRIDE_ACTOR")); actor != "" {
+		return actor
+	}
+	return "local_owner"
+}
+
+func AllowedOverrideActors() []string {
+	raw := strings.TrimSpace(os.Getenv("ROMA_POLICY_OVERRIDE_ACTORS"))
+	if raw == "" {
+		return []string{"local_owner", "admin"}
+	}
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, strings.ToLower(part))
+		}
+	}
+	if len(out) == 0 {
+		return []string{"local_owner", "admin"}
+	}
+	return out
+}
+
+func canOverride(actor string) bool {
+	actor = strings.ToLower(strings.TrimSpace(actor))
+	if actor == "" {
+		return false
+	}
+	return slices.Contains(AllowedOverrideActors(), actor)
+}
+
+func CanOverrideActor(actor string) bool {
+	return canOverride(actor)
+}
+
+func EvaluatePathAction(action Action, paths []string, override bool, actor string) Decision {
+	protected := []string{".github/**", "infra/**", "migrations/**", "auth/**", "billing/**"}
+	alwaysForbidden := []string{".git/**", ".roma/**"}
+
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.ToLower(strings.ReplaceAll(filepath.Clean(path), "\\", "/"))
+		if path != "." && path != "" {
+			normalized = append(normalized, path)
+		}
+	}
+
+	violations := make([]string, 0)
+	protectedHits := make([]string, 0)
+	for _, path := range normalized {
+		for _, pattern := range alwaysForbidden {
+			if matchesPath(pattern, path) {
+				violations = append(violations, "forbidden_path:"+path)
+				break
+			}
+		}
+		for _, pattern := range protected {
+			if matchesPath(pattern, path) {
+				protectedHits = append(protectedHits, path)
+				break
+			}
+		}
+	}
+	if len(violations) > 0 {
+		return Decision{
+			Kind:     DecisionBlock,
+			Reason:   "forbidden_path_action",
+			Warnings: violations,
+		}
+	}
+	if len(protectedHits) == 0 {
+		return Decision{Kind: DecisionAllow, Reason: "allowed"}
+	}
+	if action == ActionPlanApply {
+		if override {
+			if !canOverride(actor) {
+				return Decision{
+					Kind:     DecisionBlock,
+					Reason:   "override_actor_forbidden",
+					Warnings: protectedHits,
+				}
+			}
+			return Decision{
+				Kind:     DecisionAllow,
+				Reason:   "approved_override",
+				Warnings: protectedHits,
+			}
+		}
+		return Decision{
+			Kind:     DecisionBlock,
+			Reason:   "protected_path_apply_requires_override",
+			Warnings: protectedHits,
+		}
+	}
+	return Decision{
+		Kind:     DecisionWarn,
+		Reason:   "protected_path_scope",
+		Warnings: protectedHits,
+	}
+}
+
+func isEffectiveDirAllowed(baseDir, effectiveDir string) bool {
+	baseDir = filepath.Clean(baseDir)
+	effectiveDir = filepath.Clean(effectiveDir)
+	if effectiveDir == baseDir {
+		return true
+	}
+	worktreeRoot := filepath.Join(baseDir, ".roma", "workspaces")
+	return effectiveDir == worktreeRoot || strings.HasPrefix(effectiveDir, worktreeRoot+string(filepath.Separator))
+}
+
+func detectProtectedPaths(req Request) []string {
+	protected := []string{".github/", "infra/", "migrations/", "auth/", "billing/"}
+	lowered := strings.ToLower(req.Prompt)
+	out := make([]string, 0, len(protected))
+	for _, token := range protected {
+		if strings.Contains(lowered, token) && !slices.Contains(out, token) {
+			out = append(out, token)
+		}
+	}
+	for _, hint := range req.PathHints {
+		hint = strings.ToLower(strings.ReplaceAll(filepath.Clean(hint), "\\", "/"))
+		for _, token := range protected {
+			if strings.Contains(hint, token) && !slices.Contains(out, token) {
+				out = append(out, token)
+			}
+		}
+	}
+	return out
+}
+
+func matchesPath(pattern, path string) bool {
+	switch {
+	case strings.HasSuffix(pattern, "/**"):
+		prefix := strings.TrimSuffix(pattern, "/**")
+		return path == prefix || strings.HasPrefix(path, prefix+"/")
+	case strings.HasSuffix(pattern, "/"):
+		return path == strings.TrimSuffix(pattern, "/") || strings.HasPrefix(path, pattern)
+	default:
+		match, _ := filepath.Match(pattern, path)
+		return match || path == pattern
+	}
 }
 
 func classifyCommand(cmd *exec.Cmd) Decision {

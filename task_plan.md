@@ -92,34 +92,85 @@ Status: complete
 - [x] Start introducing workspace-isolated execution hooks for scheduler-dispatched tasks
 
 ### Phase 10: Real Workspace Isolation
-Status: in_progress
+Status: complete
 
 - [x] Replace shared-read scheduler workspace fallback with worktree-backed isolated execution for writable tasks when Git is available, with explicit fallback metadata otherwise
 - [x] Persist workspace lifecycle state for recovery and cleanup
 - [x] Add explicit workspace cleanup/reclaim operations for orphaned prepared worktrees, not only released ones
 - [x] Surface workspace state and cleanup controls through CLI/API inspection paths
 - [x] Reconcile node/task approval with resumed leases so approval can continue without queue-level mediation only
+- [x] Add worktree patch capture and merge-back operations through CLI/API inspection paths
 
 ### Phase 11: Lease-Integrated Workspace Truth
-Status: in_progress
+Status: complete
 
 - [x] Attach workspace ownership metadata to scheduler leases
 - [x] Use lease-owned workspace metadata instead of status-only heuristics during cleanup/recovery
 - [x] Surface lease/workspace linkage inside queue/session inspection
 
 ### Phase 12: Lease-Driven Approval Resume
-Status: in_progress
+Status: complete
 
 - [x] Persist approval-pending task ids inside scheduler leases
 - [x] Use lease-owned approval metadata during recovery instead of inferring only from task/session status
 - [x] Surface approval-resume readiness inside queue/session inspection
 
 ### Phase 13: Lease-Centric Recovery Refinement
+Status: completed
+
+- [x] Append pending-approval metadata into scheduler lease events for replay clarity
+- [x] Expose lease-aware recovery snapshots through CLI/API inspection
+- [x] Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth
+
+### Phase 14: Scheduler Surface Consolidation
 Status: in_progress
 
-- [ ] Append pending-approval metadata into scheduler lease events for replay clarity
-- [ ] Expose lease-aware recovery snapshots through CLI/API inspection
-- [ ] Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth
+- [x] Add richer node-level summaries to queue list/status views
+- [x] Keep shrinking legacy `internal/relay` usage to compatibility-only boundaries
+- [x] Expose scheduler-owned lease summaries directly in top-level status output
+- [x] Expose daemon-owned status counters through the local API
+- [x] Route direct-run approval gating through scheduler-owned task + lease state
+- [x] Route queue-level approval through lease-backed task approvals when node approval is active
+- [x] Collapse `internal/relay` into a scheduler compatibility boundary only
+
+### Phase 15: Structured Follow-Up Contracts
+Status: complete
+
+- [x] Replace raw `ROMA_DELEGATE` scraping with structured `FollowUpRequest` extraction in report artifacts
+- [x] Carry follow-up instruction hints into scheduler node assignments
+- [x] Allow shared run/graph execution paths to append scheduler-native follow-up nodes
+- [x] Move dynamic follow-up requests behind formal artifact/policy-aware validation primitives
+
+### Phase 16: Policy Depth
+Status: in_progress
+
+- [x] Add path-scoped policy rules tied to workspace/effective directories
+- [x] Add minimum override ACL semantics so only approved actors can force policy overrides
+- [x] Record richer override metadata in policy decision events and queue/session inspection
+- [x] Push path-scoped policy checks further into merge/apply boundaries, not only run/dispatch pre-flight
+- [x] Add a first action-aware path policy matrix for execution-plan apply
+
+### Phase 17: Curia Minimal
+Status: in_progress
+
+- [x] Add formal artifact payloads for `proposal`, `ballot`, `debate_log`, `decision_pack`, and `execution_plan`
+- [x] Add scheduler support for `TaskStrategyCuria`
+- [x] Execute Curia minimal flow with scatter, blind review, and human-first decision pack generation
+- [x] Persist Curia intermediate artifacts alongside the node's primary execution-plan artifact
+- [x] Add CLI examples and inspection shortcuts specialized for Curia sessions
+- [x] Add first dispute-detection signals and formalize `winning_mode` beyond hard-coded accept-only output
+
+### Phase 18: ExecutionPlan Closure
+Status: in_progress
+
+- [x] Add `roma plans inspect/apply/rollback`
+- [x] Validate changed workspace paths against `execution_plan.expected_files` and `forbidden_paths`
+- [x] Add dry-run plan application
+- [x] Add reverse-apply rollback for merged worktree patches
+- [x] Push `execution_plan` apply/rollback behind daemon API and approval-aware policy gates
+- [x] Emit dedicated plan-apply / plan-rollback / apply-rejected events for replay and audit
+- [x] Return structured merge/apply conflict and validation details from the plan service
+- [x] Make `dry-run` perform real merge preview instead of static path checks only
 
 ## Risks
 
@@ -129,10 +180,13 @@ Status: in_progress
 - Scheduler leases now persist ownership/checkpoint state in SQLite and are recovered on daemon restart.
 - Real worktree isolation now exists only when the working directory is a Git repository; non-Git execution still falls back to shared-read mode.
 - Continuous execution currently relies on agent-emitted `ROMA_DONE:` markers and is still coarse-grained.
-- Policy approval exists at queue and node level, but resumed approval still depends on queue/session recovery rather than lease-owned approval continuation.
+- Policy merge/apply boundaries still need tightening; current run-time path-scoped checks are stronger, but plan apply is not yet daemon-governed.
+- Dynamic follow-up node generation now uses structured report payloads, but follow-up validation is still permissive compared with a future formal command schema.
+- Curia minimal is now real, but still human-first and score-lite; there is no Augustus arbitration or automatic dispute engine yet.
+- Execution-plan apply now works through daemon API too, but it still needs richer eventing and plan-specific approval inbox UX.
 
 ## Next Immediate Steps
 
-1. Append pending-approval metadata into scheduler lease events for replay clarity.
-2. Expose lease-aware recovery snapshots through CLI/API inspection.
-3. Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth.
+1. Continue Curia arbitration refinement on top of the new dispute-detection signals and winning modes.
+2. Tighten merge conflict UX further with explicit preview endpoints and clearer remediation hints.
+3. Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.

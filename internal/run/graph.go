@@ -9,10 +9,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/liliang/roma/internal/agents"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
-	"github.com/liliang/roma/internal/policy"
 	"github.com/liliang/roma/internal/runtime"
 	"github.com/liliang/roma/internal/scheduler"
 )
@@ -24,6 +24,8 @@ type GraphNodeRequest struct {
 	Agent        string              `json:"agent"`
 	Strategy     domain.TaskStrategy `json:"strategy"`
 	Dependencies []string            `json:"dependencies,omitempty"`
+	Senators     []string            `json:"senators,omitempty"`
+	Quorum       int                 `json:"quorum,omitempty"`
 }
 
 // GraphRequest is a user-supplied graph execution request.
@@ -34,6 +36,7 @@ type GraphRequest struct {
 	SessionID      string             `json:"session_id,omitempty"`
 	TaskID         string             `json:"task_id,omitempty"`
 	PolicyOverride bool               `json:"policy_override,omitempty"`
+	OverrideActor  string             `json:"override_actor,omitempty"`
 	Continuous     bool               `json:"continuous,omitempty"`
 	MaxRounds      int                `json:"max_rounds,omitempty"`
 }
@@ -75,6 +78,8 @@ func ValidateGraphRequest(req GraphRequest) error {
 			Title:         node.Title,
 			Strategy:      node.Strategy,
 			Dependencies:  node.Dependencies,
+			Senators:      node.Senators,
+			Quorum:        node.Quorum,
 			SchemaVersion: "v1",
 		})
 	}
@@ -119,11 +124,15 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 				Title:         node.Title,
 				Strategy:      node.Strategy,
 				Dependencies:  node.Dependencies,
+				Senators:      node.Senators,
+				Quorum:        node.Quorum,
 				SchemaVersion: "v1",
 			},
-			Profile:    profile,
-			Continuous: req.Continuous,
-			MaxRounds:  req.MaxRounds,
+			Profile:       profile,
+			CuriaProfiles: resolveCuriaProfiles(ctx, s.registry, node.Senators, profile.ID),
+			CuriaQuorum:   node.Quorum,
+			Continuous:    req.Continuous,
+			MaxRounds:     req.MaxRounds,
 		})
 	}
 
@@ -143,32 +152,8 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 			record.CreatedAt = existing.CreatedAt
 		}
 	}
-	decision, err := s.evaluatePolicy(ctx, sessionID, taskID, "graph", req.Prompt, req.WorkingDir, assignments[0].Profile.ID, nil, len(assignments), req.PolicyOverride)
-	if err != nil {
+	if _, err := s.evaluatePolicy(ctx, sessionID, taskID, "graph", req.Prompt, req.WorkingDir, req.WorkingDir, nil, assignments[0].Profile.ID, nil, len(assignments), req.PolicyOverride, req.OverrideActor); err != nil {
 		return Result{}, err
-	}
-	if decision.Kind == policy.DecisionWarn && !req.PolicyOverride {
-		record.Status = "awaiting_approval"
-		if s.history != nil {
-			if err := s.history.Save(ctx, record); err != nil {
-				return Result{}, fmt.Errorf("save awaiting approval session: %w", err)
-			}
-		}
-		s.appendEvent(ctx, events.Record{
-			ID:         "evt_" + sessionID + "_created",
-			SessionID:  sessionID,
-			TaskID:     taskID,
-			Type:       events.TypeSessionCreated,
-			ActorType:  events.ActorTypeSystem,
-			OccurredAt: record.CreatedAt,
-			Payload: map[string]any{
-				"mode":       "graph",
-				"node_count": len(assignments),
-			},
-		})
-		s.appendSessionStateEvent(ctx, record)
-		_, _ = fmt.Fprintf(stdout, "session=%s task=%s status=%s reason=%s\n", record.ID, record.TaskID, record.Status, decision.Reason)
-		return Result{SessionID: sessionID, TaskID: taskID, Status: record.Status}, nil
 	}
 	if s.history != nil {
 		if err := s.history.Save(ctx, record); err != nil {
@@ -189,7 +174,18 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 	})
 	dispatcher := scheduler.NewDispatcher(req.WorkingDir, s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
-	writeRelayResult(stdout, assignments, execResult)
+	fullAssignments := append([]scheduler.NodeAssignment(nil), assignments...)
+	if err == nil {
+		if updatedAssignments, updatedResult, _, dynamicErr := s.extendDynamicDelegations(ctx, sessionID, req.WorkingDir, req.Prompt, fullAssignments, execResult); dynamicErr != nil {
+			fullAssignments = updatedAssignments
+			execResult = updatedResult
+			err = dynamicErr
+		} else {
+			fullAssignments = updatedAssignments
+			execResult = updatedResult
+		}
+	}
+	writeRelayResult(stdout, fullAssignments, execResult)
 	for _, nodeID := range execResult.Order {
 		artifact := execResult.Artifacts[nodeID]
 		if s.store != nil && artifact.ID != "" {
@@ -197,6 +193,14 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 				return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, saveErr)
 			}
 			s.appendArtifactStoredEvent(ctx, artifact)
+		}
+		for _, related := range execResult.RelatedArtifacts[nodeID] {
+			if s.store != nil && related.ID != "" {
+				if saveErr := s.store.Save(ctx, related); saveErr != nil {
+					return Result{}, fmt.Errorf("save artifact %s: %w", related.ID, saveErr)
+				}
+				s.appendArtifactStoredEvent(ctx, related)
+			}
 		}
 	}
 
@@ -206,6 +210,7 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 		var approvalErr *scheduler.ApprovalPendingError
 		if errors.As(err, &approvalErr) {
 			record.Status = "awaiting_approval"
+			err = nil
 		} else {
 			record.Status = "failed"
 		}
@@ -225,4 +230,41 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 		Status:      record.Status,
 		ArtifactIDs: record.ArtifactIDs,
 	}, err
+}
+
+func resolveCuriaProfiles(ctx context.Context, registry *agents.Registry, names []string, fallbackAgent string) []domain.AgentProfile {
+	out := make([]domain.AgentProfile, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, name := range names {
+		profile, ok := registry.Resolve(ctx, name)
+		if !ok || profile.Availability != domain.AgentAvailabilityAvailable {
+			continue
+		}
+		if _, exists := seen[profile.ID]; exists {
+			continue
+		}
+		seen[profile.ID] = struct{}{}
+		out = append(out, profile)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	defaults := []string{"codex", "gemini", "copilot"}
+	for _, name := range defaults {
+		profile, ok := registry.Resolve(ctx, name)
+		if !ok || profile.Availability != domain.AgentAvailabilityAvailable {
+			continue
+		}
+		if _, exists := seen[profile.ID]; exists {
+			continue
+		}
+		seen[profile.ID] = struct{}{}
+		out = append(out, profile)
+	}
+	if len(out) == 0 {
+		if profile, ok := registry.Resolve(ctx, fallbackAgent); ok {
+			out = append(out, profile)
+		}
+	}
+	return out
 }

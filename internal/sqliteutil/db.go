@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS queue_requests (
   task_id TEXT,
   artifact_ids_json TEXT,
   policy_override INTEGER NOT NULL DEFAULT 0,
+  policy_override_actor TEXT,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -124,6 +125,12 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_leases_status_updated ON scheduler_leas
 		if !alreadyExists(err) {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate queue_requests.policy_override: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE queue_requests ADD COLUMN policy_override_actor TEXT`); err != nil {
+		if !alreadyExists(err) {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate queue_requests.policy_override_actor: %w", err)
 		}
 	}
 	if _, err := db.Exec(`ALTER TABLE queue_requests ADD COLUMN continuous INTEGER NOT NULL DEFAULT 0`); err != nil {

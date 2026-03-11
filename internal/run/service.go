@@ -30,6 +30,7 @@ type Request struct {
 	SessionID      string
 	TaskID         string
 	PolicyOverride bool
+	OverrideActor  string
 	Continuous     bool
 	MaxRounds      int
 }
@@ -155,32 +156,8 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 			record.CreatedAt = existing.CreatedAt
 		}
 	}
-	decision, err := s.evaluatePolicy(ctx, sessionID, taskID, "relay", req.Prompt, req.WorkingDir, starter.ID, req.Delegates, assignmentsOrchestrated(delegates), req.PolicyOverride)
-	if err != nil {
+	if _, err := s.evaluatePolicy(ctx, sessionID, taskID, "relay", req.Prompt, req.WorkingDir, req.WorkingDir, nil, starter.ID, req.Delegates, assignmentsOrchestrated(delegates), req.PolicyOverride, req.OverrideActor); err != nil {
 		return Result{}, err
-	}
-	if decision.Kind == policy.DecisionWarn && !req.PolicyOverride {
-		record.Status = "awaiting_approval"
-		if s.history != nil {
-			if err := s.history.Save(ctx, record); err != nil {
-				return Result{}, fmt.Errorf("save awaiting approval session: %w", err)
-			}
-		}
-		s.appendEvent(ctx, events.Record{
-			ID:         "evt_" + sessionID + "_created",
-			SessionID:  sessionID,
-			TaskID:     taskID,
-			Type:       events.TypeSessionCreated,
-			ActorType:  events.ActorTypeSystem,
-			OccurredAt: record.CreatedAt,
-			Payload: map[string]any{
-				"starter":   starter.ID,
-				"delegates": req.Delegates,
-			},
-		})
-		s.appendSessionStateEvent(ctx, record)
-		_, _ = fmt.Fprintf(w, "session=%s task=%s status=%s reason=%s\n", record.ID, record.TaskID, record.Status, decision.Reason)
-		return Result{SessionID: sessionID, TaskID: taskID, Status: record.Status}, nil
 	}
 	if s.history != nil {
 		if err := s.history.Save(ctx, record); err != nil {
@@ -246,6 +223,13 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 					_ = s.store.Save(ctx, artifact)
 					s.appendArtifactStoredEvent(ctx, artifact)
 				}
+				for _, related := range execResult.RelatedArtifacts[nodeID] {
+					if related.ID == "" {
+						continue
+					}
+					_ = s.store.Save(ctx, related)
+					s.appendArtifactStoredEvent(ctx, related)
+				}
 			}
 		}
 		if s.history != nil {
@@ -258,7 +242,7 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 			TaskID:      taskID,
 			Status:      record.Status,
 			ArtifactIDs: record.ArtifactIDs,
-		}, err
+		}, nil
 	}
 
 	writeRelayResult(w, assignments, execResult)
@@ -269,6 +253,12 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 				return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, err)
 			}
 			s.appendArtifactStoredEvent(ctx, artifact)
+			for _, related := range execResult.RelatedArtifacts[nodeID] {
+				if err := s.store.Save(ctx, related); err != nil {
+					return Result{}, fmt.Errorf("save artifact %s: %w", related.ID, err)
+				}
+				s.appendArtifactStoredEvent(ctx, related)
+			}
 		}
 	}
 	record.Status = "succeeded"
@@ -306,31 +296,8 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 			record.CreatedAt = existing.CreatedAt
 		}
 	}
-	decision, err := s.evaluatePolicy(ctx, sessionID, taskID, "direct", req.Prompt, req.WorkingDir, profile.ID, nil, 1, req.PolicyOverride)
-	if err != nil {
+	if _, err := s.evaluatePolicy(ctx, sessionID, taskID, "direct", req.Prompt, req.WorkingDir, req.WorkingDir, nil, profile.ID, nil, 1, req.PolicyOverride, req.OverrideActor); err != nil {
 		return Result{}, err
-	}
-	if decision.Kind == policy.DecisionWarn && !req.PolicyOverride {
-		record.Status = "awaiting_approval"
-		if s.history != nil {
-			if err := s.history.Save(ctx, record); err != nil {
-				return Result{}, fmt.Errorf("save awaiting approval session: %w", err)
-			}
-		}
-		s.appendEvent(ctx, events.Record{
-			ID:         "evt_" + sessionID + "_created",
-			SessionID:  sessionID,
-			TaskID:     taskID,
-			Type:       events.TypeSessionCreated,
-			ActorType:  events.ActorTypeSystem,
-			OccurredAt: record.CreatedAt,
-			Payload: map[string]any{
-				"starter": profile.ID,
-			},
-		})
-		s.appendSessionStateEvent(ctx, record)
-		_, _ = fmt.Fprintf(stdout, "session=%s task=%s status=%s reason=%s\n", record.ID, record.TaskID, record.Status, decision.Reason)
-		return Result{SessionID: sessionID, TaskID: taskID, Status: record.Status}, nil
 	}
 	if s.history != nil {
 		if err := s.history.Save(ctx, record); err != nil {
@@ -348,52 +315,60 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 			"starter": profile.ID,
 		},
 	})
-	result, err := s.supervisor.RunCaptured(ctx, runtime.StartRequest{
-		ExecutionID: "exec_" + taskID,
-		SessionID:   sessionID,
-		TaskID:      taskID,
-		Profile:     profile,
-		Prompt:      req.Prompt,
-		WorkingDir:  req.WorkingDir,
-		Continuous:  req.Continuous,
-		MaxRounds:   req.MaxRounds,
-	})
-	if result.Stdout != "" {
-		_, _ = io.WriteString(stdout, result.Stdout)
-		if !strings.HasSuffix(result.Stdout, "\n") {
-			_, _ = io.WriteString(stdout, "\n")
+	assignments := []scheduler.NodeAssignment{{
+		Node: domain.TaskNodeSpec{
+			ID:            taskID,
+			Title:         "Direct execution",
+			Strategy:      domain.TaskStrategyDirect,
+			SchemaVersion: "v1",
+		},
+		Profile:    profile,
+		Continuous: req.Continuous,
+		MaxRounds:  req.MaxRounds,
+	}}
+	dispatcher := scheduler.NewDispatcher(req.WorkingDir, s.supervisor, s.events, s.tasks)
+	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
+	fullAssignments := append([]scheduler.NodeAssignment(nil), assignments...)
+	if err == nil {
+		if updatedAssignments, updatedResult, dynamicDelegates, dynamicErr := s.extendDynamicDelegations(ctx, sessionID, req.WorkingDir, req.Prompt, fullAssignments, execResult); dynamicErr != nil {
+			fullAssignments = updatedAssignments
+			execResult = updatedResult
+			err = dynamicErr
+		} else {
+			fullAssignments = updatedAssignments
+			execResult = updatedResult
+			record.Delegates = append(record.Delegates, dynamicDelegates...)
 		}
 	}
-	if result.Stderr != "" {
-		_, _ = io.WriteString(stderr, result.Stderr)
-		if !strings.HasSuffix(result.Stderr, "\n") {
-			_, _ = io.WriteString(stderr, "\n")
+	for _, nodeID := range execResult.Order {
+		artifact := execResult.Artifacts[nodeID]
+		if s.store != nil && artifact.ID != "" {
+			if saveErr := s.store.Save(ctx, artifact); saveErr != nil {
+				return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, saveErr)
+			}
+			s.appendArtifactStoredEvent(ctx, artifact)
+		}
+		for _, related := range execResult.RelatedArtifacts[nodeID] {
+			if s.store != nil && related.ID != "" {
+				if saveErr := s.store.Save(ctx, related); saveErr != nil {
+					return Result{}, fmt.Errorf("save artifact %s: %w", related.ID, saveErr)
+				}
+				s.appendArtifactStoredEvent(ctx, related)
+			}
 		}
 	}
+	writeRelayResult(stdout, fullAssignments, execResult)
 
-	artifact, artifactErr := artifacts.NewService().BuildReport(ctx, artifacts.BuildReportRequest{
-		SessionID: sessionID,
-		TaskID:    taskID,
-		RunID:     taskID,
-		Agent:     profile,
-		Result:    resultLabel(err),
-		Output:    result.Stdout,
-		Stderr:    result.Stderr,
-	})
-	if artifactErr != nil {
-		return Result{}, artifactErr
-	}
-	if s.store != nil {
-		if saveErr := s.store.Save(ctx, artifact); saveErr != nil {
-			return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, saveErr)
-		}
-		s.appendArtifactStoredEvent(ctx, artifact)
-	}
-
-	record.ArtifactIDs = []string{artifact.ID}
+	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
 	record.UpdatedAt = time.Now().UTC()
 	if err != nil {
-		record.Status = "failed"
+		var approvalErr *scheduler.ApprovalPendingError
+		if errors.As(err, &approvalErr) {
+			record.Status = "awaiting_approval"
+			err = nil
+		} else {
+			record.Status = "failed"
+		}
 	} else {
 		record.Status = "succeeded"
 	}
@@ -433,6 +408,11 @@ func collectRelayArtifactIDs(result scheduler.DispatchResult) []string {
 	for _, nodeID := range result.Order {
 		if artifact := result.Artifacts[nodeID]; artifact.ID != "" {
 			out = append(out, artifact.ID)
+		}
+		for _, related := range result.RelatedArtifacts[nodeID] {
+			if related.ID != "" {
+				out = append(out, related.ID)
+			}
 		}
 	}
 	return out
@@ -497,39 +477,29 @@ func resultLabel(err error) string {
 	return "success"
 }
 
-func (s *Service) evaluatePolicy(ctx context.Context, sessionID, taskID, mode, prompt, workingDir, starter string, delegates []string, nodeCount int, policyOverride bool) (policy.Decision, error) {
+func (s *Service) evaluatePolicy(ctx context.Context, sessionID, taskID, mode, prompt, workingDir, effectiveDir string, pathHints []string, starter string, delegates []string, nodeCount int, policyOverride bool, overrideActor string) (policy.Decision, error) {
+	if policyOverride && strings.TrimSpace(overrideActor) == "" {
+		overrideActor = policy.OverrideActor()
+	}
 	decision, err := policy.NewSimpleBroker(s.events).Evaluate(ctx, policy.Request{
-		SessionID:    sessionID,
-		TaskID:       taskID,
-		Mode:         mode,
-		Prompt:       prompt,
-		WorkingDir:   workingDir,
-		StarterAgent: starter,
-		Delegates:    delegates,
-		NodeCount:    nodeCount,
+		SessionID:      sessionID,
+		TaskID:         taskID,
+		Mode:           mode,
+		Prompt:         prompt,
+		WorkingDir:     workingDir,
+		EffectiveDir:   effectiveDir,
+		PathHints:      pathHints,
+		StarterAgent:   starter,
+		Delegates:      delegates,
+		NodeCount:      nodeCount,
+		PolicyOverride: policyOverride,
+		OverrideActor:  overrideActor,
 	})
 	if err != nil {
 		return policy.Decision{}, err
 	}
 	if decision.Kind == policy.DecisionBlock {
 		return decision, fmt.Errorf("policy blocked execution: %s", decision.Reason)
-	}
-	if decision.Kind == policy.DecisionWarn && policyOverride {
-		s.appendEvent(ctx, events.Record{
-			ID:         "evt_" + taskID + "_policy_override",
-			SessionID:  sessionID,
-			TaskID:     taskID,
-			Type:       events.TypePolicyDecisionRecorded,
-			ActorType:  events.ActorTypeHuman,
-			OccurredAt: time.Now().UTC(),
-			ReasonCode: "human_approved_policy_warning",
-			Payload: map[string]any{
-				"decision":        "approved_override",
-				"original_reason": decision.Reason,
-				"warnings":        decision.Warnings,
-			},
-		})
-		return policy.Decision{Kind: policy.DecisionAllow, Reason: "approved_override"}, nil
 	}
 	return decision, nil
 }

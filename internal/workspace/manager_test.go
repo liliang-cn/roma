@@ -136,6 +136,66 @@ func TestManagerReclaimStaleRemovesPreparedWorktree(t *testing.T) {
 	}
 }
 
+func TestManagerCapturePatchAndMergeBack(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	manager := NewManager(root, store.NewMemoryStore())
+	prepared, err := manager.Prepare(context.Background(), "sess_merge", "task_merge", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	target := filepath.Join(prepared.EffectiveDir, "README.md")
+	if err := os.WriteFile(target, []byte("roma merged\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	patch, err := manager.CapturePatch(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("CapturePatch() error = %v", err)
+	}
+	if len(patch) == 0 {
+		t.Fatal("expected non-empty patch")
+	}
+	if err := manager.MergeBack(context.Background(), prepared); err != nil {
+		t.Fatalf("MergeBack() error = %v", err)
+	}
+
+	mergedPath := filepath.Join(root, ".roma", "workspaces", "sess_merge", "task_merge", "workspace.json")
+	merged, err := loadPrepared(mergedPath)
+	if err != nil {
+		t.Fatalf("loadPrepared() error = %v", err)
+	}
+	if merged.Status != "merged" {
+		t.Fatalf("status = %q, want merged", merged.Status)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "roma merged" {
+		t.Fatalf("base README = %q, want roma merged", strings.TrimSpace(string(content)))
+	}
+
+	if err := manager.RollbackMerge(context.Background(), prepared); err != nil {
+		t.Fatalf("RollbackMerge() error = %v", err)
+	}
+	rolledBack, err := loadPrepared(mergedPath)
+	if err != nil {
+		t.Fatalf("loadPrepared() error = %v", err)
+	}
+	if rolledBack.Status != "rolled_back" {
+		t.Fatalf("status = %q, want rolled_back", rolledBack.Status)
+	}
+	content, err = os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "roma" {
+		t.Fatalf("base README after rollback = %q, want roma", strings.TrimSpace(string(content)))
+	}
+}
+
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	runGitCommand(t, dir, "init")

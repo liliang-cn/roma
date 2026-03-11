@@ -1,0 +1,14 @@
+{
+  "prompt": "Design a safer and more maintainable API change plan for the current repository.",
+  "working_dir": ".",
+  "nodes": [
+    {
+      "id": "curia_design",
+      "title": "Curia design review",
+      "agent": "codex",
+      "strategy": "curia",
+      "senators": ["codex", "gemini", "copilot"],
+      "quorum": 2
+    }
+  ]
+}

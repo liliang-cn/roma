@@ -79,6 +79,20 @@ func TestReplaySessionRebuildsTaskAndArtifactState(t *testing.T) {
 				"artifact_ids": []any{"art_plan"},
 			},
 		},
+		{
+			ID:         "evt_6",
+			SessionID:  "sess_1",
+			TaskID:     "sess_1__plan",
+			Type:       events.TypePlanApplyRejected,
+			ActorType:  events.ActorTypeHuman,
+			OccurredAt: now.Add(5 * time.Second),
+			ReasonCode: "validation_failed",
+			Payload: map[string]any{
+				"artifact_id":   "art_plan",
+				"changed_paths": []any{"README.md"},
+				"violations":    []any{"execution plan forbidden path: README.md"},
+			},
+		},
 	} {
 		if err := mem.AppendEvent(ctx, item); err != nil {
 			t.Fatalf("AppendEvent() error = %v", err)
@@ -110,5 +124,11 @@ func TestReplaySessionRebuildsTaskAndArtifactState(t *testing.T) {
 	}
 	if len(snapshot.ArtifactIDs) != 1 || snapshot.ArtifactIDs[0] != "art_plan" {
 		t.Fatalf("artifact ids = %#v, want [art_plan]", snapshot.ArtifactIDs)
+	}
+	if len(snapshot.Plans) != 1 {
+		t.Fatalf("plan count = %d, want 1", len(snapshot.Plans))
+	}
+	if snapshot.Plans[0].Reason != "validation_failed" {
+		t.Fatalf("plan reason = %q, want validation_failed", snapshot.Plans[0].Reason)
 	}
 }

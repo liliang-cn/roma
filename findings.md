@@ -71,7 +71,29 @@
   - `pending_approval_task_ids` are persisted in SQLite
   - recovery skips sessions whose leases still carry unresolved approval gates
   - queue/session inspection now exposes `approval_resume_ready`
+- `SchedulerLeaseRecorded` events now include `workspace_refs` and `pending_approval_task_ids`, so replay can show why a session is runnable versus gated.
+- `roma recover` can now use the daemon API, and recovery snapshots now return the active/recovered lease alongside ready tasks and approval readiness.
+- Queue-level `approve/reject` now acts as a thin wrapper over lease-backed task approvals when a session is gated on node approval, instead of keeping a separate approval truth path.
+- `roma queue list` now shows node-level execution summaries derived from persisted task records, and `roma status` now reports active leases, pending approval tasks, and recoverable session counts.
+- `romad` now exposes `/status`, and `roma status` uses that daemon API in daemon mode instead of recomputing counts from the CLI side.
+- Direct runs now execute through `scheduler.Dispatcher` too, so risky single-agent prompts create real task/lease approval state and can resume through the same scheduler recovery path as graph/relay sessions.
+- Direct runs now support a minimal dynamic delegation protocol: if agent output includes `ROMA_DELEGATE: <agent>`, ROMA appends follow-up nodes and continues execution instead of stopping at the starter node.
+- Dynamic delegation is now no longer direct-only; the shared run/graph execution path can append follow-up nodes from artifact output and continue through the scheduler.
+- Report artifacts now carry structured `follow_up_requests`, and scheduler follow-up nodes can also inherit an explicit `PromptHint` instead of relying on raw output scraping alone.
+- Follow-up node generation is now policy-aware at the primitive level because run/graph/direct all pass through the same scheduler + policy path before the new node executes.
 - The main run/recovery/graph execution paths no longer import `internal/relay`; scheduler now owns the shared node-assignment/result types used by the live execution path.
+- Worktree-backed execution now has a minimum merge-back closure:
+  - `workspace.CapturePatch` exports the isolated git diff
+  - `workspace.MergeBack` applies it into the base repository with `git apply --3way`
+  - CLI/API now expose `roma workspaces merge <session> <task>` and `POST /workspaces/{session}/{task}/merge`
+- Policy now has a first path-scoped boundary:
+  - execution is blocked if a node tries to run out of `/`, `.git`, or an effective directory outside the workspace boundary
+  - prompts mentioning protected repo scopes such as `.github/`, `infra/`, `migrations/`, `auth/`, or `billing/` now raise warnings
+- Policy override is now actor-scoped instead of boolean-only:
+  - `ROMA_POLICY_OVERRIDE_ACTOR` chooses the local actor identity
+  - `ROMA_POLICY_OVERRIDE_ACTORS` defines the allowed override ACL
+  - unauthorized overrides are blocked with `override_actor_forbidden`
+  - queue records now persist `policy_override_actor`
 - Queue requests now reserve `session_id` / `task_id` before execution starts, so crash recovery can resume the same session instead of spawning a replacement one.
 - Coding-agent execution can now opt into continuous multi-round mode with `--continuous` and `--max-rounds`, and runtime supervision will keep prompting until the agent emits `ROMA_DONE:` or the round budget is exhausted.
 - `MemoryStore.ListEvents` was missing `Type` filtering; fixing it removed a hidden testing/runtime inconsistency between memory-backed and SQLite/file-backed event stores.
@@ -80,6 +102,46 @@
 
 - Queue records still do not expose richer node-level state summaries in list view.
 - Recovery now resumes through `scheduler.Dispatcher`, dispatcher leases are persisted, daemon periodic recovery can resume post-approval sessions without queue re-enqueue, and both workspace and approval metadata are now explicit in leases.
-- Policy remains minimum viable; there is still no path-scoped approval policy or override ACL model.
-- Direct non-daemon runs can now enter node-level `awaiting_approval`, but resumption still depends on rerunning dispatch rather than a dedicated inbox/lease handoff.
-- `internal/relay` still exists as a compatibility package, and workspace cleanup still relies on workspace status heuristics rather than explicit lease ownership.
+- Policy is stronger than before, but still minimum viable overall; it now has path-scoped boundaries and override ACLs, yet still lacks a richer path/action matrix and explicit override roles beyond environment-backed allowlists.
+- Direct non-daemon runs now enter node-level `awaiting_approval` through scheduler-owned task/lease state, but the system still lacks a richer approval inbox UX.
+- `internal/relay` now only wraps `scheduler.Dispatcher` for compatibility; it no longer carries a separate live execution core.
+- Curia minimal now exists in code:
+  - `TaskStrategyCuria` nodes can execute through scheduler
+  - the runtime produces `proposal`, `ballot`, `debate_log`, `decision_pack`, and `execution_plan` artifacts
+  - the node's primary artifact is the final `execution_plan`
+  - intermediate Curia artifacts are persisted alongside the node result
+  - `examples/curia-graph.json` provides a runnable Curia graph sample
+  - `roma sessions curia <session_id>` provides a concise Curia-oriented summary
+  - `roma artifacts list --kind <kind>` now makes Curia artifact inspection practical
+- `execution_plan` is now inspectable and actionable:
+  - `roma plans inspect <artifact_id>` prints the execution-plan payload
+  - `roma plans apply <session> <task> <artifact_id> --dry-run` validates changed paths against `expected_files` and `forbidden_paths`
+  - `roma plans apply ...` performs merge-back and optional required checks
+  - `roma plans rollback ...` reverse-applies the captured worktree patch into the base repository
+  - the same plan apply/rollback path is now exposed through daemon API
+  - non-dry-run plan apply now enforces `human_approval_required` through override-aware policy gates
+- execution-plan apply now also records dedicated audit events:
+  - `PlanApplied`
+  - `PlanRolledBack`
+  - `PlanApplyRejected`
+  - merge/apply validation and protected-path failures now return structured violations
+  - merge conflicts and required-check failures now return distinct plan error kinds instead of generic git output only
+  - `queue inspect` and `sessions inspect` now summarize those plan events into a `plans` section, so users do not have to manually scan raw event logs
+  - `dry-run` now performs a real `git apply --check --3way` preview and can return conflict details before any merge-back is attempted
+  - plan apply now uses an action-aware path policy matrix instead of ad hoc protected-path checks
+  - `roma plans inbox` / daemon `/plans/inbox` now aggregate pending execution plans, their latest apply status, approval requirement, violations, and conflict summaries
+- execution plans now support explicit `approve` / `reject` actions, and human-approved plans can be applied without forcing a policy override
+- gateway remote commands are no longer audit-only:
+  - `plan_approve` / `plan_reject` can now bridge through the gateway service into the plan approval flow
+  - this is still minimal, but it is the first real remote approval path rather than pure logging
+- there is now a runnable concurrent DAG/workspace soak baseline in scheduler tests:
+  - multiple ready nodes execute in parallel
+  - per-task git worktrees are created
+  - the same session then reclaims all stale workspaces
+  - this is still not production-scale load testing, but it is a real concurrency regression guard instead of pure reasoning
+- Curia is still intentionally minimal:
+  - quorum and vote selection are lightweight
+  - it now detects close-score and veto-driven disputes and can emit `winning_mode=merge`, but arbitration is still human-first
+  - arbitration is human-first
+  - there is no Augustus path, no weighted reputation model, and no automatic dispute engine yet
+- Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.

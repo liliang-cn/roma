@@ -6,14 +6,18 @@ import (
 
 // NodeAssignment binds a task node to an agent profile and runtime settings.
 type NodeAssignment struct {
-	Node       domain.TaskNodeSpec
-	Profile    domain.AgentProfile
-	Continuous bool
-	MaxRounds  int
+	Node          domain.TaskNodeSpec
+	Profile       domain.AgentProfile
+	CuriaProfiles []domain.AgentProfile
+	CuriaQuorum   int
+	PromptHint    string
+	Continuous    bool
+	MaxRounds     int
 }
 
 // DispatchResult captures scheduler-owned execution results.
 type DispatchResult struct {
-	Artifacts map[string]domain.ArtifactEnvelope
-	Order     []string
+	Artifacts        map[string]domain.ArtifactEnvelope
+	RelatedArtifacts map[string][]domain.ArtifactEnvelope
+	Order            []string
 }

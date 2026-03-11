@@ -33,7 +33,20 @@ type SessionSnapshot struct {
 	UpdatedAt   time.Time       `json:"updated_at"`
 	ArtifactIDs []string        `json:"artifact_ids,omitempty"`
 	Tasks       []TaskSnapshot  `json:"tasks,omitempty"`
+	Plans       []PlanSnapshot  `json:"plans,omitempty"`
 	Events      []events.Record `json:"events"`
+}
+
+type PlanSnapshot struct {
+	ArtifactID     string    `json:"artifact_id,omitempty"`
+	TaskID         string    `json:"task_id,omitempty"`
+	EventType      string    `json:"event_type"`
+	Reason         string    `json:"reason,omitempty"`
+	ChangedPaths   []string  `json:"changed_paths,omitempty"`
+	Violations     []string  `json:"violations,omitempty"`
+	Conflict       bool      `json:"conflict,omitempty"`
+	ConflictDetail string    `json:"conflict_detail,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
 }
 
 // Service rebuilds replayable execution views from the append-only event log.
@@ -66,6 +79,7 @@ func RebuildSessionSnapshot(sessionID string, items []events.Record) SessionSnap
 	}
 	taskByID := make(map[string]TaskSnapshot)
 	artifactSeen := make(map[string]struct{})
+	planSnapshots := make([]PlanSnapshot, 0)
 
 	for _, item := range ordered {
 		if snapshot.SessionID == "" {
@@ -82,6 +96,29 @@ func RebuildSessionSnapshot(sessionID string, items []events.Record) SessionSnap
 		}
 
 		switch item.Type {
+		case events.TypePlanApplied, events.TypePlanRolledBack, events.TypePlanApplyRejected:
+			plan := PlanSnapshot{
+				TaskID:     item.TaskID,
+				EventType:  string(item.Type),
+				Reason:     item.ReasonCode,
+				OccurredAt: item.OccurredAt,
+			}
+			if artifactID, ok := payloadString(item.Payload, "artifact_id"); ok {
+				plan.ArtifactID = artifactID
+			}
+			if changedPaths, ok := payloadStringSlice(item.Payload, "changed_paths"); ok {
+				plan.ChangedPaths = changedPaths
+			}
+			if violations, ok := payloadStringSlice(item.Payload, "violations"); ok {
+				plan.Violations = violations
+			}
+			if detail, ok := payloadString(item.Payload, "conflict_detail"); ok {
+				plan.ConflictDetail = detail
+			}
+			if conflict, ok := payloadBool(item.Payload, "conflict"); ok {
+				plan.Conflict = conflict
+			}
+			planSnapshots = append(planSnapshots, plan)
 		case events.TypeSessionStateChanged:
 			if item.ReasonCode != "" {
 				snapshot.Status = item.ReasonCode
@@ -154,6 +191,7 @@ func RebuildSessionSnapshot(sessionID string, items []events.Record) SessionSnap
 			return 0
 		}
 	})
+	snapshot.Plans = planSnapshots
 	return snapshot
 }
 
@@ -215,4 +253,16 @@ func payloadStringSlice(payload map[string]any, key string) ([]string, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func payloadBool(payload map[string]any, key string) (bool, bool) {
+	if payload == nil {
+		return false, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return false, false
+	}
+	flag, ok := value.(bool)
+	return flag, ok
 }

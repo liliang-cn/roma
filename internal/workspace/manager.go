@@ -38,6 +38,16 @@ type Prepared struct {
 	Status       string    `json:"status"`
 	ReleasedAt   time.Time `json:"released_at,omitempty"`
 	ReclaimedAt  time.Time `json:"reclaimed_at,omitempty"`
+	MergedAt     time.Time `json:"merged_at,omitempty"`
+	RolledBackAt time.Time `json:"rolled_back_at,omitempty"`
+}
+
+type MergePreview struct {
+	CanApply       bool     `json:"can_apply"`
+	Conflict       bool     `json:"conflict"`
+	ConflictDetail string   `json:"conflict_detail,omitempty"`
+	ChangedPaths   []string `json:"changed_paths,omitempty"`
+	PatchBytes     int      `json:"patch_bytes"`
 }
 
 // Manager resolves per-task workspace directories and persists workspace metadata.
@@ -147,6 +157,170 @@ func (m *Manager) Release(ctx context.Context, prepared Prepared, outcome string
 				"provider":       prepared.Provider,
 				"effective_dir":  prepared.EffectiveDir,
 				"outcome":        outcome,
+			},
+		})
+	}
+	return nil
+}
+
+// CapturePatch exports the current git diff for an isolated worktree.
+func (m *Manager) CapturePatch(ctx context.Context, prepared Prepared) ([]byte, error) {
+	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+		return nil, fmt.Errorf("workspace patch capture requires git_worktree provider")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", prepared.EffectiveDir, "diff", "--binary")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --binary: %w", err)
+	}
+	return output, nil
+}
+
+// ChangedPaths returns the currently modified paths inside an isolated worktree.
+func (m *Manager) ChangedPaths(ctx context.Context, prepared Prepared) ([]string, error) {
+	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+		return nil, fmt.Errorf("workspace changed paths require git_worktree provider")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", prepared.EffectiveDir, "diff", "--name-only")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, filepath.Clean(strings.ReplaceAll(line, "\\", "/")))
+		}
+	}
+	return out, nil
+}
+
+// MergeBack applies a captured worktree patch into the base repository and marks the workspace merged.
+func (m *Manager) MergeBack(ctx context.Context, prepared Prepared) error {
+	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+		return fmt.Errorf("workspace merge requires git_worktree provider")
+	}
+	patch, err := m.CapturePatch(ctx, prepared)
+	if err != nil {
+		return err
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	apply := exec.CommandContext(ctx, "git", "-C", prepared.BaseDir, "apply", "--3way", "-")
+	apply.Stdin = strings.NewReader(string(patch))
+	output, err := apply.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git apply --3way: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
+
+	prepared.Status = "merged"
+	prepared.MergedAt = m.now()
+	rootDir := m.rootDir
+	if rootDir == "" {
+		rootDir = prepared.BaseDir
+	}
+	if err := writePrepared(m.metaPath(rootDir, prepared.SessionID, prepared.TaskID), prepared); err != nil {
+		return fmt.Errorf("write merged workspace metadata: %w", err)
+	}
+	if m.events != nil {
+		_ = m.events.AppendEvent(ctx, events.Record{
+			ID:         fmt.Sprintf("evt_%s_%s_workspace_merge_%d", prepared.SessionID, prepared.TaskID, prepared.MergedAt.UnixNano()),
+			SessionID:  prepared.SessionID,
+			TaskID:     prepared.TaskID,
+			Type:       events.TypeWorkspaceReleased,
+			ActorType:  events.ActorTypeHuman,
+			OccurredAt: prepared.MergedAt,
+			ReasonCode: "merged",
+			Payload: map[string]any{
+				"effective_dir": prepared.EffectiveDir,
+				"base_dir":      prepared.BaseDir,
+				"patch_bytes":   len(patch),
+			},
+		})
+	}
+	return nil
+}
+
+// PreviewMerge checks whether the isolated worktree patch can merge cleanly into base.
+func (m *Manager) PreviewMerge(ctx context.Context, prepared Prepared) (MergePreview, error) {
+	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+		return MergePreview{}, fmt.Errorf("workspace merge preview requires git_worktree provider")
+	}
+	patch, err := m.CapturePatch(ctx, prepared)
+	if err != nil {
+		return MergePreview{}, err
+	}
+	changedPaths, err := m.ChangedPaths(ctx, prepared)
+	if err != nil {
+		return MergePreview{}, err
+	}
+	preview := MergePreview{
+		CanApply:     true,
+		ChangedPaths: changedPaths,
+		PatchBytes:   len(patch),
+	}
+	if len(patch) == 0 {
+		return preview, nil
+	}
+	apply := exec.CommandContext(ctx, "git", "-C", prepared.BaseDir, "apply", "--check", "--3way", "-")
+	apply.Stdin = strings.NewReader(string(patch))
+	output, err := apply.CombinedOutput()
+	if err != nil {
+		preview.CanApply = false
+		preview.Conflict = true
+		preview.ConflictDetail = strings.TrimSpace(string(output))
+		if preview.ConflictDetail == "" {
+			preview.ConflictDetail = err.Error()
+		}
+		return preview, nil
+	}
+	return preview, nil
+}
+
+// RollbackMerge reverse-applies the isolated worktree patch into the base repository.
+func (m *Manager) RollbackMerge(ctx context.Context, prepared Prepared) error {
+	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
+		return fmt.Errorf("workspace rollback requires git_worktree provider")
+	}
+	patch, err := m.CapturePatch(ctx, prepared)
+	if err != nil {
+		return err
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	apply := exec.CommandContext(ctx, "git", "-C", prepared.BaseDir, "apply", "-R", "--3way", "-")
+	apply.Stdin = strings.NewReader(string(patch))
+	output, err := apply.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git apply -R --3way: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
+
+	prepared.Status = "rolled_back"
+	prepared.RolledBackAt = m.now()
+	rootDir := m.rootDir
+	if rootDir == "" {
+		rootDir = prepared.BaseDir
+	}
+	if err := writePrepared(m.metaPath(rootDir, prepared.SessionID, prepared.TaskID), prepared); err != nil {
+		return fmt.Errorf("write rolled back workspace metadata: %w", err)
+	}
+	if m.events != nil {
+		_ = m.events.AppendEvent(ctx, events.Record{
+			ID:         fmt.Sprintf("evt_%s_%s_workspace_rollback_%d", prepared.SessionID, prepared.TaskID, prepared.RolledBackAt.UnixNano()),
+			SessionID:  prepared.SessionID,
+			TaskID:     prepared.TaskID,
+			Type:       events.TypeWorkspaceReleased,
+			ActorType:  events.ActorTypeHuman,
+			OccurredAt: prepared.RolledBackAt,
+			ReasonCode: "rolled_back",
+			Payload: map[string]any{
+				"effective_dir": prepared.EffectiveDir,
+				"base_dir":      prepared.BaseDir,
+				"patch_bytes":   len(patch),
 			},
 		})
 	}

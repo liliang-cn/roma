@@ -17,6 +17,7 @@ import (
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
+	"github.com/liliang/roma/internal/plans"
 	"github.com/liliang/roma/internal/policy"
 	"github.com/liliang/roma/internal/queue"
 	"github.com/liliang/roma/internal/replay"
@@ -59,6 +60,8 @@ func run(ctx context.Context, args []string) error {
 		return runEvents(ctx, args[1:])
 	case "policy":
 		return runPolicy(ctx, args[1:])
+	case "plans":
+		return runPlans(ctx, args[1:])
 	case "queue":
 		return runQueue(ctx, args[1:])
 	case "replay":
@@ -125,13 +128,15 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 	client := api.NewClient(req.WorkingDir)
 	if client.Available() {
 		resp, err := client.Submit(ctx, api.SubmitRequest{
-			GraphFile:    "",
-			Prompt:       req.Prompt,
-			StarterAgent: req.StarterAgent,
-			Delegates:    req.Delegates,
-			WorkingDir:   req.WorkingDir,
-			Continuous:   req.Continuous,
-			MaxRounds:    req.MaxRounds,
+			GraphFile:           "",
+			Prompt:              req.Prompt,
+			StarterAgent:        req.StarterAgent,
+			Delegates:           req.Delegates,
+			WorkingDir:          req.WorkingDir,
+			PolicyOverride:      req.PolicyOverride,
+			PolicyOverrideActor: req.OverrideActor,
+			Continuous:          req.Continuous,
+			MaxRounds:           req.MaxRounds,
 		})
 		if err != nil {
 			return err
@@ -211,6 +216,8 @@ func runGraph(ctx context.Context, registry *agents.Registry, args []string) err
 				Agent:        node.Agent,
 				Strategy:     string(node.Strategy),
 				Dependencies: node.Dependencies,
+				Senators:     node.Senators,
+				Quorum:       node.Quorum,
 			})
 		}
 		resp, err := client.Submit(ctx, api.SubmitRequest{
@@ -255,13 +262,15 @@ func runSubmit(ctx context.Context, args []string) error {
 	client := api.NewClient(wd)
 	if client.Available() {
 		resp, err := client.Submit(ctx, api.SubmitRequest{
-			GraphFile:    "",
-			Prompt:       req.Prompt,
-			StarterAgent: req.StarterAgent,
-			Delegates:    req.Delegates,
-			WorkingDir:   wd,
-			Continuous:   req.Continuous,
-			MaxRounds:    req.MaxRounds,
+			GraphFile:           "",
+			Prompt:              req.Prompt,
+			StarterAgent:        req.StarterAgent,
+			Delegates:           req.Delegates,
+			WorkingDir:          wd,
+			PolicyOverride:      req.PolicyOverride,
+			PolicyOverrideActor: req.OverrideActor,
+			Continuous:          req.Continuous,
+			MaxRounds:           req.MaxRounds,
 		})
 		if err != nil {
 			return err
@@ -272,14 +281,16 @@ func runSubmit(ctx context.Context, args []string) error {
 
 	id := fmt.Sprintf("job_%d", time.Now().UTC().UnixNano())
 	record := queue.Request{
-		ID:           id,
-		GraphFile:    "",
-		Prompt:       req.Prompt,
-		StarterAgent: req.StarterAgent,
-		Delegates:    req.Delegates,
-		WorkingDir:   wd,
-		Continuous:   req.Continuous,
-		MaxRounds:    req.MaxRounds,
+		ID:                  id,
+		GraphFile:           "",
+		Prompt:              req.Prompt,
+		StarterAgent:        req.StarterAgent,
+		Delegates:           req.Delegates,
+		WorkingDir:          wd,
+		PolicyOverride:      req.PolicyOverride,
+		PolicyOverrideActor: req.OverrideActor,
+		Continuous:          req.Continuous,
+		MaxRounds:           req.MaxRounds,
 	}
 	if err := store.Enqueue(ctx, record); err != nil {
 		return err
@@ -307,13 +318,15 @@ func runQueue(ctx context.Context, args []string) error {
 			return err
 		}
 		requests = filterQueueRequests(requests, statusFilter, modeFilter)
-		fmt.Println("ID\tAGENT\tSTATUS\tCREATED\tERROR")
+		fmt.Println("ID\tTARGET\tSTATUS\tSUMMARY\tCREATED\tERROR")
 		for _, req := range requests {
+			summary := queueNodeSummary(ctx, wd, req)
 			fmt.Printf(
-				"%s\t%s\t%s\t%s\t%s\n",
+				"%s\t%s\t%s\t%s\t%s\t%s\n",
 				req.ID,
 				queueLabel(req),
 				req.Status,
+				summary,
 				req.CreatedAt.Format("2006-01-02T15:04:05Z"),
 				req.Error,
 			)
@@ -353,13 +366,15 @@ func runQueue(ctx context.Context, args []string) error {
 			return err
 		}
 		requests = filterQueueRequests(requests, statusFilter, modeFilter)
-		fmt.Println("ID\tAGENT\tSTATUS\tCREATED\tERROR")
+		fmt.Println("ID\tTARGET\tSTATUS\tSUMMARY\tCREATED\tERROR")
 		for _, req := range requests {
+			summary := queueNodeSummary(ctx, wd, req)
 			fmt.Printf(
-				"%s\t%s\t%s\t%s\t%s\n",
+				"%s\t%s\t%s\t%s\t%s\t%s\n",
 				req.ID,
 				queueLabel(req),
 				req.Status,
+				summary,
 				req.CreatedAt.Format("2006-01-02T15:04:05Z"),
 				req.Error,
 			)
@@ -385,11 +400,18 @@ func runQueue(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		resp := api.QueueInspectResponse{Job: req}
+		resp := api.QueueInspectResponse{Job: req, ApprovalResumeReady: true}
 		if req.SessionID != "" {
 			sessionStore := preferredHistoryStore(wd)
 			if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
 				resp.Session = &session
+			}
+			if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+				if lease, err := leaseStore.Get(ctx, req.SessionID); err == nil {
+					resp.Lease = &lease
+					resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+					resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+				}
 			}
 			taskStore := preferredTaskStore(wd)
 			if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
@@ -402,6 +424,15 @@ func runQueue(ctx context.Context, args []string) error {
 			eventStore := preferredEventStore(wd)
 			if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
 				resp.Events = items
+				resp.Plans = summarizePlanActions(items)
+			}
+			manager := workspacepkg.NewManager(wd, nil)
+			if items, err := manager.List(ctx); err == nil {
+				for _, item := range items {
+					if item.SessionID == req.SessionID {
+						resp.Workspaces = append(resp.Workspaces, item)
+					}
+				}
 			}
 		}
 		raw, err := json.MarshalIndent(resp, "", "  ")
@@ -453,19 +484,31 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 	if err != nil {
 		return err
 	}
-	if approved {
-		item.PolicyOverride = true
-		item.Status = queue.StatusPending
-		item.Error = ""
+	handled := false
+	actor := policy.OverrideActor()
+	if delegated, updated, err := applyQueueDecisionLocal(ctx, wd, item, approved); delegated {
+		if err != nil {
+			return err
+		}
+		handled = true
+		item = updated
 	} else {
-		item.PolicyOverride = false
-		item.Status = queue.StatusRejected
-		item.Error = "rejected by user"
+		if approved {
+			item.PolicyOverride = true
+			item.PolicyOverrideActor = actor
+			item.Status = queue.StatusPending
+			item.Error = ""
+		} else {
+			item.PolicyOverride = false
+			item.PolicyOverrideActor = ""
+			item.Status = queue.StatusRejected
+			item.Error = "rejected by user"
+		}
+		if err := queueStore.Update(ctx, item); err != nil {
+			return err
+		}
 	}
-	if err := queueStore.Update(ctx, item); err != nil {
-		return err
-	}
-	if item.SessionID != "" {
+	if !handled && item.SessionID != "" {
 		sessionStore := preferredHistoryStore(wd)
 		if session, err := sessionStore.Get(ctx, item.SessionID); err == nil {
 			if approved {
@@ -492,6 +535,7 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 			Payload: map[string]any{
 				"job_id":   item.ID,
 				"approved": approved,
+				"actor":    actor,
 			},
 		})
 	}
@@ -501,6 +545,96 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 	}
 	fmt.Println(string(raw))
 	return nil
+}
+
+func applyQueueDecisionLocal(ctx context.Context, wd string, item queue.Request, approved bool) (bool, queue.Request, error) {
+	if item.SessionID == "" {
+		return false, item, nil
+	}
+	leaseStore, err := scheduler.NewLeaseStore(wd)
+	if err != nil {
+		return false, item, nil
+	}
+	lease, err := leaseStore.Get(ctx, item.SessionID)
+	if err != nil || len(lease.PendingApprovalTaskIDs) == 0 {
+		return false, item, nil
+	}
+	eventStore := preferredEventStore(wd)
+	taskStore := preferredTaskStore(wd)
+	lifecycle := scheduler.NewGraphLifecycle(taskStore, eventStore)
+	for _, taskID := range lease.PendingApprovalTaskIDs {
+		if approved {
+			if err := lifecycle.ApproveTask(ctx, taskID); err != nil {
+				return true, item, err
+			}
+		} else {
+			if err := lifecycle.RejectTask(ctx, taskID); err != nil {
+				return true, item, err
+			}
+		}
+	}
+	if err := leaseStore.UpdatePendingApprovalTaskIDs(ctx, item.SessionID, nil); err != nil {
+		return true, item, err
+	}
+	reason := "human_approved"
+	if !approved {
+		reason = "human_rejected"
+	}
+	actor := policy.OverrideActor()
+	_ = eventStore.AppendEvent(ctx, events.Record{
+		ID:         "evt_" + item.ID + "_" + reason,
+		SessionID:  item.SessionID,
+		TaskID:     item.TaskID,
+		Type:       events.TypePolicyDecisionRecorded,
+		ActorType:  events.ActorTypeHuman,
+		OccurredAt: time.Now().UTC(),
+		ReasonCode: reason,
+		Payload: map[string]any{
+			"job_id":                    item.ID,
+			"approved":                  approved,
+			"actor":                     actor,
+			"pending_approval_task_ids": lease.PendingApprovalTaskIDs,
+		},
+	})
+	_ = eventStore.AppendEvent(ctx, events.Record{
+		ID:         "evt_" + item.SessionID + "_lease_" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
+		SessionID:  item.SessionID,
+		Type:       events.TypeSchedulerLeaseRecorded,
+		ActorType:  events.ActorTypeScheduler,
+		OccurredAt: time.Now().UTC(),
+		ReasonCode: string(lease.Status),
+		Payload: map[string]any{
+			"owner_id":                  lease.OwnerID,
+			"status":                    lease.Status,
+			"ready_task_ids":            lease.ReadyTaskIDs,
+			"workspace_refs":            lease.WorkspaceRefs,
+			"pending_approval_task_ids": []string{},
+			"completed_task_ids":        lease.CompletedTaskIDs,
+		},
+	})
+	sessionStore := preferredHistoryStore(wd)
+	if session, err := sessionStore.Get(ctx, item.SessionID); err == nil {
+		if approved {
+			session.Status = "running"
+		} else {
+			session.Status = "rejected"
+		}
+		session.UpdatedAt = time.Now().UTC()
+		_ = sessionStore.Save(ctx, session)
+	}
+	if approved {
+		item.Status = queue.StatusPending
+		item.Error = ""
+	} else {
+		item.Status = queue.StatusRejected
+		item.Error = "task approval rejected"
+	}
+	item.PolicyOverride = false
+	item.PolicyOverrideActor = ""
+	if err := preferredQueueStore(wd).Update(ctx, item); err != nil {
+		return true, item, err
+	}
+	return true, item, nil
 }
 
 func runArtifacts(ctx context.Context, args []string) error {
@@ -514,13 +648,21 @@ func runArtifacts(ctx context.Context, args []string) error {
 
 	if client.Available() && (len(args) == 0 || args[0] == "list") {
 		sessionID := ""
+		kindFilter := ""
 		if len(args) > 2 && args[1] == "--session" {
 			sessionID = args[2]
+		}
+		if len(args) > 2 && args[1] == "--kind" {
+			kindFilter = args[2]
+		}
+		if len(args) > 4 && args[3] == "--kind" {
+			kindFilter = args[4]
 		}
 		envelopes, err := client.ArtifactList(ctx, sessionID)
 		if err != nil {
 			return err
 		}
+		envelopes = filterArtifactsByKind(envelopes, kindFilter)
 		fmt.Println("ID\tKIND\tSESSION\tTASK\tPRODUCER\tCREATED")
 		for _, envelope := range envelopes {
 			fmt.Printf(
@@ -538,13 +680,21 @@ func runArtifacts(ctx context.Context, args []string) error {
 
 	if len(args) == 0 || args[0] == "list" {
 		sessionID := ""
+		kindFilter := ""
 		if len(args) > 2 && args[1] == "--session" {
 			sessionID = args[2]
+		}
+		if len(args) > 2 && args[1] == "--kind" {
+			kindFilter = args[2]
+		}
+		if len(args) > 4 && args[3] == "--kind" {
+			kindFilter = args[4]
 		}
 		envelopes, err := store.List(ctx, sessionID)
 		if err != nil {
 			return err
 		}
+		envelopes = filterArtifactsByKind(envelopes, kindFilter)
 		fmt.Println("ID\tKIND\tSESSION\tTASK\tPRODUCER\tCREATED")
 		for _, envelope := range envelopes {
 			fmt.Printf(
@@ -646,6 +796,15 @@ func runSessions(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	if client.Available() && len(args) > 1 && args[0] == "curia" {
+		record, err := client.SessionInspect(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		printCuriaSummary(record)
+		return nil
+	}
+
 	if len(args) == 0 || args[0] == "list" {
 		records, err := store.List(ctx)
 		if err != nil {
@@ -704,6 +863,7 @@ func runSessions(ctx context.Context, args []string) error {
 		eventStore := preferredEventStore(wd)
 		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: args[1]}); err == nil {
 			resp.Events = items
+			resp.Plans = summarizePlanActions(items)
 		}
 		artifactStore := preferredArtifactStore(wd)
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
@@ -725,7 +885,170 @@ func runSessions(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	if args[0] == "curia" {
+		if len(args) < 2 {
+			return fmt.Errorf("roma sessions curia requires a session id")
+		}
+		record, err := store.Get(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		resp := api.SessionInspectResponse{Session: record, ApprovalResumeReady: true}
+		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+			if lease, err := leaseStore.Get(ctx, args[1]); err == nil {
+				resp.Lease = &lease
+				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
+				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
+			}
+		}
+		taskStore := preferredTaskStore(wd)
+		if items, err := taskStore.ListTasksBySession(ctx, args[1]); err == nil {
+			resp.Tasks = items
+		}
+		eventStore := preferredEventStore(wd)
+		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: args[1]}); err == nil {
+			resp.Events = items
+			resp.Plans = summarizePlanActions(items)
+		}
+		artifactStore := preferredArtifactStore(wd)
+		if items, err := artifactStore.List(ctx, args[1]); err == nil {
+			resp.Artifacts = items
+		}
+		manager := workspacepkg.NewManager(wd, eventStore)
+		if items, err := manager.List(ctx); err == nil {
+			for _, item := range items {
+				if item.SessionID == args[1] {
+					resp.Workspaces = append(resp.Workspaces, item)
+				}
+			}
+		}
+		printCuriaSummary(resp)
+		return nil
+	}
+
 	return fmt.Errorf("unknown sessions subcommand %q", args[0])
+}
+
+func filterArtifactsByKind(envelopes []domain.ArtifactEnvelope, kind string) []domain.ArtifactEnvelope {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return envelopes
+	}
+	out := make([]domain.ArtifactEnvelope, 0, len(envelopes))
+	for _, envelope := range envelopes {
+		if string(envelope.Kind) == kind {
+			out = append(out, envelope)
+		}
+	}
+	return out
+}
+
+func printCuriaSummary(resp api.SessionInspectResponse) {
+	counts := map[domain.ArtifactKind]int{}
+	for _, artifact := range resp.Artifacts {
+		counts[artifact.Kind]++
+	}
+	fmt.Printf("session=%s\n", resp.Session.ID)
+	fmt.Printf("status=%s\n", resp.Session.Status)
+	fmt.Printf("approval_resume_ready=%t\n", resp.ApprovalResumeReady)
+	fmt.Printf("tasks=%d\n", len(resp.Tasks))
+	fmt.Printf("workspaces=%d\n", len(resp.Workspaces))
+	fmt.Printf("proposals=%d\n", counts[domain.ArtifactKindProposal])
+	fmt.Printf("ballots=%d\n", counts[domain.ArtifactKindBallot])
+	fmt.Printf("debate_logs=%d\n", counts[domain.ArtifactKindDebateLog])
+	fmt.Printf("decision_packs=%d\n", counts[domain.ArtifactKindDecisionPack])
+	fmt.Printf("execution_plans=%d\n", counts[domain.ArtifactKindExecutionPlan])
+	for _, artifact := range resp.Artifacts {
+		switch artifact.Kind {
+		case domain.ArtifactKindDecisionPack, domain.ArtifactKindExecutionPlan:
+			fmt.Printf("%s=%s\n", artifact.Kind, artifact.ID)
+		}
+	}
+}
+
+func summarizePlanActions(items []events.Record) []api.PlanActionSummary {
+	out := make([]api.PlanActionSummary, 0)
+	for _, item := range items {
+		switch item.Type {
+		case events.TypePlanApplied, events.TypePlanRolledBack, events.TypePlanApplyRejected:
+		default:
+			continue
+		}
+		summary := api.PlanActionSummary{
+			EventType:  string(item.Type),
+			TaskID:     item.TaskID,
+			Reason:     item.ReasonCode,
+			OccurredAt: item.OccurredAt.Format(time.RFC3339),
+		}
+		if value, ok := item.Payload["artifact_id"].(string); ok {
+			summary.ArtifactID = value
+		}
+		if values, ok := payloadStrings(item.Payload, "changed_paths"); ok {
+			summary.ChangedPaths = values
+		}
+		if values, ok := payloadStrings(item.Payload, "violations"); ok {
+			summary.Violations = values
+		}
+		if values, ok := payloadStrings(item.Payload, "required_checks"); ok {
+			summary.RequiredChecks = values
+		}
+		if value, ok := item.Payload["conflict"].(bool); ok {
+			summary.Conflict = value
+		}
+		if value, ok := item.Payload["conflict_detail"].(string); ok {
+			summary.ConflictDetail = value
+		}
+		out = append(out, summary)
+	}
+	return out
+}
+
+func payloadStrings(payload map[string]any, key string) ([]string, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []string:
+		return typed, true
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if ok {
+				out = append(out, text)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func printPlanInbox(items []api.PlanInboxEntry) error {
+	fmt.Println("ARTIFACT\tSESSION\tTASK\tSTATUS\tAPPROVAL\tLAST\tDETAIL")
+	for _, item := range items {
+		detail := item.LastReason
+		if item.ConflictDetail != "" {
+			detail = item.ConflictDetail
+		} else if len(item.Violations) > 0 {
+			detail = item.Violations[0]
+		}
+		fmt.Printf(
+			"%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
+			item.ArtifactID,
+			item.SessionID,
+			item.TaskID,
+			item.Status,
+			item.HumanApprovalRequired,
+			item.LastEventType,
+			detail,
+		)
+	}
+	return nil
 }
 
 func runStatus(ctx context.Context) error {
@@ -746,20 +1069,26 @@ func runStatus(ctx context.Context) error {
 	sessionCount := 0
 	artifactCount := 0
 	eventCount := 0
+	activeLeaseCount := 0
+	pendingApprovalCount := 0
+	recoverableSessionCount := 0
 	sqlitePath := sqliteutil.DBPath(wd)
 	sqliteBytes := int64(0)
 	sqliteEnabled := false
 
 	if client.Available() {
 		daemonMode = "daemon-api"
-		if items, err := client.QueueList(ctx); err == nil {
-			queueCount = len(items)
-		}
-		if items, err := client.SessionList(ctx); err == nil {
-			sessionCount = len(items)
-		}
-		if items, err := client.ArtifactList(ctx, ""); err == nil {
-			artifactCount = len(items)
+		if status, err := client.Status(ctx); err == nil {
+			queueCount = status.QueueItems
+			sessionCount = status.Sessions
+			artifactCount = status.Artifacts
+			eventCount = status.Events
+			activeLeaseCount = status.ActiveLeases
+			pendingApprovalCount = status.PendingApprovalTasks
+			recoverableSessionCount = status.RecoverableSessions
+			sqliteEnabled = status.SQLiteEnabled
+			sqlitePath = status.SQLitePath
+			sqliteBytes = status.SQLiteBytes
 		}
 	} else {
 		if items, err := queueStore.List(ctx); err == nil {
@@ -772,12 +1101,30 @@ func runStatus(ctx context.Context) error {
 			artifactCount = len(items)
 		}
 	}
-	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{}); err == nil {
-		eventCount = len(items)
-	}
-	if info, err := os.Stat(sqlitePath); err == nil {
-		sqliteEnabled = true
-		sqliteBytes = info.Size()
+	if !client.Available() {
+		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{}); err == nil {
+			eventCount = len(items)
+		}
+		if info, err := os.Stat(sqlitePath); err == nil {
+			sqliteEnabled = true
+			sqliteBytes = info.Size()
+		}
+		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+			if items, err := leaseStore.ListByStatus(ctx, scheduler.LeaseStatusActive); err == nil {
+				activeLeaseCount = len(items)
+				for _, item := range items {
+					pendingApprovalCount += len(item.PendingApprovalTaskIDs)
+				}
+			}
+			if items, err := leaseStore.ListByStatus(ctx, scheduler.LeaseStatusRecovered); err == nil {
+				for _, item := range items {
+					pendingApprovalCount += len(item.PendingApprovalTaskIDs)
+				}
+			}
+		}
+		if items, err := scheduler.RecoverableSessions(ctx, wd); err == nil {
+			recoverableSessionCount = len(items)
+		}
 	}
 
 	fmt.Printf("mode=%s\n", daemonMode)
@@ -785,6 +1132,9 @@ func runStatus(ctx context.Context) error {
 	fmt.Printf("sessions=%d\n", sessionCount)
 	fmt.Printf("artifacts=%d\n", artifactCount)
 	fmt.Printf("events=%d\n", eventCount)
+	fmt.Printf("active_leases=%d\n", activeLeaseCount)
+	fmt.Printf("pending_approval_tasks=%d\n", pendingApprovalCount)
+	fmt.Printf("recoverable_sessions=%d\n", recoverableSessionCount)
 	fmt.Printf("sqlite_enabled=%t\n", sqliteEnabled)
 	fmt.Printf("sqlite_path=%s\n", filepath.Clean(sqlitePath))
 	fmt.Printf("sqlite_bytes=%d\n", sqliteBytes)
@@ -832,9 +1182,18 @@ func runRecover(ctx context.Context, args []string) error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	_ = syncWorkspace(ctx, wd)
-	items, err := scheduler.RecoverableSessions(ctx, wd)
-	if err != nil {
-		return err
+	client := api.NewClient(wd)
+	var items []scheduler.RecoverySnapshot
+	if client.Available() {
+		items, err = client.RecoveryList(ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		items, err = scheduler.RecoverableSessions(ctx, wd)
+		if err != nil {
+			return err
+		}
 	}
 	raw, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
@@ -862,14 +1221,17 @@ func runPolicy(ctx context.Context, args []string) error {
 		}
 	}
 	decision, err := policy.NewSimpleBroker(nil).Evaluate(ctx, policy.Request{
-		SessionID:    "policy_check",
-		TaskID:       "policy_check",
-		Mode:         "direct",
-		Prompt:       req.Prompt,
-		WorkingDir:   req.WorkingDir,
-		StarterAgent: req.StarterAgent,
-		Delegates:    req.Delegates,
-		NodeCount:    1 + len(req.Delegates),
+		SessionID:      "policy_check",
+		TaskID:         "policy_check",
+		Mode:           "direct",
+		Prompt:         req.Prompt,
+		WorkingDir:     req.WorkingDir,
+		EffectiveDir:   req.WorkingDir,
+		StarterAgent:   req.StarterAgent,
+		Delegates:      req.Delegates,
+		NodeCount:      1 + len(req.Delegates),
+		PolicyOverride: req.PolicyOverride,
+		OverrideActor:  req.OverrideActor,
 	})
 	if err != nil {
 		return err
@@ -880,6 +1242,202 @@ func runPolicy(ctx context.Context, args []string) error {
 	}
 	fmt.Println(string(raw))
 	return nil
+}
+
+func runPlans(ctx context.Context, args []string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	_ = syncWorkspace(ctx, wd)
+	if len(args) == 0 {
+		return fmt.Errorf("unknown plans subcommand")
+	}
+	service := plans.NewService(preferredArtifactStore(wd), workspacepkg.NewManager(wd, preferredEventStore(wd)), preferredEventStore(wd))
+	client := api.NewClient(wd)
+	switch args[0] {
+	case "approve":
+		if len(args) < 2 {
+			return fmt.Errorf("roma plans approve requires an artifact id")
+		}
+		actor := policy.OverrideActor()
+		if len(args) > 2 && strings.HasPrefix(args[2], "--actor=") {
+			actor = strings.TrimPrefix(args[2], "--actor=")
+		}
+		if client.Available() {
+			return client.PlanApprove(ctx, args[1], actor)
+		}
+		return service.Approve(ctx, args[1], actor)
+	case "reject":
+		if len(args) < 2 {
+			return fmt.Errorf("roma plans reject requires an artifact id")
+		}
+		actor := policy.OverrideActor()
+		if len(args) > 2 && strings.HasPrefix(args[2], "--actor=") {
+			actor = strings.TrimPrefix(args[2], "--actor=")
+		}
+		if client.Available() {
+			return client.PlanReject(ctx, args[1], actor)
+		}
+		return service.Reject(ctx, args[1], actor)
+	case "inbox":
+		sessionID := ""
+		if len(args) > 2 && args[1] == "--session" {
+			sessionID = args[2]
+		}
+		if client.Available() {
+			items, err := client.PlanInbox(ctx, sessionID)
+			if err != nil {
+				return err
+			}
+			return printPlanInbox(items)
+		}
+		items, err := service.Inbox(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		apiItems := make([]api.PlanInboxEntry, 0, len(items))
+		for _, item := range items {
+			apiItems = append(apiItems, api.PlanInboxEntry{
+				ArtifactID:            item.ArtifactID,
+				SessionID:             item.SessionID,
+				TaskID:                item.TaskID,
+				Goal:                  item.Goal,
+				Status:                item.Status,
+				HumanApprovalRequired: item.HumanApprovalRequired,
+				ExpectedFiles:         item.ExpectedFiles,
+				ForbiddenPaths:        item.ForbiddenPaths,
+				LastEventType:         item.LastEventType,
+				LastReason:            item.LastReason,
+				LastOccurredAt:        item.LastOccurredAt,
+				Violations:            item.Violations,
+				Conflict:              item.Conflict,
+				ConflictDetail:        item.ConflictDetail,
+			})
+		}
+		return printPlanInbox(apiItems)
+	case "inspect":
+		if len(args) < 2 {
+			return fmt.Errorf("roma plans inspect requires an artifact id")
+		}
+		if client.Available() {
+			envelope, err := client.PlanInspect(ctx, args[1])
+			if err != nil {
+				return err
+			}
+			_, plan, err := service.Inspect(ctx, args[1])
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(map[string]any{
+				"artifact": envelope,
+				"plan":     plan,
+			}, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal plan inspect: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
+		}
+		envelope, plan, err := service.Inspect(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(map[string]any{
+			"artifact": envelope,
+			"plan":     plan,
+		}, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal plan inspect: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	case "apply":
+		if len(args) < 4 {
+			return fmt.Errorf("roma plans apply requires <session_id> <task_id> <artifact_id>")
+		}
+		dryRun := false
+		policyOverride := false
+		overrideActor := ""
+		for _, arg := range args[4:] {
+			switch {
+			case arg == "--dry-run":
+				dryRun = true
+			case arg == "--policy-override":
+				policyOverride = true
+			case strings.HasPrefix(arg, "--override-actor="):
+				overrideActor = strings.TrimPrefix(arg, "--override-actor=")
+			}
+		}
+		if policyOverride && overrideActor == "" {
+			overrideActor = policy.OverrideActor()
+		}
+		if client.Available() {
+			result, err := client.PlanApply(ctx, api.PlanApplyRequest{
+				SessionID:           args[1],
+				TaskID:              args[2],
+				ArtifactID:          args[3],
+				DryRun:              dryRun,
+				PolicyOverride:      policyOverride,
+				PolicyOverrideActor: overrideActor,
+			})
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal plan apply: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
+		}
+		result, err := service.Apply(ctx, args[1], args[2], args[3], plans.ApplyOptions{
+			DryRun:              dryRun,
+			PolicyOverride:      policyOverride,
+			PolicyOverrideActor: overrideActor,
+		})
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal plan apply: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	case "rollback":
+		if len(args) < 4 {
+			return fmt.Errorf("roma plans rollback requires <session_id> <task_id> <artifact_id>")
+		}
+		if client.Available() {
+			result, err := client.PlanRollback(ctx, api.PlanApplyRequest{
+				SessionID:  args[1],
+				TaskID:     args[2],
+				ArtifactID: args[3],
+			})
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal plan rollback: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
+		}
+		result, err := service.Rollback(ctx, args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal plan rollback: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	default:
+		return fmt.Errorf("unknown plans subcommand %q", args[0])
+	}
 }
 
 func runTasks(ctx context.Context, args []string) error {
@@ -1082,6 +1640,18 @@ func runWorkspaces(ctx context.Context, args []string) error {
 		}
 		return nil
 	}
+	if client.Available() && len(args) > 2 && args[0] == "merge" {
+		item, err := client.WorkspaceMerge(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal workspace: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
 
 	if len(args) == 0 || args[0] == "list" {
 		items, err := manager.List(ctx)
@@ -1121,6 +1691,28 @@ func runWorkspaces(ctx context.Context, args []string) error {
 		for _, item := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.SessionID, item.TaskID, item.Status, item.Provider, item.Effective, item.EffectiveDir)
 		}
+		return nil
+	}
+	if args[0] == "merge" {
+		if len(args) < 3 {
+			return fmt.Errorf("roma workspaces merge requires a session id and task id")
+		}
+		item, err := manager.Get(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		if err := manager.MergeBack(ctx, item); err != nil {
+			return err
+		}
+		updated, err := manager.Get(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(updated, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal workspace: %w", err)
+		}
+		fmt.Println(string(raw))
 		return nil
 	}
 	return fmt.Errorf("unknown workspaces subcommand %q", args[0])
@@ -1300,6 +1892,14 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 			}
 		case "--continuous":
 			req.Continuous = true
+		case "--policy-override":
+			req.PolicyOverride = true
+		case "--override-actor":
+			i++
+			if i >= len(args) {
+				return runsvc.Request{}, fmt.Errorf("--override-actor requires a value")
+			}
+			req.OverrideActor = args[i]
 		case "--max-rounds":
 			i++
 			if i >= len(args) {
@@ -1319,6 +1919,9 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 	if req.Prompt == "" {
 		return runsvc.Request{}, fmt.Errorf("prompt is required")
 	}
+	if req.PolicyOverride && req.OverrideActor == "" {
+		req.OverrideActor = policy.OverrideActor()
+	}
 	return req, nil
 }
 
@@ -1327,11 +1930,16 @@ func printUsage() {
 	fmt.Println("  roma agents list")
 	fmt.Println("  roma status")
 	fmt.Println("  roma artifacts list")
+	fmt.Println("  roma artifacts list --session <session_id> --kind proposal")
 	fmt.Println("  roma artifacts show <artifact_id>")
 	fmt.Println("  roma approve <job_id>")
 	fmt.Println("  roma events list [--session <session_id>] [--task <task_id>] [--type <event_type>]")
 	fmt.Println("  roma events show <event_id>")
 	fmt.Println("  roma graph run --file examples/relay-graph.json")
+	fmt.Println("  roma graph run --file examples/curia-graph.json")
+	fmt.Println("  roma plans inspect <artifact_id>")
+	fmt.Println("  roma plans apply <session_id> <task_id> <artifact_id> [--dry-run]")
+	fmt.Println("  roma plans rollback <session_id> <task_id> <artifact_id>")
 	fmt.Println(`  roma policy check --agent codex "build a feature"`)
 	fmt.Println("  roma queue list")
 	fmt.Println("  roma queue show <job_id>")
@@ -1343,6 +1951,7 @@ func printUsage() {
 	fmt.Println("  roma sessions list")
 	fmt.Println("  roma sessions show <session_id>")
 	fmt.Println("  roma sessions inspect <session_id>")
+	fmt.Println("  roma sessions curia <session_id>")
 	fmt.Println("  roma tasks list [--session <session_id>]")
 	fmt.Println("  roma tasks show <task_id>")
 	fmt.Println("  roma workspaces list")
@@ -1357,7 +1966,39 @@ func queueLabel(req queue.Request) string {
 	if req.GraphFile != "" || req.Graph != nil {
 		return "graph"
 	}
+	if req.StarterAgent == "" {
+		return "direct"
+	}
 	return req.StarterAgent
+}
+
+func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string {
+	if req.SessionID == "" {
+		return "-"
+	}
+	taskStore := preferredTaskStore(wd)
+	items, err := taskStore.ListTasksBySession(ctx, req.SessionID)
+	if err != nil || len(items) == 0 {
+		return "-"
+	}
+	total := len(items)
+	succeeded := 0
+	running := 0
+	waiting := 0
+	failed := 0
+	for _, item := range items {
+		switch item.State {
+		case domain.TaskStateSucceeded:
+			succeeded++
+		case domain.TaskStateRunning, domain.TaskStateReady:
+			running++
+		case domain.TaskStateAwaitingApproval:
+			waiting++
+		case domain.TaskStateFailedRecoverable, domain.TaskStateFailedTerminal, domain.TaskStateCancelled:
+			failed++
+		}
+	}
+	return fmt.Sprintf("nodes=%d ok=%d run=%d wait=%d fail=%d", total, succeeded, running, waiting, failed)
 }
 
 func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subcommand string, subArg string, err error) {

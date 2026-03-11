@@ -16,6 +16,7 @@ import (
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/queue"
+	"github.com/liliang/roma/internal/scheduler"
 	"github.com/liliang/roma/internal/workspace"
 )
 
@@ -49,6 +50,29 @@ func (c *Client) Available() bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// Status returns daemon-owned workspace counters.
+func (c *Client) Status(ctx context.Context) (StatusResponse, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/status", nil)
+	if err != nil {
+		return StatusResponse{}, fmt.Errorf("create status request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return StatusResponse{}, fmt.Errorf("status request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out StatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return StatusResponse{}, fmt.Errorf("decode status response: %w", err)
+	}
+	return out, nil
 }
 
 // Submit enqueues a job through romad.
@@ -152,6 +176,93 @@ func (c *Client) QueueInspect(ctx context.Context, id string) (QueueInspectRespo
 	return out, nil
 }
 
+func (c *Client) PlanInspect(ctx context.Context, id string) (domain.ArtifactEnvelope, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return domain.ArtifactEnvelope{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/plans/"+id, nil)
+	if err != nil {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("create plan inspect request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("plan inspect request: %w", err)
+	}
+	defer resp.Body.Close()
+	var out PlanInspectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("decode plan inspect response: %w", err)
+	}
+	return out.Artifact, nil
+}
+
+func (c *Client) PlanInbox(ctx context.Context, sessionID string) ([]PlanInboxEntry, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	url := baseURL + "/plans/inbox"
+	if sessionID != "" {
+		url += "?session=" + sessionID
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create plan inbox request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("plan inbox request: %w", err)
+	}
+	defer resp.Body.Close()
+	var out PlanInboxResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode plan inbox response: %w", err)
+	}
+	return out.Items, nil
+}
+
+func (c *Client) PlanApprove(ctx context.Context, artifactID, actor string) error {
+	return c.planDecision(ctx, artifactID, "approve", actor)
+}
+
+func (c *Client) PlanReject(ctx context.Context, artifactID, actor string) error {
+	return c.planDecision(ctx, artifactID, "reject", actor)
+}
+
+func (c *Client) PlanApply(ctx context.Context, req PlanApplyRequest) (PlanApplyResponse, error) {
+	return c.planAction(ctx, "/plans/apply", req)
+}
+
+func (c *Client) PlanRollback(ctx context.Context, req PlanApplyRequest) (PlanApplyResponse, error) {
+	return c.planAction(ctx, "/plans/rollback", req)
+}
+
+func (c *Client) planDecision(ctx context.Context, artifactID, action, actor string) error {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(PlanDecisionRequest{Actor: actor})
+	if err != nil {
+		return fmt.Errorf("marshal plan decision request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/plans/"+artifactID+"/"+action, bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("create plan %s request: %w", action, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("plan %s request: %w", action, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("plan %s request returned %s", action, resp.Status)
+	}
+	return nil
+}
+
 // QueueApprove marks a queue item approved and ready for re-dispatch.
 func (c *Client) QueueApprove(ctx context.Context, id string) (queue.Request, error) {
 	return c.queueAction(ctx, id, "approve")
@@ -160,6 +271,29 @@ func (c *Client) QueueApprove(ctx context.Context, id string) (queue.Request, er
 // QueueReject marks a queue item rejected.
 func (c *Client) QueueReject(ctx context.Context, id string) (queue.Request, error) {
 	return c.queueAction(ctx, id, "reject")
+}
+
+// RecoveryList returns daemon recovery snapshots.
+func (c *Client) RecoveryList(ctx context.Context) ([]scheduler.RecoverySnapshot, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/recovery", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create recovery request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("recovery request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out RecoveryListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode recovery response: %w", err)
+	}
+	return out.Items, nil
 }
 
 func (c *Client) queueAction(ctx context.Context, id, action string) (queue.Request, error) {
@@ -180,6 +314,35 @@ func (c *Client) queueAction(ctx context.Context, id, action string) (queue.Requ
 	var out queue.Request
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return queue.Request{}, fmt.Errorf("decode queue %s response: %w", action, err)
+	}
+	return out, nil
+}
+
+func (c *Client) planAction(ctx context.Context, path string, req PlanApplyRequest) (PlanApplyResponse, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return PlanApplyResponse{}, err
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return PlanApplyResponse{}, fmt.Errorf("marshal plan request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(raw))
+	if err != nil {
+		return PlanApplyResponse{}, fmt.Errorf("create plan request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return PlanApplyResponse{}, fmt.Errorf("plan request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return PlanApplyResponse{}, fmt.Errorf("plan request returned %s", resp.Status)
+	}
+	var out PlanApplyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return PlanApplyResponse{}, fmt.Errorf("decode plan response: %w", err)
 	}
 	return out, nil
 }
@@ -402,6 +565,29 @@ func (c *Client) WorkspaceCleanup(ctx context.Context) ([]workspace.Prepared, er
 		return nil, fmt.Errorf("decode workspace cleanup response: %w", err)
 	}
 	return out.Items, nil
+}
+
+// WorkspaceMerge merges one workspace back into the base repository.
+func (c *Client) WorkspaceMerge(ctx context.Context, sessionID, taskID string) (workspace.Prepared, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return workspace.Prepared{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/workspaces/"+sessionID+"/"+taskID+"/merge", nil)
+	if err != nil {
+		return workspace.Prepared{}, fmt.Errorf("create workspace merge request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return workspace.Prepared{}, fmt.Errorf("workspace merge request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out workspace.Prepared
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return workspace.Prepared{}, fmt.Errorf("decode workspace merge response: %w", err)
+	}
+	return out, nil
 }
 
 // ArtifactList returns persisted artifacts from the daemon.

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/liliang/roma/internal/domain"
@@ -18,14 +19,22 @@ const (
 
 // ReportPayload is the minimal structured handoff payload used by the current orchestrator.
 type ReportPayload struct {
-	ReportID        string   `json:"report_id"`
-	Summary         string   `json:"summary"`
-	Result          string   `json:"result"`
-	Highlights      []string `json:"highlights,omitempty"`
-	OpenIssues      []string `json:"open_issues,omitempty"`
-	RawOutput       string   `json:"raw_output,omitempty"`
-	SourceAgentID   string   `json:"source_agent_id"`
-	SourceAgentName string   `json:"source_agent_name"`
+	ReportID         string            `json:"report_id"`
+	Summary          string            `json:"summary"`
+	Result           string            `json:"result"`
+	Highlights       []string          `json:"highlights,omitempty"`
+	OpenIssues       []string          `json:"open_issues,omitempty"`
+	FollowUpRequests []FollowUpRequest `json:"follow_up_requests,omitempty"`
+	RawOutput        string            `json:"raw_output,omitempty"`
+	SourceAgentID    string            `json:"source_agent_id"`
+	SourceAgentName  string            `json:"source_agent_name"`
+}
+
+// FollowUpRequest is a structured continuation request emitted by an agent artifact.
+type FollowUpRequest struct {
+	Kind        string `json:"kind"`
+	AgentID     string `json:"agent_id"`
+	Instruction string `json:"instruction,omitempty"`
 }
 
 // BuildReportRequest describes report creation input.
@@ -66,13 +75,14 @@ func (s *Service) BuildReport(ctx context.Context, req BuildReportRequest) (doma
 	}
 
 	payload := ReportPayload{
-		ReportID:        "report_" + req.RunID,
-		Summary:         summarize(preferredOutput(req.Output, req.Stderr)),
-		Result:          req.Result,
-		Highlights:      firstLines(preferredOutput(req.Output, req.Stderr), 3),
-		RawOutput:       mergeOutput(req.Output, req.Stderr),
-		SourceAgentID:   req.Agent.ID,
-		SourceAgentName: req.Agent.DisplayName,
+		ReportID:         "report_" + req.RunID,
+		Summary:          summarize(preferredOutput(req.Output, req.Stderr)),
+		Result:           req.Result,
+		Highlights:       firstLines(preferredOutput(req.Output, req.Stderr), 3),
+		FollowUpRequests: parseFollowUpRequests(mergeOutput(req.Output, req.Stderr)),
+		RawOutput:        mergeOutput(req.Output, req.Stderr),
+		SourceAgentID:    req.Agent.ID,
+		SourceAgentName:  req.Agent.DisplayName,
 	}
 
 	envelope := domain.ArtifactEnvelope{
@@ -103,6 +113,15 @@ func (s *Service) BuildReport(ctx context.Context, req BuildReportRequest) (doma
 func SummaryFromEnvelope(envelope domain.ArtifactEnvelope) string {
 	if payload, ok := envelope.Payload.(ReportPayload); ok {
 		return payload.Summary
+	}
+	if payload, ok := ProposalFromEnvelope(envelope); ok && payload.Summary != "" {
+		return payload.Summary
+	}
+	if payload, ok := ExecutionPlanFromEnvelope(envelope); ok && payload.Goal != "" {
+		if len(payload.Steps) > 0 {
+			return payload.Goal + " " + payload.Steps[0]
+		}
+		return payload.Goal
 	}
 
 	raw, err := json.Marshal(envelope.Payload)
@@ -184,4 +203,54 @@ func trimLine(line string) string {
 		line = line[:len(line)-1]
 	}
 	return line
+}
+
+func parseFollowUpRequests(output string) []FollowUpRequest {
+	lines := strings.Split(output, "\n")
+	out := make([]FollowUpRequest, 0)
+	seen := make(map[string]struct{})
+	for _, line := range lines {
+		line = trimLine(line)
+		switch {
+		case strings.HasPrefix(line, "ROMA_DELEGATE:"):
+			agent := trimLine(strings.TrimPrefix(line, "ROMA_DELEGATE:"))
+			if agent == "" {
+				continue
+			}
+			key := "delegate::" + agent + "::"
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, FollowUpRequest{
+				Kind:    "delegate",
+				AgentID: agent,
+			})
+		case strings.HasPrefix(line, "ROMA_FOLLOWUP:"):
+			body := trimLine(strings.TrimPrefix(line, "ROMA_FOLLOWUP:"))
+			parts := strings.SplitN(body, "|", 2)
+			head := trimLine(parts[0])
+			fields := strings.Fields(head)
+			if len(fields) < 2 {
+				continue
+			}
+			kind := fields[0]
+			agent := fields[1]
+			instruction := ""
+			if len(parts) == 2 {
+				instruction = trimLine(parts[1])
+			}
+			key := kind + "::" + agent + "::" + instruction
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, FollowUpRequest{
+				Kind:        kind,
+				AgentID:     agent,
+				Instruction: instruction,
+			})
+		}
+	}
+	return out
 }

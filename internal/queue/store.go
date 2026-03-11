@@ -25,23 +25,24 @@ const (
 
 // Request is a daemon-submittable run request.
 type Request struct {
-	ID             string     `json:"id"`
-	GraphFile      string     `json:"graph_file,omitempty"`
-	Graph          *GraphSpec `json:"graph,omitempty"`
-	Prompt         string     `json:"prompt"`
-	StarterAgent   string     `json:"starter_agent"`
-	Delegates      []string   `json:"delegates,omitempty"`
-	WorkingDir     string     `json:"working_dir"`
-	Continuous     bool       `json:"continuous,omitempty"`
-	MaxRounds      int        `json:"max_rounds,omitempty"`
-	SessionID      string     `json:"session_id,omitempty"`
-	TaskID         string     `json:"task_id,omitempty"`
-	ArtifactIDs    []string   `json:"artifact_ids,omitempty"`
-	PolicyOverride bool       `json:"policy_override,omitempty"`
-	Status         Status     `json:"status"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	Error          string     `json:"error,omitempty"`
+	ID                  string     `json:"id"`
+	GraphFile           string     `json:"graph_file,omitempty"`
+	Graph               *GraphSpec `json:"graph,omitempty"`
+	Prompt              string     `json:"prompt"`
+	StarterAgent        string     `json:"starter_agent"`
+	Delegates           []string   `json:"delegates,omitempty"`
+	WorkingDir          string     `json:"working_dir"`
+	Continuous          bool       `json:"continuous,omitempty"`
+	MaxRounds           int        `json:"max_rounds,omitempty"`
+	SessionID           string     `json:"session_id,omitempty"`
+	TaskID              string     `json:"task_id,omitempty"`
+	ArtifactIDs         []string   `json:"artifact_ids,omitempty"`
+	PolicyOverride      bool       `json:"policy_override,omitempty"`
+	PolicyOverrideActor string     `json:"policy_override_actor,omitempty"`
+	Status              Status     `json:"status"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	Error               string     `json:"error,omitempty"`
 }
 
 // GraphNode captures one submitted task-graph node in queue storage.
@@ -51,6 +52,8 @@ type GraphNode struct {
 	Agent        string   `json:"agent"`
 	Strategy     string   `json:"strategy"`
 	Dependencies []string `json:"dependencies,omitempty"`
+	Senators     []string `json:"senators,omitempty"`
+	Quorum       int      `json:"quorum,omitempty"`
 }
 
 // GraphSpec is the serialized graph execution payload carried by a queued job.

@@ -99,6 +99,17 @@ func (s *LeaseStore) Release(ctx context.Context, sessionID, ownerID string, com
 	return s.save(ctx, record)
 }
 
+// UpdatePendingApprovalTaskIDs rewrites the active pending-approval checkpoint while preserving other lease fields.
+func (s *LeaseStore) UpdatePendingApprovalTaskIDs(ctx context.Context, sessionID string, pendingApprovalTaskIDs []string) error {
+	record, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	record.PendingApprovalTaskIDs = append([]string(nil), pendingApprovalTaskIDs...)
+	record.UpdatedAt = time.Now().UTC()
+	return s.save(ctx, record)
+}
+
 // RecoverActive marks all active leases as recovered during daemon restart recovery.
 func (s *LeaseStore) RecoverActive(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT session_id FROM scheduler_leases WHERE status = ?`, string(LeaseStatusActive))

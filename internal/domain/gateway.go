@@ -18,12 +18,14 @@ const (
 type RemoteCommandAction string
 
 const (
-	RemoteCommandActionApprove RemoteCommandAction = "approve"
-	RemoteCommandActionReject  RemoteCommandAction = "reject"
-	RemoteCommandActionPause   RemoteCommandAction = "pause"
-	RemoteCommandActionResume  RemoteCommandAction = "resume"
-	RemoteCommandActionCancel  RemoteCommandAction = "cancel"
-	RemoteCommandActionRetry   RemoteCommandAction = "retry"
+	RemoteCommandActionApprove     RemoteCommandAction = "approve"
+	RemoteCommandActionReject      RemoteCommandAction = "reject"
+	RemoteCommandActionPause       RemoteCommandAction = "pause"
+	RemoteCommandActionResume      RemoteCommandAction = "resume"
+	RemoteCommandActionCancel      RemoteCommandAction = "cancel"
+	RemoteCommandActionRetry       RemoteCommandAction = "retry"
+	RemoteCommandActionPlanApprove RemoteCommandAction = "plan_approve"
+	RemoteCommandActionPlanReject  RemoteCommandAction = "plan_reject"
 )
 
 // NotificationSeverity identifies notification urgency.
@@ -120,7 +122,9 @@ func ValidateRemoteCommandAction(action RemoteCommandAction) error {
 		RemoteCommandActionPause,
 		RemoteCommandActionResume,
 		RemoteCommandActionCancel,
-		RemoteCommandActionRetry:
+		RemoteCommandActionRetry,
+		RemoteCommandActionPlanApprove,
+		RemoteCommandActionPlanReject:
 		return nil
 	default:
 		return fmt.Errorf("unknown remote command action %q", action)

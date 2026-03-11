@@ -15,8 +15,11 @@ import (
 	"github.com/liliang/roma/internal/artifacts"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
+	"github.com/liliang/roma/internal/plans"
+	"github.com/liliang/roma/internal/policy"
 	"github.com/liliang/roma/internal/queue"
 	"github.com/liliang/roma/internal/scheduler"
+	"github.com/liliang/roma/internal/sqliteutil"
 	"github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/taskstore"
 	workspacepkg "github.com/liliang/roma/internal/workspace"
@@ -48,6 +51,7 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.handleHealth)
+	mux.HandleFunc("/status", server.handleStatus)
 	mux.HandleFunc("/submit", server.handleSubmit)
 	mux.HandleFunc("/artifacts", server.handleArtifactList)
 	mux.HandleFunc("/artifacts/", server.handleArtifactShow)
@@ -56,6 +60,11 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 	mux.HandleFunc("/queue", server.handleQueueList)
 	mux.HandleFunc("/queue/", server.handleQueueShow)
 	mux.HandleFunc("/queue-inspect/", server.handleQueueInspect)
+	mux.HandleFunc("/recovery", server.handleRecoveryList)
+	mux.HandleFunc("/plans/", server.handlePlanShow)
+	mux.HandleFunc("/plans/apply", server.handlePlanApply)
+	mux.HandleFunc("/plans/inbox", server.handlePlanInbox)
+	mux.HandleFunc("/plans/rollback", server.handlePlanRollback)
 	mux.HandleFunc("/sessions", server.handleSessionList)
 	mux.HandleFunc("/sessions/", server.handleSessionShow)
 	mux.HandleFunc("/session-inspect/", server.handleSessionInspect)
@@ -118,6 +127,56 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	queueItems, _ := s.queueStore.List(r.Context())
+	sessionItems, _ := s.sessionStore.List(r.Context())
+	artifactItems, _ := preferredArtifactStore(workDir).List(r.Context(), "")
+	eventItems, _ := preferredEventStore(workDir).ListEvents(r.Context(), store.EventFilter{})
+	activeLeases := 0
+	pendingApprovalTasks := 0
+	if leaseStore, err := scheduler.NewLeaseStore(workDir); err == nil {
+		if items, err := leaseStore.ListByStatus(r.Context(), scheduler.LeaseStatusActive); err == nil {
+			activeLeases = len(items)
+			for _, item := range items {
+				pendingApprovalTasks += len(item.PendingApprovalTaskIDs)
+			}
+		}
+		if items, err := leaseStore.ListByStatus(r.Context(), scheduler.LeaseStatusRecovered); err == nil {
+			for _, item := range items {
+				pendingApprovalTasks += len(item.PendingApprovalTaskIDs)
+			}
+		}
+	}
+	recoverableSessions := 0
+	if items, err := scheduler.RecoverableSessions(r.Context(), workDir); err == nil {
+		recoverableSessions = len(items)
+	}
+	sqlitePath := sqliteutil.DBPath(workDir)
+	sqliteEnabled := false
+	sqliteBytes := int64(0)
+	if info, err := os.Stat(sqlitePath); err == nil {
+		sqliteEnabled = true
+		sqliteBytes = info.Size()
+	}
+	writeJSON(w, http.StatusOK, StatusResponse{
+		QueueItems:           len(queueItems),
+		Sessions:             len(sessionItems),
+		Artifacts:            len(artifactItems),
+		Events:               len(eventItems),
+		ActiveLeases:         activeLeases,
+		PendingApprovalTasks: pendingApprovalTasks,
+		RecoverableSessions:  recoverableSessions,
+		SQLiteEnabled:        sqliteEnabled,
+		SQLitePath:           sqlitePath,
+		SQLiteBytes:          sqliteBytes,
+	})
+}
+
 func (s *Server) writeMeta() error {
 	raw, err := json.MarshalIndent(map[string]string{
 		"network": s.network,
@@ -145,15 +204,20 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	jobID := fmt.Sprintf("job_%d", time.Now().UTC().UnixNano())
 	record := queue.Request{
-		ID:           jobID,
-		GraphFile:    req.GraphFile,
-		Graph:        toQueueGraph(req.Graph),
-		Prompt:       req.Prompt,
-		StarterAgent: req.StarterAgent,
-		Delegates:    req.Delegates,
-		WorkingDir:   req.WorkingDir,
-		Continuous:   req.Continuous,
-		MaxRounds:    req.MaxRounds,
+		ID:                  jobID,
+		GraphFile:           req.GraphFile,
+		Graph:               toQueueGraph(req.Graph),
+		Prompt:              req.Prompt,
+		StarterAgent:        req.StarterAgent,
+		Delegates:           req.Delegates,
+		WorkingDir:          req.WorkingDir,
+		PolicyOverride:      req.PolicyOverride,
+		PolicyOverrideActor: req.PolicyOverrideActor,
+		Continuous:          req.Continuous,
+		MaxRounds:           req.MaxRounds,
+	}
+	if record.PolicyOverride && record.PolicyOverrideActor == "" {
+		record.PolicyOverrideActor = policy.OverrideActor()
 	}
 	if err := s.queueStore.Enqueue(r.Context(), record); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -175,6 +239,8 @@ func toQueueGraph(in *GraphSubmitRequest) *queue.GraphSpec {
 			Agent:        node.Agent,
 			Strategy:     node.Strategy,
 			Dependencies: node.Dependencies,
+			Senators:     node.Senators,
+			Quorum:       node.Quorum,
 		})
 	}
 	return &queue.GraphSpec{
@@ -277,6 +343,249 @@ func (s *Server) handleEventShow(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "event not found", http.StatusNotFound)
 }
 
+func (s *Server) handleRecoveryList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	items, err := scheduler.RecoverableSessions(r.Context(), workDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, RecoveryListResponse{Items: items})
+}
+
+func (s *Server) handlePlanShow(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/plans/")
+	if strings.HasSuffix(id, "/approve") {
+		s.handlePlanDecision(w, r, strings.TrimSuffix(id, "/approve"), true)
+		return
+	}
+	if strings.HasSuffix(id, "/reject") {
+		s.handlePlanDecision(w, r, strings.TrimSuffix(id, "/reject"), false)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if id == "" {
+		http.Error(w, "missing artifact id", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	envelope, _, err := service.Inspect(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, PlanInspectResponse{Artifact: envelope})
+}
+
+func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	items, err := service.Inbox(r.Context(), r.URL.Query().Get("session"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]PlanInboxEntry, 0, len(items))
+	for _, item := range items {
+		out = append(out, PlanInboxEntry{
+			ArtifactID:            item.ArtifactID,
+			SessionID:             item.SessionID,
+			TaskID:                item.TaskID,
+			Goal:                  item.Goal,
+			Status:                item.Status,
+			HumanApprovalRequired: item.HumanApprovalRequired,
+			ExpectedFiles:         item.ExpectedFiles,
+			ForbiddenPaths:        item.ForbiddenPaths,
+			LastEventType:         item.LastEventType,
+			LastReason:            item.LastReason,
+			LastOccurredAt:        item.LastOccurredAt,
+			Violations:            item.Violations,
+			Conflict:              item.Conflict,
+			ConflictDetail:        item.ConflictDetail,
+		})
+	}
+	writeJSON(w, http.StatusOK, PlanInboxResponse{Items: out})
+}
+
+func (s *Server) handlePlanDecision(w http.ResponseWriter, r *http.Request, artifactID string, approved bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if artifactID == "" {
+		http.Error(w, "missing artifact id", http.StatusBadRequest)
+		return
+	}
+	var req PlanDecisionRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Actor == "" {
+		req.Actor = policy.OverrideActor()
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	var err error
+	if approved {
+		err = service.Approve(r.Context(), artifactID, req.Actor)
+	} else {
+		err = service.Reject(r.Context(), artifactID, req.Actor)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifact_id": artifactID,
+		"approved":    approved,
+		"actor":       req.Actor,
+	})
+}
+
+func (s *Server) handlePlanApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req PlanApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ArtifactID == "" {
+		http.Error(w, "artifact_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.PolicyOverride && req.PolicyOverrideActor == "" {
+		req.PolicyOverrideActor = policy.OverrideActor()
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	result, err := service.Apply(r.Context(), req.SessionID, req.TaskID, req.ArtifactID, plans.ApplyOptions{
+		DryRun:              req.DryRun,
+		PolicyOverride:      req.PolicyOverride,
+		PolicyOverrideActor: req.PolicyOverrideActor,
+	})
+	if err != nil {
+		writePlanError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handlePlanRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req PlanApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ArtifactID == "" {
+		http.Error(w, "artifact_id is required", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	result, err := service.Rollback(r.Context(), req.SessionID, req.TaskID, req.ArtifactID)
+	if err != nil {
+		writePlanError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func writePlanError(w http.ResponseWriter, err error) {
+	switch {
+	case plans.IsApplyErrorKind(err, plans.ErrorKindApprovalRequired):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case plans.IsApplyErrorKind(err, plans.ErrorKindOverrideForbidden):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case plans.IsApplyErrorKind(err, plans.ErrorKindValidation):
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+	case plans.IsApplyErrorKind(err, plans.ErrorKindConflict):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case plans.IsApplyErrorKind(err, plans.ErrorKindCheckFailed):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func summarizePlanActions(items []events.Record) []PlanActionSummary {
+	out := make([]PlanActionSummary, 0)
+	for _, item := range items {
+		switch item.Type {
+		case events.TypePlanApplied, events.TypePlanRolledBack, events.TypePlanApplyRejected:
+		default:
+			continue
+		}
+		summary := PlanActionSummary{
+			EventType:  string(item.Type),
+			TaskID:     item.TaskID,
+			Reason:     item.ReasonCode,
+			OccurredAt: item.OccurredAt.Format(time.RFC3339),
+		}
+		if value, ok := item.Payload["artifact_id"].(string); ok {
+			summary.ArtifactID = value
+		}
+		if values, ok := stringSlicePayload(item.Payload, "changed_paths"); ok {
+			summary.ChangedPaths = values
+		}
+		if values, ok := stringSlicePayload(item.Payload, "violations"); ok {
+			summary.Violations = values
+		}
+		if values, ok := stringSlicePayload(item.Payload, "required_checks"); ok {
+			summary.RequiredChecks = values
+		}
+		if value, ok := item.Payload["conflict"].(bool); ok {
+			summary.Conflict = value
+		}
+		if value, ok := item.Payload["conflict_detail"].(string); ok {
+			summary.ConflictDetail = value
+		}
+		out = append(out, summary)
+	}
+	return out
+}
+
+func stringSlicePayload(payload map[string]any, key string) ([]string, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []string:
+		return typed, true
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if ok {
+				out = append(out, text)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
 func (s *Server) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -330,12 +639,37 @@ func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	actor := policy.OverrideActor()
+	taskStore := preferredTaskStore(workDir)
+	eventStore := preferredEventStore(workDir)
+	if approved {
+		if handled, queueReq, err := s.handleQueueTaskApproval(r.Context(), workDir, req, taskStore, eventStore, true); handled {
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, queueReq)
+			return
+		}
+	} else {
+		if handled, queueReq, err := s.handleQueueTaskApproval(r.Context(), workDir, req, taskStore, eventStore, false); handled {
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, queueReq)
+			return
+		}
+	}
 	if approved {
 		req.PolicyOverride = true
+		req.PolicyOverrideActor = actor
 		req.Status = queue.StatusPending
 		req.Error = ""
 	} else {
 		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
 		req.Status = queue.StatusRejected
 		req.Error = "rejected by user"
 	}
@@ -344,7 +678,6 @@ func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if req.SessionID != "" {
-		workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
 		sessionStore := preferredHistoryStore(workDir)
 		if session, err := sessionStore.Get(r.Context(), req.SessionID); err == nil {
 			if approved {
@@ -371,10 +704,99 @@ func (s *Server) handleQueueApproval(w http.ResponseWriter, r *http.Request, id 
 			Payload: map[string]any{
 				"job_id":   req.ID,
 				"approved": approved,
+				"actor":    actor,
 			},
 		})
 	}
 	writeJSON(w, http.StatusOK, req)
+}
+
+func (s *Server) handleQueueTaskApproval(ctx context.Context, workDir string, req queue.Request, taskStore store.TaskStore, eventStore store.EventStore, approved bool) (bool, queue.Request, error) {
+	if req.SessionID == "" {
+		return false, req, nil
+	}
+	leaseStore, err := scheduler.NewLeaseStore(workDir)
+	if err != nil {
+		return false, req, nil
+	}
+	lease, err := leaseStore.Get(ctx, req.SessionID)
+	if err != nil || len(lease.PendingApprovalTaskIDs) == 0 {
+		return false, req, nil
+	}
+	lifecycle := scheduler.NewGraphLifecycle(taskStore, eventStore)
+	for _, taskID := range lease.PendingApprovalTaskIDs {
+		if approved {
+			if err := lifecycle.ApproveTask(ctx, taskID); err != nil {
+				return true, req, err
+			}
+		} else {
+			if err := lifecycle.RejectTask(ctx, taskID); err != nil {
+				return true, req, err
+			}
+		}
+	}
+	if err := leaseStore.UpdatePendingApprovalTaskIDs(ctx, req.SessionID, nil); err != nil {
+		return true, req, err
+	}
+	reason := "human_approved"
+	if !approved {
+		reason = "human_rejected"
+	}
+	actor := policy.OverrideActor()
+	_ = eventStore.AppendEvent(ctx, events.Record{
+		ID:         "evt_" + req.ID + "_" + reason,
+		SessionID:  req.SessionID,
+		TaskID:     req.TaskID,
+		Type:       events.TypePolicyDecisionRecorded,
+		ActorType:  events.ActorTypeHuman,
+		OccurredAt: time.Now().UTC(),
+		ReasonCode: reason,
+		Payload: map[string]any{
+			"job_id":                    req.ID,
+			"approved":                  approved,
+			"actor":                     actor,
+			"pending_approval_task_ids": lease.PendingApprovalTaskIDs,
+		},
+	})
+	_ = eventStore.AppendEvent(ctx, events.Record{
+		ID:         "evt_" + req.SessionID + "_lease_" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
+		SessionID:  req.SessionID,
+		Type:       events.TypeSchedulerLeaseRecorded,
+		ActorType:  events.ActorTypeScheduler,
+		OccurredAt: time.Now().UTC(),
+		ReasonCode: string(lease.Status),
+		Payload: map[string]any{
+			"owner_id":                  lease.OwnerID,
+			"status":                    lease.Status,
+			"ready_task_ids":            lease.ReadyTaskIDs,
+			"workspace_refs":            lease.WorkspaceRefs,
+			"pending_approval_task_ids": []string{},
+			"completed_task_ids":        lease.CompletedTaskIDs,
+		},
+	})
+	sessionStore := preferredHistoryStore(workDir)
+	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
+		if approved {
+			session.Status = "running"
+		} else {
+			session.Status = "rejected"
+		}
+		session.UpdatedAt = time.Now().UTC()
+		_ = sessionStore.Save(ctx, session)
+	}
+	if approved {
+		req.Status = queue.StatusPending
+		req.Error = ""
+	} else {
+		req.Status = queue.StatusRejected
+		req.Error = "task approval rejected"
+	}
+	req.PolicyOverride = false
+	req.PolicyOverrideActor = ""
+	if err := s.queueStore.Update(ctx, req); err != nil {
+		return true, req, err
+	}
+	return true, req, nil
 }
 
 func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +835,7 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		eventStore := preferredEventStore(workDir)
 		if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: job.SessionID}); err == nil {
 			resp.Events = items
+			resp.Plans = summarizePlanActions(items)
 		}
 		artifactStore := preferredArtifactStore(workDir)
 		if items, err := artifactStore.List(r.Context(), job.SessionID); err == nil {
@@ -478,6 +901,7 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 	eventStore := preferredEventStore(workDir)
 	if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: id}); err == nil {
 		resp.Events = items
+		resp.Plans = summarizePlanActions(items)
 	}
 	artifactStore := preferredArtifactStore(workDir)
 	if items, err := artifactStore.List(r.Context(), id); err == nil {
@@ -574,6 +998,35 @@ func (s *Server) handleTaskApproval(w http.ResponseWriter, r *http.Request, id s
 		session.UpdatedAt = time.Now().UTC()
 		_ = sessionStore.Save(r.Context(), session)
 	}
+	if leaseStore, err := scheduler.NewLeaseStore(workDir); err == nil {
+		if lease, err := leaseStore.Get(r.Context(), item.SessionID); err == nil {
+			pending := make([]string, 0, len(lease.PendingApprovalTaskIDs))
+			for _, taskID := range lease.PendingApprovalTaskIDs {
+				if taskID == id {
+					continue
+				}
+				pending = append(pending, taskID)
+			}
+			if err := leaseStore.UpdatePendingApprovalTaskIDs(r.Context(), item.SessionID, pending); err == nil {
+				_ = eventStore.AppendEvent(r.Context(), events.Record{
+					ID:         "evt_" + item.SessionID + "_lease_" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
+					SessionID:  item.SessionID,
+					Type:       events.TypeSchedulerLeaseRecorded,
+					ActorType:  events.ActorTypeScheduler,
+					OccurredAt: time.Now().UTC(),
+					ReasonCode: string(lease.Status),
+					Payload: map[string]any{
+						"owner_id":                  lease.OwnerID,
+						"status":                    lease.Status,
+						"ready_task_ids":            lease.ReadyTaskIDs,
+						"workspace_refs":            lease.WorkspaceRefs,
+						"pending_approval_task_ids": pending,
+						"completed_task_ids":        lease.CompletedTaskIDs,
+					},
+				})
+			}
+		}
+	}
 	requests, err := s.queueStore.List(r.Context())
 	if err == nil {
 		for _, req := range requests {
@@ -617,6 +1070,10 @@ func (s *Server) handleWorkspaceShow(w http.ResponseWriter, r *http.Request) {
 		s.handleWorkspaceCleanup(w, r)
 		return
 	}
+	if strings.HasSuffix(rest, "/merge") {
+		s.handleWorkspaceMerge(w, r, strings.TrimSuffix(rest, "/merge"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -633,6 +1090,35 @@ func (s *Server) handleWorkspaceShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleWorkspaceMerge(w http.ResponseWriter, r *http.Request, rest string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "workspace path must be /workspaces/{session}/{task}/merge", http.StatusBadRequest)
+		return
+	}
+	workDir := filepath.Dir(filepath.Dir(filepath.Dir(s.metaPath)))
+	manager := workspacepkg.NewManager(workDir, preferredEventStore(workDir))
+	item, err := manager.Get(r.Context(), parts[0], parts[1])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := manager.MergeBack(r.Context(), item); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	updated, err := manager.Get(r.Context(), parts[0], parts[1])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) handleWorkspaceCleanup(w http.ResponseWriter, r *http.Request) {

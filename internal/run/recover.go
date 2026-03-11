@@ -114,6 +114,7 @@ func (s *Service) ResumeSessionWithResult(ctx context.Context, workDir, sessionI
 		var approvalErr *scheduler.ApprovalPendingError
 		if errors.As(runErr, &approvalErr) {
 			record.Status = "awaiting_approval"
+			runErr = nil
 		} else {
 			record.Status = "failed"
 		}

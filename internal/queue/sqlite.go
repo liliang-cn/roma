@@ -47,7 +47,7 @@ func (s *SQLiteStore) UpsertExact(ctx context.Context, req Request) error {
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Request, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests WHERE id = ?`,
 		id,
 	)
@@ -58,7 +58,7 @@ func (s *SQLiteStore) Get(ctx context.Context, id string) (Request, error) {
 func (s *SQLiteStore) List(ctx context.Context) ([]Request, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests ORDER BY created_at`,
 	)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Request, error) {
 func (s *SQLiteStore) NextPending(ctx context.Context) (Request, bool, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests WHERE status = ? ORDER BY created_at LIMIT 1`,
 		string(StatusPending),
 	)
@@ -130,8 +130,8 @@ func (s *SQLiteStore) save(ctx context.Context, req Request) error {
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT OR REPLACE INTO queue_requests
-		(id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, status, created_at, updated_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.ID,
 		req.GraphFile,
 		string(graphRaw),
@@ -145,6 +145,7 @@ func (s *SQLiteStore) save(ctx context.Context, req Request) error {
 		req.TaskID,
 		string(artifactIDsRaw),
 		boolToInt(req.PolicyOverride),
+		req.PolicyOverrideActor,
 		string(req.Status),
 		req.CreatedAt.Format(time.RFC3339Nano),
 		req.UpdatedAt.Format(time.RFC3339Nano),
@@ -162,16 +163,17 @@ type requestScanner interface {
 
 func scanRequest(scanner requestScanner) (Request, error) {
 	var (
-		record         Request
-		graphRaw       string
-		delegatesRaw   string
-		artifactIDsRaw string
-		continuous     int
-		maxRounds      int
-		policyOverride int
-		status         string
-		createdAt      string
-		updatedAt      string
+		record              Request
+		graphRaw            string
+		delegatesRaw        string
+		artifactIDsRaw      string
+		continuous          int
+		maxRounds           int
+		policyOverride      int
+		policyOverrideActor string
+		status              string
+		createdAt           string
+		updatedAt           string
 	)
 	if err := scanner.Scan(
 		&record.ID,
@@ -187,6 +189,7 @@ func scanRequest(scanner requestScanner) (Request, error) {
 		&record.TaskID,
 		&artifactIDsRaw,
 		&policyOverride,
+		&policyOverrideActor,
 		&status,
 		&createdAt,
 		&updatedAt,
@@ -198,6 +201,7 @@ func scanRequest(scanner requestScanner) (Request, error) {
 	record.Continuous = continuous != 0
 	record.MaxRounds = maxRounds
 	record.PolicyOverride = policyOverride != 0
+	record.PolicyOverrideActor = policyOverrideActor
 	if graphRaw != "" && graphRaw != "null" {
 		var graph GraphSpec
 		if err := json.Unmarshal([]byte(graphRaw), &graph); err != nil {

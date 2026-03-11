@@ -10,16 +10,19 @@ import (
 
 	"github.com/liliang/roma/internal/agents"
 	"github.com/liliang/roma/internal/api"
+	"github.com/liliang/roma/internal/artifacts"
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/gateway"
 	"github.com/liliang/roma/internal/history"
+	"github.com/liliang/roma/internal/plans"
 	"github.com/liliang/roma/internal/queue"
 	"github.com/liliang/roma/internal/run"
 	"github.com/liliang/roma/internal/scheduler"
 	"github.com/liliang/roma/internal/sessions"
 	"github.com/liliang/roma/internal/store"
 	"github.com/liliang/roma/internal/syncdb"
+	workspacepkg "github.com/liliang/roma/internal/workspace"
 )
 
 // Daemon is the bootstrap romad process.
@@ -47,10 +50,12 @@ func NewDaemon() (*Daemon, error) {
 	}
 	queueBackend := newQueueBackend(wd)
 	historyBackend := newHistoryBackend(wd)
+	artifactBackend := newArtifactBackend(wd)
+	planService := plans.NewService(artifactBackend, workspacepkg.NewManager(wd, mem), mem)
 	return &Daemon{
 		api:       api.NewServer(wd, queueBackend, historyBackend),
 		store:     mem,
-		gateway:   gateway.NewService(mem, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
+		gateway:   gateway.NewService(mem, planService, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
 		history:   historyBackend,
 		queue:     queueBackend,
 		runner:    run.NewService(registry),
@@ -75,6 +80,15 @@ func newHistoryBackend(workDir string) history.Backend {
 		return fileStore
 	}
 	return history.NewMirrorStore(fileStore, sqliteStore)
+}
+
+func newArtifactBackend(workDir string) artifacts.Backend {
+	fileStore := artifacts.NewFileStore(workDir)
+	sqliteStore, err := artifacts.NewSQLiteStore(workDir)
+	if err != nil {
+		return fileStore
+	}
+	return artifacts.NewMirrorStore(sqliteStore, fileStore)
 }
 
 // Run starts the daemon lifecycle and initializes bootstrap state.
@@ -244,6 +258,7 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 				SessionID:      req.SessionID,
 				TaskID:         req.TaskID,
 				PolicyOverride: req.PolicyOverride,
+				OverrideActor:  req.PolicyOverrideActor,
 				Continuous:     req.Continuous,
 				MaxRounds:      req.MaxRounds,
 			})
@@ -261,12 +276,15 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 					Agent:        node.Agent,
 					Strategy:     domain.TaskStrategy(node.Strategy),
 					Dependencies: node.Dependencies,
+					Senators:     node.Senators,
+					Quorum:       node.Quorum,
 				})
 			}
 			if runErr = run.ValidateGraphRequest(graphReq); runErr == nil {
 				graphReq.SessionID = req.SessionID
 				graphReq.TaskID = req.TaskID
 				graphReq.PolicyOverride = req.PolicyOverride
+				graphReq.OverrideActor = req.PolicyOverrideActor
 				graphReq.Continuous = req.Continuous
 				graphReq.MaxRounds = req.MaxRounds
 				runResult, runErr = d.runner.RunGraphWithResult(ctx, graphReq, os.Stdout)
@@ -284,6 +302,7 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 			graphReq.SessionID = req.SessionID
 			graphReq.TaskID = req.TaskID
 			graphReq.PolicyOverride = req.PolicyOverride
+			graphReq.OverrideActor = req.PolicyOverrideActor
 			graphReq.Continuous = req.Continuous
 			graphReq.MaxRounds = req.MaxRounds
 			runResult, runErr = d.runner.RunGraphWithResult(ctx, graphReq, os.Stdout)
@@ -303,6 +322,7 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 		req.Status = queue.StatusSucceeded
 		req.Error = ""
 		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
 	}
 	if err := d.queue.Update(ctx, req); err != nil {
 		return fmt.Errorf("finalize queue request: %w", err)

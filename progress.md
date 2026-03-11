@@ -94,6 +94,60 @@
 - Removed the main execution path's compile-time dependency on `internal/relay`:
   - scheduler now owns `NodeAssignment` and `DispatchResult`
   - direct run, graph run, recovery, and scheduler tests now use scheduler-native execution types
+- Added structured follow-up contracts to report artifacts:
+  - `ReportPayload.follow_up_requests`
+  - `ROMA_FOLLOWUP: delegate <agent> | <instruction>` parsing
+  - scheduler follow-up nodes now carry `PromptHint`
+- Added path-scoped policy boundaries:
+  - node-level policy now evaluates against the prepared workspace `effective_dir`
+  - execution is blocked for `.git`, `/`, or effective directories outside the workspace boundary
+  - protected repo scope hints now raise warnings
+- Added minimum override ACL support:
+  - `--policy-override`
+  - `--override-actor`
+  - `ROMA_POLICY_OVERRIDE_ACTOR`
+  - `ROMA_POLICY_OVERRIDE_ACTORS`
+  - queue records now persist `policy_override_actor`
+- Added Curia minimal execution:
+  - new `internal/curia` executor
+  - scatter proposals from multiple senators
+  - blind-review ballots
+  - generated `debate_log`, `decision_pack`, and final `execution_plan`
+  - scheduler now executes `TaskStrategyCuria` nodes directly
+  - Curia intermediate artifacts are persisted as related artifacts in the session
+- Added Curia user-facing entrypoints:
+  - `examples/curia-graph.json`
+  - `roma sessions curia <session_id>`
+  - `roma artifacts list --kind proposal|ballot|debate_log|decision_pack|execution_plan`
+  - Curia now performs first-pass dispute detection:
+    - close top-score gaps trigger `winning_mode=merge`
+    - vetoed top proposals also mark the debate as disputed
+    - `debate_log` and `decision_pack` now carry dispute metadata instead of only a hard-coded accept path
+- Added execution-plan closure primitives:
+  - new `internal/plans` service
+  - `roma plans inspect/apply/rollback`
+  - changed-path validation against `expected_files`
+  - forbidden-path enforcement during plan apply
+  - dry-run plan apply
+  - reverse-apply rollback for merged worktree patches
+  - daemon API endpoints for plan inspect/apply/rollback
+  - approval-aware gating for `human_approval_required` plans
+  - automatic rollback when required checks fail after merge-back
+  - dedicated `PlanApplied`, `PlanRolledBack`, and `PlanApplyRejected` audit events
+  - structured plan error kinds for approval-required, override-forbidden, validation-failed, merge-conflict, and required-check failure
+  - protected path enforcement at merge/apply time, not only pre-flight dispatch time
+  - `queue inspect` / `sessions inspect` now include `plans` summaries derived from those audit events
+  - `dry-run` now performs actual merge preview via `git apply --check --3way`
+  - plan apply now routes protected-path decisions through a first action-aware policy matrix
+  - new `roma plans inbox [--session <id>]` and daemon `/plans/inbox` aggregate pending plan approvals and latest apply outcomes
+  - new `roma plans approve|reject <artifact_id>` and daemon `/plans/{artifact_id}/approve|reject` turn that inbox into an actual approval path
+  - gateway remote commands can now bridge `plan_approve` / `plan_reject` into that same plan approval path
+  - scheduler now has a concurrent DAG/workspace soak baseline test covering parallel ready nodes plus worktree reclaim for one session
+- Added minimum worktree merge-back closure:
+  - `workspace.CapturePatch`
+  - `workspace.MergeBack`
+  - `roma workspaces merge <session_id> <task_id>`
+  - `POST /workspaces/{session}/{task}/merge`
 
 ## Latest Verified Commands
 
@@ -135,10 +189,21 @@
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding workspace inspection/cleanup APIs and lease-aware periodic recovery
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after attaching workspace refs to scheduler leases and exposing lease/workspace linkage in inspection
 - `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after persisting approval-pending task ids in leases and exposing approval resume readiness in inspection
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after exposing lease-aware recovery snapshots through the daemon API and enriching `SchedulerLeaseRecorded` payloads
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after routing queue-level approval through lease-backed task approval when pending node approvals exist
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding node-level queue summaries and lease/recovery counts to `roma status`
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding daemon `/status` and switching daemon-mode `roma status` to the API
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after collapsing `internal/relay` into a scheduler compatibility wrapper
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after routing direct runs through `scheduler.Dispatcher` so approval gating persists as task/lease state
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after adding minimal dynamic delegation parsing (`ROMA_DELEGATE: <agent>`) to direct runs
+- `env GOCACHE=/tmp/go-build-cache-roma go test ./...` after extending dynamic delegation follow-up nodes to the shared run/graph path
+- `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma status`
 - `env GOCACHE=/tmp/go-build-cache-roma go build ./...`
 
 ## Current Focus
 
-- Append pending-approval metadata into scheduler lease events for replay clarity.
-- Expose lease-aware recovery snapshots through CLI/API inspection.
-- Reduce remaining queue-level approval semantics that duplicate lease-owned recovery truth.
+- Surface more scheduler-native node summaries in daemon list endpoints.
+- Push more dynamic multi-agent delegation decisions into scheduler-owned execution.
+- Replace minimal dynamic delegation parsing with richer scheduler-issued follow-up node contracts.
+- Add path-scoped policy enforcement against workspace/effective directories and expected repo boundaries.
+- Add override ACL semantics for explicit policy bypass actions.

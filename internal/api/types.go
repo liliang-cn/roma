@@ -4,6 +4,7 @@ import (
 	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
+	"github.com/liliang/roma/internal/plans"
 	"github.com/liliang/roma/internal/queue"
 	"github.com/liliang/roma/internal/scheduler"
 	"github.com/liliang/roma/internal/workspace"
@@ -11,14 +12,16 @@ import (
 
 // SubmitRequest is the daemon API payload for queue submission.
 type SubmitRequest struct {
-	GraphFile    string              `json:"graph_file,omitempty"`
-	Graph        *GraphSubmitRequest `json:"graph,omitempty"`
-	Prompt       string              `json:"prompt"`
-	StarterAgent string              `json:"starter_agent"`
-	Delegates    []string            `json:"delegates,omitempty"`
-	WorkingDir   string              `json:"working_dir"`
-	Continuous   bool                `json:"continuous,omitempty"`
-	MaxRounds    int                 `json:"max_rounds,omitempty"`
+	GraphFile           string              `json:"graph_file,omitempty"`
+	Graph               *GraphSubmitRequest `json:"graph,omitempty"`
+	Prompt              string              `json:"prompt"`
+	StarterAgent        string              `json:"starter_agent"`
+	Delegates           []string            `json:"delegates,omitempty"`
+	WorkingDir          string              `json:"working_dir"`
+	PolicyOverride      bool                `json:"policy_override,omitempty"`
+	PolicyOverrideActor string              `json:"policy_override_actor,omitempty"`
+	Continuous          bool                `json:"continuous,omitempty"`
+	MaxRounds           int                 `json:"max_rounds,omitempty"`
 }
 
 // GraphSubmitNode is one node in the inline graph submit payload.
@@ -28,6 +31,8 @@ type GraphSubmitNode struct {
 	Agent        string   `json:"agent"`
 	Strategy     string   `json:"strategy"`
 	Dependencies []string `json:"dependencies,omitempty"`
+	Senators     []string `json:"senators,omitempty"`
+	Quorum       int      `json:"quorum,omitempty"`
 }
 
 // GraphSubmitRequest is the first-class graph submit payload.
@@ -61,6 +66,39 @@ type EventListResponse struct {
 	Items []events.Record `json:"items"`
 }
 
+// RecoveryListResponse lists daemon recovery snapshots.
+type RecoveryListResponse struct {
+	Items []scheduler.RecoverySnapshot `json:"items"`
+}
+
+// StatusResponse reports daemon-owned workspace status counters.
+type StatusResponse struct {
+	QueueItems           int    `json:"queue_items"`
+	Sessions             int    `json:"sessions"`
+	Artifacts            int    `json:"artifacts"`
+	Events               int    `json:"events"`
+	ActiveLeases         int    `json:"active_leases"`
+	PendingApprovalTasks int    `json:"pending_approval_tasks"`
+	RecoverableSessions  int    `json:"recoverable_sessions"`
+	SQLiteEnabled        bool   `json:"sqlite_enabled"`
+	SQLitePath           string `json:"sqlite_path"`
+	SQLiteBytes          int64  `json:"sqlite_bytes"`
+}
+
+// PlanActionSummary condenses execution-plan audit events into one inspectable view.
+type PlanActionSummary struct {
+	ArtifactID     string   `json:"artifact_id"`
+	TaskID         string   `json:"task_id,omitempty"`
+	EventType      string   `json:"event_type"`
+	Reason         string   `json:"reason,omitempty"`
+	ChangedPaths   []string `json:"changed_paths,omitempty"`
+	Violations     []string `json:"violations,omitempty"`
+	Conflict       bool     `json:"conflict,omitempty"`
+	ConflictDetail string   `json:"conflict_detail,omitempty"`
+	RequiredChecks []string `json:"required_checks,omitempty"`
+	OccurredAt     string   `json:"occurred_at"`
+}
+
 // QueueInspectResponse expands a queued job into its execution records.
 type QueueInspectResponse struct {
 	Job                    queue.Request             `json:"job"`
@@ -72,6 +110,7 @@ type QueueInspectResponse struct {
 	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
 	Events                 []events.Record           `json:"events,omitempty"`
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
+	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
 }
 
 // WorkspaceListResponse lists persisted workspace records.
@@ -89,4 +128,45 @@ type SessionInspectResponse struct {
 	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
 	Events                 []events.Record           `json:"events,omitempty"`
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
+	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
 }
+
+type PlanApplyRequest struct {
+	SessionID           string `json:"session_id,omitempty"`
+	TaskID              string `json:"task_id,omitempty"`
+	ArtifactID          string `json:"artifact_id"`
+	DryRun              bool   `json:"dry_run,omitempty"`
+	PolicyOverride      bool   `json:"policy_override,omitempty"`
+	PolicyOverrideActor string `json:"policy_override_actor,omitempty"`
+}
+
+type PlanInspectResponse struct {
+	Artifact domain.ArtifactEnvelope `json:"artifact"`
+}
+
+type PlanInboxEntry struct {
+	ArtifactID            string   `json:"artifact_id"`
+	SessionID             string   `json:"session_id"`
+	TaskID                string   `json:"task_id"`
+	Goal                  string   `json:"goal,omitempty"`
+	Status                string   `json:"status"`
+	HumanApprovalRequired bool     `json:"human_approval_required"`
+	ExpectedFiles         []string `json:"expected_files,omitempty"`
+	ForbiddenPaths        []string `json:"forbidden_paths,omitempty"`
+	LastEventType         string   `json:"last_event_type,omitempty"`
+	LastReason            string   `json:"last_reason,omitempty"`
+	LastOccurredAt        string   `json:"last_occurred_at,omitempty"`
+	Violations            []string `json:"violations,omitempty"`
+	Conflict              bool     `json:"conflict,omitempty"`
+	ConflictDetail        string   `json:"conflict_detail,omitempty"`
+}
+
+type PlanInboxResponse struct {
+	Items []PlanInboxEntry `json:"items"`
+}
+
+type PlanDecisionRequest struct {
+	Actor string `json:"actor,omitempty"`
+}
+
+type PlanApplyResponse = plans.ApplyResult
