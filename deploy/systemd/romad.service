@@ -10,6 +10,7 @@ ExecStart=%h/.local/bin/romad
 Restart=on-failure
 RestartSec=2
 Environment=HOME=%h
+Environment=PATH=%h/.local/bin:%h/.fnm/aliases/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]
 WantedBy=default.target

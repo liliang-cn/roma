@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,34 +24,20 @@ import (
 
 // Client talks to romad over a Unix domain socket.
 type Client struct {
-	metaPath string
+	metaPaths []string
 }
+
+var healthCheckFn = checkHealth
 
 // NewClient constructs a UDS API client.
 func NewClient(workDir string) *Client {
-	return &Client{
-		metaPath: filepath.Join(workDir, ".roma", "run", "api.json"),
-	}
+	return &Client{metaPaths: candidateMetaPaths(workDir)}
 }
 
 // Available reports whether the daemon socket exists.
 func (c *Client) Available() bool {
-	httpClient, baseURL, err := c.httpClient()
-	if err != nil {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	_, _, err := c.httpClient()
+	return err == nil
 }
 
 // Status returns daemon-owned workspace counters.
@@ -732,16 +719,81 @@ func (c *Client) EventGet(ctx context.Context, id string) (events.Record, error)
 }
 
 func (c *Client) httpClient() (*http.Client, string, error) {
-	raw, err := os.ReadFile(c.metaPath)
+	var errs []error
+	for _, metaPath := range c.metaPaths {
+		httpClient, baseURL, err := clientFromMeta(metaPath)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := healthCheckFn(httpClient, baseURL); err != nil {
+			errs = append(errs, fmt.Errorf("health check %s: %w", metaPath, err))
+			continue
+		}
+		return httpClient, baseURL, nil
+	}
+	if len(errs) == 0 {
+		return nil, "", fmt.Errorf("no daemon metadata paths configured")
+	}
+	return nil, "", errors.Join(errs...)
+}
+
+func candidateMetaPaths(workDir string) []string {
+	paths := make([]string, 0, 3)
+	seen := make(map[string]struct{}, 3)
+	add := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		metaPath := filepath.Join(root, ".roma", "run", "api.json")
+		if _, ok := seen[metaPath]; ok {
+			return
+		}
+		seen[metaPath] = struct{}{}
+		paths = append(paths, metaPath)
+	}
+
+	if override := daemonHomeOverride(); override != "" {
+		add(override)
+	}
+	add(workDir)
+	if fallback := defaultDaemonHome(); fallback != "" {
+		add(fallback)
+	}
+	return paths
+}
+
+func daemonHomeOverride() string {
+	for _, key := range []string{"ROMA_DAEMON_DIR", "ROMA_HOME"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func defaultDaemonHome() string {
+	if xdg := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); xdg != "" {
+		return filepath.Join(xdg, "roma")
+	}
+	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		return filepath.Join(home, ".local", "share", "roma")
+	}
+	return ""
+}
+
+func clientFromMeta(metaPath string) (*http.Client, string, error) {
+	raw, err := os.ReadFile(metaPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("read api metadata: %w", err)
+		return nil, "", fmt.Errorf("read api metadata %s: %w", metaPath, err)
 	}
 	var meta struct {
 		Network string `json:"network"`
 		Address string `json:"address"`
 	}
 	if err := json.Unmarshal(raw, &meta); err != nil {
-		return nil, "", fmt.Errorf("unmarshal api metadata: %w", err)
+		return nil, "", fmt.Errorf("unmarshal api metadata %s: %w", metaPath, err)
 	}
 
 	switch meta.Network {
@@ -756,6 +808,24 @@ func (c *Client) httpClient() (*http.Client, string, error) {
 	case "tcp":
 		return &http.Client{Timeout: 5 * time.Second}, "http://" + meta.Address, nil
 	default:
-		return nil, "", fmt.Errorf("unsupported api network %q", meta.Network)
+		return nil, "", fmt.Errorf("unsupported api network %q in %s", meta.Network, metaPath)
 	}
+}
+
+func checkHealth(httpClient *http.Client, baseURL string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected health status %s", resp.Status)
+	}
+	return nil
 }
