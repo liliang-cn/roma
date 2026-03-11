@@ -131,6 +131,8 @@
   - added [`docs/curia-decision-flow.md`](/home/liliang/Codes/oss/ROMA/docs/curia-decision-flow.md) to document the current Curia demo path and its limits
   - `queue inspect` / `session inspect` now return a structured `curia` summary
   - Curia dispute state is now classified explicitly (`none`, `close_score`, `critical_veto`, `close_score+critical_veto`) instead of only booleans
+  - Curia decision packs now persist `risk_flags`, `review_questions`, and `candidate_summaries`
+  - `roma sessions curia <session_id>` and API inspection now surface those arbitration details directly instead of leaving them buried in raw artifacts
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`

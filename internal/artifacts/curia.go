@@ -58,6 +58,14 @@ type CuriaScoreEntry struct {
 	ReviewerCount int    `json:"reviewer_count"`
 }
 
+type CuriaCandidateSummary struct {
+	ProposalID    string `json:"proposal_id"`
+	Summary       string `json:"summary"`
+	RawScore      int    `json:"raw_score"`
+	WeightedScore int    `json:"weighted_score"`
+	VetoCount     int    `json:"veto_count"`
+}
+
 type DebateLogPayload struct {
 	DebateLogID         string            `json:"debate_log_id"`
 	ProposalIDs         []string          `json:"proposal_ids"`
@@ -75,15 +83,18 @@ type DebateLogPayload struct {
 }
 
 type DecisionPackPayload struct {
-	DecisionPackID      string            `json:"decision_pack_id"`
-	WinningMode         string            `json:"winning_mode"`
-	DisputeClass        string            `json:"dispute_class,omitempty"`
-	SelectedProposalIDs []string          `json:"selected_proposal_ids"`
-	MergedRationale     string            `json:"merged_rationale"`
-	RejectedReasons     []string          `json:"rejected_reasons,omitempty"`
-	Scoreboard          []CuriaScoreEntry `json:"scoreboard,omitempty"`
-	ExecutionPlanID     string            `json:"execution_plan_id"`
-	ApprovalRequired    bool              `json:"approval_required"`
+	DecisionPackID      string                  `json:"decision_pack_id"`
+	WinningMode         string                  `json:"winning_mode"`
+	DisputeClass        string                  `json:"dispute_class,omitempty"`
+	SelectedProposalIDs []string                `json:"selected_proposal_ids"`
+	MergedRationale     string                  `json:"merged_rationale"`
+	RejectedReasons     []string                `json:"rejected_reasons,omitempty"`
+	RiskFlags           []string                `json:"risk_flags,omitempty"`
+	ReviewQuestions     []string                `json:"review_questions,omitempty"`
+	CandidateSummaries  []CuriaCandidateSummary `json:"candidate_summaries,omitempty"`
+	Scoreboard          []CuriaScoreEntry       `json:"scoreboard,omitempty"`
+	ExecutionPlanID     string                  `json:"execution_plan_id"`
+	ApprovalRequired    bool                    `json:"approval_required"`
 }
 
 type ExecutionPlanPayload struct {
@@ -144,6 +155,9 @@ type BuildDecisionPackRequest struct {
 	ApprovalRequired    bool
 	MergedRationale     string
 	RejectedReasons     []string
+	RiskFlags           []string
+	ReviewQuestions     []string
+	CandidateSummaries  []CuriaCandidateSummary
 	Scoreboard          []CuriaScoreEntry
 }
 
@@ -223,6 +237,9 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		SelectedProposalIDs: append([]string(nil), req.SelectedProposalIDs...),
 		MergedRationale:     req.MergedRationale,
 		RejectedReasons:     append([]string(nil), req.RejectedReasons...),
+		RiskFlags:           append([]string(nil), req.RiskFlags...),
+		ReviewQuestions:     append([]string(nil), req.ReviewQuestions...),
+		CandidateSummaries:  append([]CuriaCandidateSummary(nil), req.CandidateSummaries...),
 		Scoreboard:          append([]CuriaScoreEntry(nil), req.Scoreboard...),
 		ExecutionPlanID:     req.ExecutionPlanID,
 		ApprovalRequired:    req.ApprovalRequired,

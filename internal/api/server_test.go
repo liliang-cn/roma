@@ -1288,6 +1288,9 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	if sessionResp.Curia.DisputeClass == "" {
 		t.Fatalf("curia summary = %#v, want dispute class", sessionResp.Curia)
 	}
+	if len(sessionResp.Curia.CandidateSummaries) == 0 || len(sessionResp.Curia.ReviewQuestions) == 0 {
+		t.Fatalf("curia summary = %#v, want decision refinement details", sessionResp.Curia)
+	}
 }
 
 func initAPIGitRepo(t *testing.T, dir string) {

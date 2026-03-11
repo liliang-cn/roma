@@ -95,6 +95,9 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		ApprovalRequired:    true,
 		MergedRationale:     decisionRationale(winner),
 		RejectedReasons:     append([]string(nil), winner.rejectedReasons...),
+		RiskFlags:           append([]string(nil), winner.riskFlags...),
+		ReviewQuestions:     append([]string(nil), winner.reviewQuestions...),
+		CandidateSummaries:  append([]artifacts.CuriaCandidateSummary(nil), winner.candidateSummaries...),
 		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
 	})
 	if err != nil {
@@ -122,12 +125,15 @@ type ballotEnvelope struct {
 }
 
 type winnerSelection struct {
-	proposal        artifacts.ProposalPayload
-	ballots         []domain.ArtifactEnvelope
-	selectedIDs     []string
-	winningMode     string
-	rejectedReasons []string
-	dispute         disputeResult
+	proposal           artifacts.ProposalPayload
+	ballots            []domain.ArtifactEnvelope
+	selectedIDs        []string
+	winningMode        string
+	rejectedReasons    []string
+	riskFlags          []string
+	reviewQuestions    []string
+	candidateSummaries []artifacts.CuriaCandidateSummary
+	dispute            disputeResult
 }
 
 type disputeResult struct {
@@ -290,13 +296,84 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 		selectedIDs = append([]string(nil), dispute.SelectedIDs...)
 	}
 	return outProposals, winnerSelection{
-		proposal:        selected.proposal,
-		ballots:         ballots,
-		selectedIDs:     selectedIDs,
-		winningMode:     dispute.WinningMode,
-		rejectedReasons: append([]string(nil), dispute.RejectedReasons...),
-		dispute:         dispute,
+		proposal:           selected.proposal,
+		ballots:            ballots,
+		selectedIDs:        selectedIDs,
+		winningMode:        dispute.WinningMode,
+		rejectedReasons:    append([]string(nil), dispute.RejectedReasons...),
+		riskFlags:          buildRiskFlags(selected.proposal, dispute),
+		reviewQuestions:    buildReviewQuestions(selected.proposal, dispute),
+		candidateSummaries: buildCandidateSummaries(proposals, dispute.Scoreboard),
+		dispute:            dispute,
 	}, nil
+}
+
+func buildCandidateSummaries(proposals []proposalEnvelope, scoreboard []artifacts.CuriaScoreEntry) []artifacts.CuriaCandidateSummary {
+	byProposal := make(map[string]artifacts.CuriaScoreEntry, len(scoreboard))
+	for _, item := range scoreboard {
+		byProposal[item.ProposalID] = item
+	}
+	out := make([]artifacts.CuriaCandidateSummary, 0, len(proposals))
+	for _, proposal := range proposals {
+		score := byProposal[proposal.proposal.ProposalID]
+		out = append(out, artifacts.CuriaCandidateSummary{
+			ProposalID:    proposal.proposal.ProposalID,
+			Summary:       proposal.proposal.Summary,
+			RawScore:      score.RawScore,
+			WeightedScore: score.WeightedScore,
+			VetoCount:     score.VetoCount,
+		})
+	}
+	return out
+}
+
+func buildRiskFlags(proposal artifacts.ProposalPayload, dispute disputeResult) []string {
+	flags := make([]string, 0, len(proposal.DesignRisks)+2)
+	seen := map[string]struct{}{}
+	appendFlag := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		flags = append(flags, value)
+	}
+	if dispute.CriticalVeto {
+		appendFlag("critical_veto")
+	}
+	if dispute.Class == "close_score" || dispute.Class == "close_score+critical_veto" {
+		appendFlag("close_score")
+	}
+	for _, risk := range proposal.DesignRisks {
+		appendFlag(risk)
+	}
+	for _, reason := range dispute.RejectedReasons {
+		appendFlag(reason)
+	}
+	return flags
+}
+
+func buildReviewQuestions(proposal artifacts.ProposalPayload, dispute disputeResult) []string {
+	questions := make([]string, 0, 4)
+	if dispute.CriticalVeto {
+		questions = append(questions, "What concrete flaw caused the leading proposal to be critically vetoed?")
+	}
+	if dispute.Class == "close_score" || dispute.Class == "close_score+critical_veto" {
+		questions = append(questions, "Which tradeoff most clearly separates the top Curia proposals?")
+	}
+	for _, risk := range proposal.DesignRisks {
+		questions = append(questions, "How will the plan mitigate this risk: "+risk+"?")
+		if len(questions) >= 4 {
+			break
+		}
+	}
+	if len(questions) == 0 {
+		questions = append(questions, "What validation should happen before this Curia execution plan is applied?")
+	}
+	return questions
 }
 
 func scatterPrompt(req ExecuteRequest, senator domain.AgentProfile) string {

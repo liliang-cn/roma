@@ -166,6 +166,7 @@
   - debate logs and decision packs now persist a Curia `scoreboard` with raw score, weighted score, veto count, and reviewer count per proposal
   - `roma sessions curia <session_id>` now prints dispute signals, selected proposals, and the scoreboard, so Curia outcomes are inspectable instead of implicit
   - `queue inspect` / `sessions inspect` now also expose a structured `curia` summary instead of forcing callers to recompute it from raw artifacts
+  - decision packs now also carry `risk_flags`, `review_questions`, and `candidate_summaries`, which makes the current human-first arbitration output reviewable without reopening every proposal and ballot manually
   - arbitration is human-first
   - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.

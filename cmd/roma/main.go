@@ -993,6 +993,15 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		if len(latestDecision.SelectedProposalIDs) > 0 {
 			fmt.Printf("curia_selected=%s\n", strings.Join(latestDecision.SelectedProposalIDs, ","))
 		}
+		if len(latestDecision.RiskFlags) > 0 {
+			fmt.Printf("curia_risk_flags=%s\n", strings.Join(latestDecision.RiskFlags, " | "))
+		}
+		if len(latestDecision.ReviewQuestions) > 0 {
+			fmt.Printf("curia_review_questions=%s\n", strings.Join(latestDecision.ReviewQuestions, " | "))
+		}
+		for _, item := range latestDecision.CandidateSummaries {
+			fmt.Printf("candidate[%s]=weighted:%d raw:%d veto:%d summary:%s\n", item.ProposalID, item.WeightedScore, item.RawScore, item.VetoCount, item.Summary)
+		}
 	}
 }
 

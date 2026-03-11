@@ -203,7 +203,13 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 		ApprovalRequired:    true,
 		MergedRationale:     "merge due to close vote",
 		RejectedReasons:     []string{"prop_c scored lower"},
-		Scoreboard:          scoreboard,
+		RiskFlags:           []string{"close_score", "needs_review"},
+		ReviewQuestions:     []string{"Which tradeoff separates prop_a and prop_b?"},
+		CandidateSummaries: []CuriaCandidateSummary{
+			{ProposalID: "prop_a", Summary: "A", RawScore: 20, WeightedScore: 54, VetoCount: 0},
+			{ProposalID: "prop_b", Summary: "B", RawScore: 18, WeightedScore: 36, VetoCount: 1},
+		},
+		Scoreboard: scoreboard,
 	})
 	if err != nil {
 		t.Fatalf("BuildDecisionPack() error = %v", err)
@@ -217,5 +223,11 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	}
 	if len(decisionPayload.Scoreboard) != 2 || decisionPayload.Scoreboard[1].VetoCount != 1 {
 		t.Fatalf("decision scoreboard = %#v, want veto count carried through", decisionPayload.Scoreboard)
+	}
+	if len(decisionPayload.CandidateSummaries) != 2 || decisionPayload.CandidateSummaries[0].ProposalID != "prop_a" {
+		t.Fatalf("candidate summaries = %#v, want prop_a/prop_b summaries", decisionPayload.CandidateSummaries)
+	}
+	if len(decisionPayload.ReviewQuestions) != 1 || len(decisionPayload.RiskFlags) != 2 {
+		t.Fatalf("decision refinement = %#v, want risk flags and review questions", decisionPayload)
 	}
 }

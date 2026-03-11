@@ -59,4 +59,19 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 	if got.Scoreboard[0].ProposalID != "prop_a" || got.Scoreboard[0].WeightedScore != 20 {
 		t.Fatalf("top scoreboard entry = %#v, want prop_a weighted 20", got.Scoreboard[0])
 	}
+	if got.Class != "close_score+critical_veto" {
+		t.Fatalf("Class = %q, want close_score+critical_veto", got.Class)
+	}
+	summaries := buildCandidateSummaries(proposals, got.Scoreboard)
+	if len(summaries) != 3 || summaries[0].ProposalID != "prop_a" {
+		t.Fatalf("candidate summaries = %#v, want proposal summaries", summaries)
+	}
+	questions := buildReviewQuestions(artifacts.ProposalPayload{DesignRisks: []string{"migration risk"}}, got)
+	if len(questions) == 0 {
+		t.Fatal("review questions = empty, want arbitration prompts")
+	}
+	flags := buildRiskFlags(artifacts.ProposalPayload{DesignRisks: []string{"migration risk"}}, got)
+	if len(flags) < 2 {
+		t.Fatalf("risk flags = %#v, want dispute and design risk flags", flags)
+	}
 }
