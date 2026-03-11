@@ -156,10 +156,16 @@
 - Curia is still intentionally minimal:
   - quorum and vote selection are lightweight
   - it now detects close-score and veto-driven disputes and can emit `winning_mode=merge`, but arbitration is still human-first
+  - dispute state is no longer only boolean:
+    - `none`
+    - `close_score`
+    - `critical_veto`
+    - `close_score+critical_veto`
   - ballot scoring now has a first reputation layer, so reviewer weight can change Curia outcomes instead of every senator counting equally
   - ballot artifacts now persist `reviewer_weight` and `weighted_score`
   - debate logs and decision packs now persist a Curia `scoreboard` with raw score, weighted score, veto count, and reviewer count per proposal
   - `roma sessions curia <session_id>` now prints dispute signals, selected proposals, and the scoreboard, so Curia outcomes are inspectable instead of implicit
+  - `queue inspect` / `sessions inspect` now also expose a structured `curia` summary instead of forcing callers to recompute it from raw artifacts
   - arbitration is human-first
   - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.

@@ -63,6 +63,7 @@ type DebateLogPayload struct {
 	ProposalIDs         []string          `json:"proposal_ids"`
 	BallotIDs           []string          `json:"ballot_ids"`
 	DisputeSummary      string            `json:"dispute_summary"`
+	DisputeClass        string            `json:"dispute_class,omitempty"`
 	DisputeReasons      []string          `json:"dispute_reasons,omitempty"`
 	DisputeDetected     bool              `json:"dispute_detected"`
 	CriticalVeto        bool              `json:"critical_veto"`
@@ -76,6 +77,7 @@ type DebateLogPayload struct {
 type DecisionPackPayload struct {
 	DecisionPackID      string            `json:"decision_pack_id"`
 	WinningMode         string            `json:"winning_mode"`
+	DisputeClass        string            `json:"dispute_class,omitempty"`
 	SelectedProposalIDs []string          `json:"selected_proposal_ids"`
 	MergedRationale     string            `json:"merged_rationale"`
 	RejectedReasons     []string          `json:"rejected_reasons,omitempty"`
@@ -122,6 +124,7 @@ type BuildDebateLogRequest struct {
 	ProposalIDs         []string
 	BallotIDs           []string
 	WinningProposalID   string
+	DisputeClass        string
 	DisputeReasons      []string
 	DisputeDetected     bool
 	CriticalVeto        bool
@@ -135,6 +138,7 @@ type BuildDecisionPackRequest struct {
 	TaskID              string
 	RunID               string
 	WinningMode         string
+	DisputeClass        string
 	SelectedProposalIDs []string
 	ExecutionPlanID     string
 	ApprovalRequired    bool
@@ -198,6 +202,7 @@ func (s *Service) BuildDebateLog(_ context.Context, req BuildDebateLogRequest) (
 		ProposalIDs:         append([]string(nil), req.ProposalIDs...),
 		BallotIDs:           append([]string(nil), req.BallotIDs...),
 		DisputeSummary:      disputeSummary(req.WinningProposalID, req.ArbitrationRequired),
+		DisputeClass:        req.DisputeClass,
 		DisputeReasons:      append([]string(nil), req.DisputeReasons...),
 		DisputeDetected:     req.DisputeDetected,
 		CriticalVeto:        req.CriticalVeto,
@@ -214,6 +219,7 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 	payload := DecisionPackPayload{
 		DecisionPackID:      "dp_" + req.RunID,
 		WinningMode:         req.WinningMode,
+		DisputeClass:        req.DisputeClass,
 		SelectedProposalIDs: append([]string(nil), req.SelectedProposalIDs...),
 		MergedRationale:     req.MergedRationale,
 		RejectedReasons:     append([]string(nil), req.RejectedReasons...),

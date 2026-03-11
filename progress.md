@@ -129,6 +129,8 @@
   - `roma sessions curia <session_id>` now prints dispute reasons, winning mode, selected proposals, and the Curia scoreboard
   - added a deterministic Curia decision-flow regression in `internal/api` proving that a disputed Curia run produces an `execution_plan` visible in `/plans/inbox` as `pending_approval`
   - added [`docs/curia-decision-flow.md`](/home/liliang/Codes/oss/ROMA/docs/curia-decision-flow.md) to document the current Curia demo path and its limits
+  - `queue inspect` / `session inspect` now return a structured `curia` summary
+  - Curia dispute state is now classified explicitly (`none`, `close_score`, `critical_veto`, `close_score+critical_veto`) instead of only booleans
 - Added execution-plan closure primitives:
   - new `internal/plans` service
   - `roma plans inspect/apply/rollback`

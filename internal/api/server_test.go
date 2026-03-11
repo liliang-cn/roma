@@ -1256,6 +1256,38 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	if !resp.Items[0].HumanApprovalRequired {
 		t.Fatalf("item = %#v, want human approval required", resp.Items[0])
 	}
+
+	sessionRecorder := httptest.NewRecorder()
+	sessionRequest := httptest.NewRequest(http.MethodGet, "/session-inspect/sess_curia_demo", nil)
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_curia_demo",
+		TaskID:     "task_curia_demo",
+		Prompt:     "Two competing designs both want to change internal/api/server.go",
+		Starter:    "codex-cli",
+		WorkingDir: workDir,
+		Status:     "awaiting_approval",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
+	server.handleSessionInspect(sessionRecorder, sessionRequest)
+	if sessionRecorder.Code != http.StatusOK {
+		t.Fatalf("session inspect status = %d, want 200", sessionRecorder.Code)
+	}
+	var sessionResp SessionInspectResponse
+	if err := json.Unmarshal(sessionRecorder.Body.Bytes(), &sessionResp); err != nil {
+		t.Fatalf("decode session inspect error = %v", err)
+	}
+	if sessionResp.Curia == nil {
+		t.Fatal("session inspect curia = nil, want summary")
+	}
+	if sessionResp.Curia.WinningMode == "" || len(sessionResp.Curia.Scoreboard) == 0 {
+		t.Fatalf("curia summary = %#v, want winning mode and scoreboard", sessionResp.Curia)
+	}
+	if sessionResp.Curia.DisputeClass == "" {
+		t.Fatalf("curia summary = %#v, want dispute class", sessionResp.Curia)
+	}
 }
 
 func initAPIGitRepo(t *testing.T, dir string) {

@@ -170,6 +170,7 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 		ProposalIDs:         []string{"prop_a", "prop_b"},
 		BallotIDs:           []string{"ballot_1", "ballot_2"},
 		WinningProposalID:   "prop_a",
+		DisputeClass:        "close_score",
 		DisputeReasons:      []string{"close vote"},
 		DisputeDetected:     true,
 		CriticalVeto:        false,
@@ -184,6 +185,9 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	if !ok {
 		t.Fatal("DebateLogFromEnvelope() = false")
 	}
+	if debatePayload.DisputeClass != "close_score" {
+		t.Fatalf("dispute class = %q, want close_score", debatePayload.DisputeClass)
+	}
 	if len(debatePayload.Scoreboard) != 2 || debatePayload.Scoreboard[0].WeightedScore != 54 {
 		t.Fatalf("debate scoreboard = %#v, want weighted scoreboard entries", debatePayload.Scoreboard)
 	}
@@ -193,6 +197,7 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 		TaskID:              "task_curia",
 		RunID:               "task_curia_decision",
 		WinningMode:         "merge",
+		DisputeClass:        "close_score",
 		SelectedProposalIDs: []string{"prop_a", "prop_b"},
 		ExecutionPlanID:     "plan_1",
 		ApprovalRequired:    true,
@@ -206,6 +211,9 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	decisionPayload, ok := DecisionPackFromEnvelope(decision)
 	if !ok {
 		t.Fatal("DecisionPackFromEnvelope() = false")
+	}
+	if decisionPayload.DisputeClass != "close_score" {
+		t.Fatalf("decision dispute class = %q, want close_score", decisionPayload.DisputeClass)
 	}
 	if len(decisionPayload.Scoreboard) != 2 || decisionPayload.Scoreboard[1].VetoCount != 1 {
 		t.Fatalf("decision scoreboard = %#v, want veto count carried through", decisionPayload.Scoreboard)

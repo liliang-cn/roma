@@ -105,6 +105,25 @@ type PlanActionSummary struct {
 	OccurredAt     string   `json:"occurred_at"`
 }
 
+type CuriaScoreSummary struct {
+	ProposalID    string `json:"proposal_id"`
+	RawScore      int    `json:"raw_score"`
+	WeightedScore int    `json:"weighted_score"`
+	VetoCount     int    `json:"veto_count"`
+	ReviewerCount int    `json:"reviewer_count"`
+}
+
+type CuriaSummary struct {
+	Dispute             bool                `json:"dispute"`
+	DisputeClass        string              `json:"dispute_class,omitempty"`
+	CriticalVeto        bool                `json:"critical_veto"`
+	TopScoreGap         int                 `json:"top_score_gap"`
+	DisputeReasons      []string            `json:"dispute_reasons,omitempty"`
+	WinningMode         string              `json:"winning_mode,omitempty"`
+	SelectedProposalIDs []string            `json:"selected_proposal_ids,omitempty"`
+	Scoreboard          []CuriaScoreSummary `json:"scoreboard,omitempty"`
+}
+
 // QueueInspectResponse expands a queued job into its execution records.
 type QueueInspectResponse struct {
 	Job                    queue.Request             `json:"job"`
@@ -117,6 +136,7 @@ type QueueInspectResponse struct {
 	Events                 []events.Record           `json:"events,omitempty"`
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
 	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
+	Curia                  *CuriaSummary             `json:"curia,omitempty"`
 }
 
 // WorkspaceListResponse lists persisted workspace records.
@@ -135,6 +155,7 @@ type SessionInspectResponse struct {
 	Events                 []events.Record           `json:"events,omitempty"`
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
 	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
+	Curia                  *CuriaSummary             `json:"curia,omitempty"`
 }
 
 type PlanApplyRequest struct {

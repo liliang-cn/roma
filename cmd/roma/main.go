@@ -976,6 +976,9 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 	}
 	if latestDebate != nil {
 		fmt.Printf("curia_dispute=%t\n", latestDebate.DisputeDetected)
+		if latestDebate.DisputeClass != "" {
+			fmt.Printf("curia_dispute_class=%s\n", latestDebate.DisputeClass)
+		}
 		fmt.Printf("curia_critical_veto=%t\n", latestDebate.CriticalVeto)
 		fmt.Printf("curia_top_score_gap=%d\n", latestDebate.TopScoreGap)
 		if len(latestDebate.DisputeReasons) > 0 {

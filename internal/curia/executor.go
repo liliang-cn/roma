@@ -60,6 +60,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		ProposalIDs:         collectProposalIDs(proposals),
 		BallotIDs:           collectBallotIDs(ballots),
 		WinningProposalID:   winner.proposal.ProposalID,
+		DisputeClass:        winner.dispute.Class,
 		DisputeReasons:      append([]string(nil), winner.dispute.RejectedReasons...),
 		DisputeDetected:     winner.dispute.Detected,
 		CriticalVeto:        winner.dispute.CriticalVeto,
@@ -88,6 +89,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		TaskID:              req.TaskID,
 		RunID:               req.TaskID + "_decision",
 		WinningMode:         winner.winningMode,
+		DisputeClass:        winner.dispute.Class,
 		SelectedProposalIDs: append([]string(nil), winner.selectedIDs...),
 		ExecutionPlanID:     plan.ID,
 		ApprovalRequired:    true,
@@ -130,6 +132,7 @@ type winnerSelection struct {
 
 type disputeResult struct {
 	Detected        bool
+	Class           string
 	CriticalVeto    bool
 	TopScoreGap     int
 	WinningMode     string
@@ -395,7 +398,7 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		})
 	}
 	if len(ranked) == 0 {
-		return disputeResult{WinningMode: "accept"}
+		return disputeResult{WinningMode: "accept", Class: "none"}
 	}
 	for i := 0; i < len(ranked); i++ {
 		for j := i + 1; j < len(ranked); j++ {
@@ -406,12 +409,14 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 	}
 	result := disputeResult{
 		WinningMode: "accept",
+		Class:       "none",
 		SelectedIDs: []string{ranked[0].id},
 	}
 	if len(ranked) > 1 {
 		result.TopScoreGap = ranked[0].weightedScore - ranked[1].weightedScore
 		if result.TopScoreGap <= 3 {
 			result.Detected = true
+			result.Class = "close_score"
 			result.WinningMode = "merge"
 			result.SelectedIDs = []string{ranked[0].id, ranked[1].id}
 			result.RejectedReasons = append(result.RejectedReasons, "top proposals are too close to accept one without merge review")
@@ -420,6 +425,11 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 	if vetoByProposal[ranked[0].id] > 0 {
 		result.Detected = true
 		result.CriticalVeto = true
+		if result.Class == "close_score" {
+			result.Class = "close_score+critical_veto"
+		} else {
+			result.Class = "critical_veto"
+		}
 		if len(ranked) > 1 {
 			result.WinningMode = "replace"
 			result.SelectedIDs = []string{ranked[1].id}

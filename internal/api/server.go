@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/liliang/roma/internal/artifacts"
+	"github.com/liliang/roma/internal/domain"
 	"github.com/liliang/roma/internal/events"
 	"github.com/liliang/roma/internal/history"
 	"github.com/liliang/roma/internal/plans"
@@ -649,6 +650,57 @@ func stringSlicePayload(payload map[string]any, key string) ([]string, bool) {
 	}
 }
 
+func summarizeCuriaArtifacts(items []domain.ArtifactEnvelope) *CuriaSummary {
+	var latestDebate *artifacts.DebateLogPayload
+	var latestDecision *artifacts.DecisionPackPayload
+	for _, item := range items {
+		if payload, ok := artifacts.DebateLogFromEnvelope(item); ok {
+			value := payload
+			latestDebate = &value
+		}
+		if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+			value := payload
+			latestDecision = &value
+		}
+	}
+	if latestDebate == nil && latestDecision == nil {
+		return nil
+	}
+	out := &CuriaSummary{}
+	if latestDebate != nil {
+		out.Dispute = latestDebate.DisputeDetected
+		out.DisputeClass = latestDebate.DisputeClass
+		out.CriticalVeto = latestDebate.CriticalVeto
+		out.TopScoreGap = latestDebate.TopScoreGap
+		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
+		for _, item := range latestDebate.Scoreboard {
+			out.Scoreboard = append(out.Scoreboard, CuriaScoreSummary{
+				ProposalID:    item.ProposalID,
+				RawScore:      item.RawScore,
+				WeightedScore: item.WeightedScore,
+				VetoCount:     item.VetoCount,
+				ReviewerCount: item.ReviewerCount,
+			})
+		}
+	}
+	if latestDecision != nil {
+		out.WinningMode = latestDecision.WinningMode
+		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
+		if len(out.Scoreboard) == 0 {
+			for _, item := range latestDecision.Scoreboard {
+				out.Scoreboard = append(out.Scoreboard, CuriaScoreSummary{
+					ProposalID:    item.ProposalID,
+					RawScore:      item.RawScore,
+					WeightedScore: item.WeightedScore,
+					VetoCount:     item.VetoCount,
+					ReviewerCount: item.ReviewerCount,
+				})
+			}
+		}
+	}
+	return out
+}
+
 func (s *Server) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -897,6 +949,7 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		artifactStore := preferredArtifactStore(workDir)
 		if items, err := artifactStore.List(r.Context(), job.SessionID); err == nil {
 			resp.Artifacts = items
+			resp.Curia = summarizeCuriaArtifacts(items)
 		}
 		if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
 			for _, item := range items {
@@ -963,6 +1016,7 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 	artifactStore := preferredArtifactStore(workDir)
 	if items, err := artifactStore.List(r.Context(), id); err == nil {
 		resp.Artifacts = items
+		resp.Curia = summarizeCuriaArtifacts(items)
 	}
 	if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
 		for _, item := range items {
