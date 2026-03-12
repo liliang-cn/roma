@@ -218,6 +218,16 @@
     - current process pid when available
 - Runtime visibility now also exposes progress shape instead of only liveness:
   - `queue inspect` / `session inspect` include `live.phase`, `live.current_round`, and `live.participant_count`
+- `queue inspect` was still too heavy as a default operator command once live visibility landed:
+  - the useful path is summary-first with `ArtifactCount` / `EventCount`
+  - full `artifacts` and `events` should only come back in explicit raw/attach flows
+- `queue tail` must not stringify runtime pid through generic payload formatting:
+  - JSON numbers were rendering as scientific notation (`2.305007e+06`)
+  - operator-facing runtime output needs stable integer pid formatting
+- `roma result show` needs a first-class pending state:
+  - running sessions do not always have a final-answer artifact yet
+  - "has no final answer" is technically true but user-hostile
+  - the better UX is `pending=true` with a clear status/message until the final artifact exists
   - live workspace metadata now carries `workspace_base_dir`, `workspace_mode`, and `workspace_requested_mode`
   - `queue tail` summaries include `phase`, `round`, `agents`, and `workspace_mode`
 - There was still no stable user-facing endpoint for "what is the answer?":

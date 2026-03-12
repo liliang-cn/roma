@@ -483,6 +483,13 @@ func runResults(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if session.Status == "running" || session.Status == "pending" || session.Status == "awaiting_approval" {
+		return printResultShow(api.ResultShowResponse{
+			Session: session,
+			Pending: true,
+			Message: fmt.Sprintf("result is not ready yet; session status is %s", session.Status),
+		})
+	}
 	inspectDir := wd
 	if strings.TrimSpace(session.WorkingDir) != "" {
 		inspectDir = session.WorkingDir
@@ -495,6 +502,15 @@ func runResults(ctx context.Context, args []string) error {
 }
 
 func printResultShow(resp api.ResultShowResponse) error {
+	if resp.Pending {
+		fmt.Printf("session=%s\n", resp.Session.ID)
+		fmt.Printf("status=%s\n", resp.Session.Status)
+		fmt.Println("pending=true")
+		if resp.Message != "" {
+			fmt.Printf("message=%s\n", resp.Message)
+		}
+		return nil
+	}
 	payload, ok := artifacts.FinalAnswerFromEnvelope(resp.Artifact)
 	if !ok {
 		raw, err := json.MarshalIndent(resp, "", "  ")
@@ -656,7 +672,7 @@ func runQueue(ctx context.Context, args []string) error {
 	}
 
 	if client.Available() && subcommand == "inspect" {
-		resp, err := client.QueueInspect(ctx, subArg)
+		resp, err := client.QueueInspect(ctx, subArg, rawTail)
 		if err != nil {
 			return err
 		}
@@ -670,13 +686,13 @@ func runQueue(ctx context.Context, args []string) error {
 
 	if client.Available() && subcommand == "tail" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
-			return client.QueueInspect(ctx, id)
+			return client.QueueInspect(ctx, id, true)
 		}, subArg, rawTail)
 	}
 
 	if client.Available() && subcommand == "attach" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
-			return client.QueueInspect(ctx, id)
+			return client.QueueInspect(ctx, id, true)
 		}, subArg, rawTail)
 	}
 
@@ -729,7 +745,7 @@ func runQueue(ctx context.Context, args []string) error {
 	}
 
 	if subcommand == "inspect" {
-		resp, err := inspectQueueLocal(ctx, wd, subArg)
+		resp, err := inspectQueueLocal(ctx, wd, subArg, rawTail)
 		if err != nil {
 			return err
 		}
@@ -743,13 +759,13 @@ func runQueue(ctx context.Context, args []string) error {
 
 	if subcommand == "tail" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
-			return inspectQueueLocal(ctx, wd, id)
+			return inspectQueueLocal(ctx, wd, id, true)
 		}, subArg, rawTail)
 	}
 
 	if subcommand == "attach" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
-			return inspectQueueLocal(ctx, wd, id)
+			return inspectQueueLocal(ctx, wd, id, true)
 		}, subArg, rawTail)
 	}
 
@@ -917,8 +933,8 @@ func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw 
 			lines = append(lines, fmt.Sprintf("%s dir=%s provider=%s", prefix, payloadString(record.Payload, "effective_dir"), payloadString(record.Payload, "provider")))
 		case events.TypeRuntimeStarted:
 			line := fmt.Sprintf("%s exec=%s agent=%s", prefix, payloadString(record.Payload, "execution_id"), payloadString(record.Payload, "agent"))
-			if pid := payloadString(record.Payload, "pid"); pid != "" && pid != "0" {
-				line += " pid=" + pid
+			if pid := payloadInt(record.Payload, "pid"); pid > 0 {
+				line += " pid=" + strconv.Itoa(pid)
 			}
 			lines = append(lines, line)
 		case events.TypeRuntimeStdoutCaptured:
@@ -988,6 +1004,12 @@ func formatQueueTailLine(resp api.QueueInspectResponse) string {
 			parts = append(parts, "output="+strconv.Quote(resp.Live.LastOutputPreview))
 		}
 	}
+	if resp.ArtifactCount > 0 {
+		parts = append(parts, "artifacts="+strconv.Itoa(resp.ArtifactCount))
+	}
+	if resp.EventCount > 0 {
+		parts = append(parts, "events="+strconv.Itoa(resp.EventCount))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -1013,7 +1035,7 @@ func formatQueueHeartbeatLine(resp api.QueueInspectResponse) string {
 	return strings.Join(parts, " ")
 }
 
-func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectResponse, error) {
+func inspectQueueLocal(ctx context.Context, wd, jobID string, raw bool) (api.QueueInspectResponse, error) {
 	queueStore := preferredQueueStore(wd)
 	req, err := queueStore.Get(ctx, jobID)
 	if err != nil {
@@ -1026,6 +1048,7 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectR
 
 	controlDir := romapath.HomeDir()
 	workspaceDir := req.WorkingDir
+	var eventItems []events.Record
 	sessionStore := preferredHistoryStore(controlDir)
 	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
 		resp.Session = &session
@@ -1046,12 +1069,19 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectR
 	}
 	artifactStore := preferredArtifactStore(controlDir)
 	if items, err := artifactStore.List(ctx, req.SessionID); err == nil {
-		resp.Artifacts = items
+		resp.ArtifactCount = len(items)
+		if raw {
+			resp.Artifacts = items
+		}
 		resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
 	}
 	eventStore := preferredEventStore(controlDir)
 	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
-		resp.Events = items
+		eventItems = items
+		resp.EventCount = len(items)
+		if raw {
+			resp.Events = items
+		}
 		resp.Plans = summarizePlanActions(items)
 	}
 	if workspaceDir != "" {
@@ -1068,7 +1098,7 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectR
 	if resp.Session != nil && resp.Session.Status != "" {
 		sessionStatus = resp.Session.Status
 	}
-	resp.Live = api.EnrichRuntimeLive(api.SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, req.UpdatedAt), req.StarterAgent, req.Delegates)
+	resp.Live = api.EnrichRuntimeLive(api.SummarizeRuntimeLive(sessionStatus, resp.Tasks, eventItems, resp.Workspaces, resp.Lease, req.UpdatedAt), req.StarterAgent, req.Delegates)
 	return resp, nil
 }
 
@@ -3329,5 +3359,33 @@ func payloadString(payload map[string]any, key string) string {
 		return typed
 	default:
 		return fmt.Sprint(typed)
+	}
+}
+
+func payloadInt(payload map[string]any, key string) int {
+	if payload == nil {
+		return 0
+	}
+	value, ok := payload[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		n, _ := typed.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return n
+	default:
+		return 0
 	}
 }

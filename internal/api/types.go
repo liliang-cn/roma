@@ -154,6 +154,8 @@ type QueueInspectResponse struct {
 	PendingApprovalTaskIDs []string                  `json:"pending_approval_task_ids,omitempty"`
 	ApprovalResumeReady    bool                      `json:"approval_resume_ready"`
 	Live                   *RuntimeLiveSummary       `json:"live,omitempty"`
+	ArtifactCount          int                       `json:"artifact_count,omitempty"`
+	EventCount             int                       `json:"event_count,omitempty"`
 	Tasks                  []domain.TaskRecord       `json:"tasks,omitempty"`
 	Artifacts              []domain.ArtifactEnvelope `json:"artifacts,omitempty"`
 	Events                 []events.Record           `json:"events,omitempty"`
@@ -185,7 +187,9 @@ type SessionInspectResponse struct {
 // ResultShowResponse returns the user-facing final session outcome.
 type ResultShowResponse struct {
 	Session  history.SessionRecord   `json:"session"`
-	Artifact domain.ArtifactEnvelope `json:"artifact"`
+	Pending  bool                    `json:"pending,omitempty"`
+	Message  string                  `json:"message,omitempty"`
+	Artifact domain.ArtifactEnvelope `json:"artifact,omitempty"`
 }
 
 type PlanApplyRequest struct {

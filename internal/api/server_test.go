@@ -361,7 +361,7 @@ func TestServerQueueInspect(t *testing.T) {
 		t.Fatalf("Renew() error = %v", err)
 	}
 
-	resp, err := client.QueueInspect(context.Background(), "job_1")
+	resp, err := client.QueueInspect(context.Background(), "job_1", false)
 	if err != nil {
 		t.Fatalf("QueueInspect() error = %v", err)
 	}
@@ -371,12 +371,29 @@ func TestServerQueueInspect(t *testing.T) {
 	if resp.Session == nil || resp.Session.ID != "sess_1" {
 		t.Fatalf("session = %#v, want sess_1", resp.Session)
 	}
-	if len(resp.Artifacts) != 1 {
-		t.Fatalf("artifact count = %d, want 1", len(resp.Artifacts))
+	if resp.ArtifactCount != 1 {
+		t.Fatalf("artifact count = %d, want 1", resp.ArtifactCount)
 	}
-	if len(resp.Events) != 2 {
-		t.Fatalf("event count = %d, want 2", len(resp.Events))
+	if resp.EventCount != 2 {
+		t.Fatalf("event count = %d, want 2", resp.EventCount)
 	}
+	if len(resp.Artifacts) != 0 {
+		t.Fatalf("artifacts len = %d, want 0 in summarized inspect", len(resp.Artifacts))
+	}
+	if len(resp.Events) != 0 {
+		t.Fatalf("events len = %d, want 0 in summarized inspect", len(resp.Events))
+	}
+	rawResp, err := client.QueueInspect(context.Background(), "job_1", true)
+	if err != nil {
+		t.Fatalf("QueueInspect(raw) error = %v", err)
+	}
+	if len(rawResp.Artifacts) != 1 {
+		t.Fatalf("raw artifact count = %d, want 1", len(rawResp.Artifacts))
+	}
+	if len(rawResp.Events) != 2 {
+		t.Fatalf("raw event count = %d, want 2", len(rawResp.Events))
+	}
+
 	if len(resp.Plans) != 1 || resp.Plans[0].ArtifactID != "art_1" {
 		t.Fatalf("plans = %#v, want one summary for art_1", resp.Plans)
 	}
@@ -517,7 +534,7 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 		t.Fatalf("AppendEvent(stdout) error = %v", err)
 	}
 
-	resp, err := client.QueueInspect(context.Background(), "job_live")
+	resp, err := client.QueueInspect(context.Background(), "job_live", false)
 	if err != nil {
 		t.Fatalf("QueueInspect() error = %v", err)
 	}
@@ -559,6 +576,59 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 	}
 	if resp.Live.LastOutputPreview != "still working" {
 		t.Fatalf("live output preview = %q, want still working", resp.Live.LastOutputPreview)
+	}
+}
+
+func TestServerResultShowPendingSession(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	queueStore := queue.NewStore(workDir)
+	sessionStore := history.NewStore(workDir)
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := newTestClient(t, workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	session := history.SessionRecord{
+		ID:         "sess_pending",
+		TaskID:     "task_pending",
+		Prompt:     "pending result",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := sessionStore.Save(context.Background(), session); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
+
+	resp, err := client.ResultShow(context.Background(), "sess_pending")
+	if err != nil {
+		t.Fatalf("ResultShow() error = %v", err)
+	}
+	if !resp.Pending {
+		t.Fatal("pending = false, want true")
+	}
+	if !strings.Contains(resp.Message, "result is not ready yet") {
+		t.Fatalf("message = %q, want pending summary", resp.Message)
+	}
+	if resp.Session.Status != "running" {
+		t.Fatalf("session status = %q, want running", resp.Session.Status)
 	}
 }
 

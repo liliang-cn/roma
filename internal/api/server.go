@@ -1132,10 +1132,12 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := QueueInspectResponse{Job: job, ApprovalResumeReady: true}
+	rawInspect := r.URL.Query().Get("raw") == "1"
 
 	if job.SessionID != "" {
 		controlDir := s.workDir
 		workspaceDir := job.WorkingDir
+		var eventItems []events.Record
 		if session, err := s.sessionStore.Get(r.Context(), job.SessionID); err == nil {
 			resp.Session = &session
 			if session.WorkingDir != "" {
@@ -1155,13 +1157,21 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		}
 		eventStore := preferredEventStore(controlDir)
 		if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: job.SessionID}); err == nil {
+			eventItems = items
 			resp.Events = items
 			resp.Plans = summarizePlanActions(items)
 		}
 		artifactStore := preferredArtifactStore(controlDir)
 		if items, err := artifactStore.List(r.Context(), job.SessionID); err == nil {
-			resp.Artifacts = items
+			resp.ArtifactCount = len(items)
+			if rawInspect {
+				resp.Artifacts = items
+			}
 			resp.Curia = summarizeCuriaArtifacts(controlDir, items)
+		}
+		resp.EventCount = len(resp.Events)
+		if !rawInspect {
+			resp.Events = nil
 		}
 		if workspaceDir != "" {
 			if items, err := workspacepkg.NewManager(workspaceDir, nil).List(r.Context()); err == nil {
@@ -1176,7 +1186,7 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		if resp.Session != nil && resp.Session.Status != "" {
 			sessionStatus = resp.Session.Status
 		}
-		resp.Live = EnrichRuntimeLive(SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, job.UpdatedAt), job.StarterAgent, job.Delegates)
+		resp.Live = EnrichRuntimeLive(SummarizeRuntimeLive(sessionStatus, resp.Tasks, eventItems, resp.Workspaces, resp.Lease, job.UpdatedAt), job.StarterAgent, job.Delegates)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1194,6 +1204,14 @@ func (s *Server) handleResultShow(w http.ResponseWriter, r *http.Request) {
 	session, _, err := s.resolveSessionRecord(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if session.Status == "running" || session.Status == "pending" || session.Status == "awaiting_approval" {
+		writeJSON(w, http.StatusOK, ResultShowResponse{
+			Session: session,
+			Pending: true,
+			Message: fmt.Sprintf("result is not ready yet; session status is %s", session.Status),
+		})
 		return
 	}
 	artifactStore := preferredArtifactStore(s.workDir)

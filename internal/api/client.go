@@ -152,13 +152,17 @@ func (c *Client) QueueGet(ctx context.Context, id string) (queue.Request, error)
 	return out, nil
 }
 
-// QueueInspect returns a queue job with expanded execution records.
-func (c *Client) QueueInspect(ctx context.Context, id string) (QueueInspectResponse, error) {
+// QueueInspect returns a queue job with summarized execution records by default.
+func (c *Client) QueueInspect(ctx context.Context, id string, raw bool) (QueueInspectResponse, error) {
 	httpClient, baseURL, err := c.httpClient()
 	if err != nil {
 		return QueueInspectResponse{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/queue-inspect/"+id, nil)
+	url := baseURL + "/queue-inspect/" + id
+	if raw {
+		url += "?raw=1"
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return QueueInspectResponse{}, fmt.Errorf("create queue inspect request: %w", err)
 	}

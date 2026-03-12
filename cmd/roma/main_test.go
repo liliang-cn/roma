@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/queue"
 )
 
@@ -136,6 +139,24 @@ func TestFormatQueueTailLineIncludesStructuredLiveMetadata(t *testing.T) {
 	}
 }
 
+func TestFormatQueueTailLineIncludesSummaryCounts(t *testing.T) {
+	t.Parallel()
+
+	line := formatQueueTailLine(api.QueueInspectResponse{
+		Job: queue.Request{
+			ID:     "job_1",
+			Status: queue.StatusRunning,
+		},
+		ArtifactCount: 2,
+		EventCount:    9,
+	})
+	for _, want := range []string{"artifacts=2", "events=9"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("formatQueueTailLine() = %q, missing %q", line, want)
+		}
+	}
+}
+
 func TestQueueTailEventLinesRaw(t *testing.T) {
 	t.Parallel()
 
@@ -190,6 +211,56 @@ func TestCandidateQueueRootsIncludesWorkspaceAndHome(t *testing.T) {
 	if roots[0] != filepath.Clean(home) {
 		t.Fatalf("roots[0] = %q, want ROMA_HOME", roots[0])
 	}
+}
+
+func TestPrintResultShowPending(t *testing.T) {
+	t.Parallel()
+
+	out := captureStdout(t, func() {
+		if err := printResultShow(api.ResultShowResponse{
+			Session: history.SessionRecord{
+				ID:     "sess_pending",
+				Status: "running",
+			},
+			Pending: true,
+			Message: "result is not ready yet; session status is running",
+		}); err != nil {
+			t.Fatalf("printResultShow() error = %v", err)
+		}
+	})
+	for _, want := range []string{
+		"session=sess_pending",
+		"status=running",
+		"pending=true",
+		"message=result is not ready yet; session status is running",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output = %q, missing %q", out, want)
+		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	return string(data)
 }
 
 func TestFindQueueRequestAcrossRootsFallsBackToHome(t *testing.T) {

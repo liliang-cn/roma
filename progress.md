@@ -218,6 +218,10 @@
 
 - `go test -count=1 ./...`
 - `go test -count=1 ./internal/api ./cmd/roma`
+- Refined live-inspection UX:
+  - `queue inspect` is now summary-first by default and only expands full `events` / `artifacts` in raw paths
+  - `queue tail` now prints integer runtime pids instead of scientific-notation JSON floats
+  - `roma result show <session_id>` now returns a pending result summary for running/awaiting-approval sessions instead of failing on a missing final-answer artifact
 - `go test -count=1 ./...`
 - `go build ./...`
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue inspect job_1773190497370443455`

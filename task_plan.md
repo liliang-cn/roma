@@ -206,6 +206,9 @@ Status: in_progress
 - [x] Make `queue tail` default to structured runtime events, with `--raw` preserving raw stdout chunks
 - [x] Add a first-class user-facing session outcome artifact and expose it via `roma result show <session_id>`
 - [x] Surface `current_round`, `participant_count`, `phase`, and richer workspace metadata through live queue/session inspection
+- [x] Make `queue inspect` summarized by default, with raw event/artifact expansion only when explicitly requested
+- [x] Keep queue tail runtime-start pid formatting stable as an integer instead of float/scientific notation
+- [x] Make `roma result show` return a friendly pending result state for running/awaiting-approval sessions instead of failing on missing final answers
 
 ## Risks
 
