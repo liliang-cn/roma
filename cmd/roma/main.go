@@ -961,7 +961,7 @@ func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw 
 				line += " text=" + strconv.Quote(text)
 			}
 			lines = append(lines, line)
-		case events.TypeSemanticReportProduced:
+		case events.TypeSemanticReportProduced, events.TypeSemanticApprovalRecommended, events.TypeCuriaPromotionRecommended:
 			line := fmt.Sprintf("%s classifier=%s risk=%s", prefix, payloadString(record.Payload, "classifier_agent_id"), payloadString(record.Payload, "risk"))
 			if intent := strings.TrimSpace(record.ReasonCode); intent != "" {
 				line += " intent=" + intent
@@ -1089,6 +1089,7 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string, raw bool) (api.Que
 			resp.Artifacts = items
 		}
 		resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
+		resp.Semantic = summarizeSemanticArtifactsCLI(items)
 	}
 	eventStore := preferredEventStore(controlDir)
 	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
@@ -1606,6 +1607,7 @@ func runSessions(ctx context.Context, args []string) error {
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
 			resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
+			resp.Semantic = summarizeSemanticArtifactsCLI(items)
 		}
 		if workspaceDir != "" {
 			manager := workspacepkg.NewManager(workspaceDir, nil)
@@ -1657,6 +1659,7 @@ func runSessions(ctx context.Context, args []string) error {
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
 			resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
+			resp.Semantic = summarizeSemanticArtifactsCLI(items)
 		}
 		if workspaceDir != "" {
 			manager := workspacepkg.NewManager(workspaceDir, nil)
@@ -1852,6 +1855,36 @@ func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope)
 		}
 	}
 	return out
+}
+
+func summarizeSemanticArtifactsCLI(items []domain.ArtifactEnvelope) *api.SemanticSummary {
+	var latest *artifacts.SemanticReportPayload
+	var artifactID string
+	for _, item := range items {
+		if item.Kind != domain.ArtifactKindSemanticReport {
+			continue
+		}
+		if payload, ok := artifacts.SemanticReportFromEnvelope(item); ok {
+			value := payload
+			latest = &value
+			artifactID = item.ID
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return &api.SemanticSummary{
+		Intent:           latest.Intent,
+		Risk:             latest.Risk,
+		NeedsApproval:    latest.NeedsApproval,
+		RecommendCuria:   latest.RecommendCuria,
+		Summary:          latest.Summary,
+		ClassifierAgent:  latest.ClassifierAgentID,
+		SourceSignal:     latest.SourceSignal,
+		SourceReason:     latest.SourceReason,
+		SourceConfidence: latest.SourceConfidence,
+		ArtifactID:       artifactID,
+	}
 }
 
 func summarizeCuriaReviewerWeightsCLI(workDir string, items []artifacts.CuriaReviewContribution) []api.CuriaReviewerSummary {
@@ -3382,6 +3415,10 @@ func queueTailEventLabel(typ events.Type) string {
 		return "parse-warning"
 	case events.TypeSemanticReportProduced:
 		return "semantic"
+	case events.TypeSemanticApprovalRecommended:
+		return "approval-recommend"
+	case events.TypeCuriaPromotionRecommended:
+		return "curia-recommend"
 	case events.TypePlanApplyRejected, events.TypePlanApplied, events.TypePlanRolledBack:
 		return "plan"
 	case events.TypeTaskStateChanged:

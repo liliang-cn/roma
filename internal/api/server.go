@@ -815,6 +815,36 @@ func summarizeCuriaArtifacts(workDir string, items []domain.ArtifactEnvelope) *C
 	return out
 }
 
+func summarizeSemanticArtifacts(items []domain.ArtifactEnvelope) *SemanticSummary {
+	var latest *artifacts.SemanticReportPayload
+	var artifactID string
+	for _, item := range items {
+		if item.Kind != domain.ArtifactKindSemanticReport {
+			continue
+		}
+		if payload, ok := artifacts.SemanticReportFromEnvelope(item); ok {
+			value := payload
+			latest = &value
+			artifactID = item.ID
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return &SemanticSummary{
+		Intent:           latest.Intent,
+		Risk:             latest.Risk,
+		NeedsApproval:    latest.NeedsApproval,
+		RecommendCuria:   latest.RecommendCuria,
+		Summary:          latest.Summary,
+		ClassifierAgent:  latest.ClassifierAgentID,
+		SourceSignal:     latest.SourceSignal,
+		SourceReason:     latest.SourceReason,
+		SourceConfidence: latest.SourceConfidence,
+		ArtifactID:       artifactID,
+	}
+}
+
 func summarizeCuriaReviewerWeights(workDir string, items []artifacts.CuriaReviewContribution) []CuriaReviewerSummary {
 	if workDir == "" || len(items) == 0 {
 		return nil
@@ -1175,6 +1205,7 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 				resp.Artifacts = items
 			}
 			resp.Curia = summarizeCuriaArtifacts(controlDir, items)
+			resp.Semantic = summarizeSemanticArtifacts(items)
 		}
 		resp.EventCount = len(resp.Events)
 		if !rawInspect {
@@ -1284,6 +1315,7 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 	if items, err := artifactStore.List(r.Context(), id); err == nil {
 		resp.Artifacts = items
 		resp.Curia = summarizeCuriaArtifacts(s.workDir, items)
+		resp.Semantic = summarizeSemanticArtifacts(items)
 	}
 	if inspectDir != "" {
 		if items, err := workspacepkg.NewManager(inspectDir, nil).List(r.Context()); err == nil {

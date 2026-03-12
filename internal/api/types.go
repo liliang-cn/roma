@@ -128,6 +128,19 @@ type CuriaReviewerSummary struct {
 	ArbitrationCount int    `json:"arbitration_count,omitempty"`
 }
 
+type SemanticSummary struct {
+	Intent           string            `json:"intent,omitempty"`
+	Risk             domain.Confidence `json:"risk,omitempty"`
+	NeedsApproval    bool              `json:"needs_approval,omitempty"`
+	RecommendCuria   bool              `json:"recommend_curia,omitempty"`
+	Summary          string            `json:"summary,omitempty"`
+	ClassifierAgent  string            `json:"classifier_agent_id,omitempty"`
+	SourceSignal     string            `json:"source_signal,omitempty"`
+	SourceReason     string            `json:"source_reason,omitempty"`
+	SourceConfidence domain.Confidence `json:"source_confidence,omitempty"`
+	ArtifactID       string            `json:"artifact_id,omitempty"`
+}
+
 type CuriaSummary struct {
 	Dispute               bool                                `json:"dispute"`
 	DisputeClass          string                              `json:"dispute_class,omitempty"`
@@ -165,6 +178,7 @@ type QueueInspectResponse struct {
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
 	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
 	Curia                  *CuriaSummary             `json:"curia,omitempty"`
+	Semantic               *SemanticSummary          `json:"semantic,omitempty"`
 }
 
 // WorkspaceListResponse lists persisted workspace records.
@@ -185,6 +199,7 @@ type SessionInspectResponse struct {
 	Workspaces             []workspace.Prepared      `json:"workspaces,omitempty"`
 	Plans                  []PlanActionSummary       `json:"plans,omitempty"`
 	Curia                  *CuriaSummary             `json:"curia,omitempty"`
+	Semantic               *SemanticSummary          `json:"semantic,omitempty"`
 }
 
 // ResultShowResponse returns the user-facing final session outcome.

@@ -106,6 +106,28 @@ func TestAgentAnalyzerAnalyzeSignal(t *testing.T) {
 	if got := records[0].Payload["classifier_agent_id"]; got != "starter-agent" {
 		t.Fatalf("classifier_agent_id = %#v, want starter-agent", got)
 	}
+	approvalEvents, err := mem.ListEvents(context.Background(), store.EventFilter{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		Type:      events.TypeSemanticApprovalRecommended,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents(approval recommended) error = %v", err)
+	}
+	if len(approvalEvents) != 1 {
+		t.Fatalf("approval recommended count = %d, want 1", len(approvalEvents))
+	}
+	curiaEvents, err := mem.ListEvents(context.Background(), store.EventFilter{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		Type:      events.TypeCuriaPromotionRecommended,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents(curia recommended) error = %v", err)
+	}
+	if len(curiaEvents) != 1 {
+		t.Fatalf("curia recommended count = %d, want 1", len(curiaEvents))
+	}
 }
 
 func TestAgentAnalyzerFallsBackToSourceAgent(t *testing.T) {
@@ -139,6 +161,17 @@ func TestAgentAnalyzerFallsBackToSourceAgent(t *testing.T) {
 	}
 	if len(artifacts.items) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(artifacts.items))
+	}
+	curiaEvents, err := mem.ListEvents(context.Background(), store.EventFilter{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		Type:      events.TypeCuriaPromotionRecommended,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents(curia recommended) error = %v", err)
+	}
+	if len(curiaEvents) != 0 {
+		t.Fatalf("curia recommended count = %d, want 0", len(curiaEvents))
 	}
 }
 

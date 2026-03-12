@@ -141,6 +141,40 @@ func (a *AgentAnalyzer) appendSemanticReportProduced(ctx context.Context, envelo
 			"summary":             payload.Summary,
 		},
 	})
+	if payload.NeedsApproval {
+		_ = a.events.AppendEvent(ctx, events.Record{
+			ID:         "evt_" + envelope.ID + "_approval_recommended",
+			SessionID:  envelope.SessionID,
+			TaskID:     envelope.TaskID,
+			Type:       events.TypeSemanticApprovalRecommended,
+			ActorType:  events.ActorTypeAgent,
+			OccurredAt: a.now(),
+			ReasonCode: payload.Intent,
+			Payload: map[string]any{
+				"artifact_id":         envelope.ID,
+				"classifier_agent_id": payload.ClassifierAgentID,
+				"risk":                payload.Risk,
+				"summary":             payload.Summary,
+			},
+		})
+	}
+	if payload.RecommendCuria {
+		_ = a.events.AppendEvent(ctx, events.Record{
+			ID:         "evt_" + envelope.ID + "_curia_recommended",
+			SessionID:  envelope.SessionID,
+			TaskID:     envelope.TaskID,
+			Type:       events.TypeCuriaPromotionRecommended,
+			ActorType:  events.ActorTypeAgent,
+			OccurredAt: a.now(),
+			ReasonCode: payload.Intent,
+			Payload: map[string]any{
+				"artifact_id":         envelope.ID,
+				"classifier_agent_id": payload.ClassifierAgentID,
+				"risk":                payload.Risk,
+				"summary":             payload.Summary,
+			},
+		})
+	}
 }
 
 func buildClassifierPrompt(req runtime.SemanticAnalysisRequest) string {

@@ -60,7 +60,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 	if err != nil {
 		return ExecuteResult{}, err
 	}
-	if winner.dispute.Detected && req.ArbitrationMode == "augustus" {
+	if winner.dispute.Detected && shouldRunAugustus(req) {
 		winner, err = e.runAugustus(ctx, req, proposals, winner)
 		if err != nil {
 			return ExecuteResult{}, err
@@ -418,6 +418,20 @@ func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposal
 		winner.reviewQuestions = append([]string{override.rationale}, winner.reviewQuestions...)
 	}
 	return winner, nil
+}
+
+func shouldRunAugustus(req ExecuteRequest) bool {
+	if req.Arbitrator.ID == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(req.ArbitrationMode)) {
+	case "", "augustus", "auto":
+		return true
+	case "human":
+		return false
+	default:
+		return false
+	}
 }
 
 type augustusDecision struct {

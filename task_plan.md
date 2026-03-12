@@ -156,6 +156,8 @@ Status: in_progress
 - [x] Make semantic review system-owned: starter agent reviews multi-agent signals and the current agent reviews single-agent signals
 - [x] Replace the ad hoc runtime output matcher with an explicit transport/pattern/semantic stream-classifier pipeline
 - [x] Surface runtime semantic events through the same structured live tail path used by queue attach/tail
+- [x] Emit explicit semantic recommendation events for approval and Curia escalation, not only raw `semantic_report` artifacts
+- [x] Surface the latest semantic-report summary directly in queue/session inspection payloads
 
 ### Phase 17: Curia Minimal
 Status: in_progress
@@ -171,6 +173,7 @@ Status: in_progress
 - [x] Feed automatic Curia promotion reasons into scheduler eventing instead of relying on static graph-only definitions
 - [x] Carry arbitration confidence, consensus strength, and dissent summaries through debate logs, decision packs, execution plans, and Curia inspect output
 - [x] Allow high-confidence `Augustus` arbitration results to produce non-human-approval execution plans
+- [x] Default Curia disputes to automatic `Augustus` arbitration whenever an arbitrator is present, unless the node explicitly requests human arbitration
 
 ### Phase 18: ExecutionPlan Closure
 Status: in_progress

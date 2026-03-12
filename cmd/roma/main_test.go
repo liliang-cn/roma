@@ -238,6 +238,51 @@ func TestQueueTailEventLinesSemanticReportStructured(t *testing.T) {
 	}
 }
 
+func TestQueueTailEventLinesSemanticRecommendationsStructured(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 11, 15, 0, 0, 0, time.UTC)
+	lines := queueTailEventLines([]events.Record{
+		{
+			ID:         "evt_semantic_curia",
+			TaskID:     "task_1",
+			Type:       events.TypeCuriaPromotionRecommended,
+			OccurredAt: now,
+			ReasonCode: "approval_request",
+			Payload: map[string]any{
+				"classifier_agent_id": "my-codex",
+				"risk":                "high",
+				"summary":             "Escalate this run into Curia.",
+			},
+		},
+		{
+			ID:         "evt_semantic_approval",
+			TaskID:     "task_1",
+			Type:       events.TypeSemanticApprovalRecommended,
+			OccurredAt: now.Add(time.Second),
+			ReasonCode: "destructive_write",
+			Payload: map[string]any{
+				"classifier_agent_id": "my-codex",
+				"risk":                "high",
+				"summary":             "Require human approval before continuing.",
+			},
+		},
+	}, map[string]struct{}{}, false)
+	if len(lines) != 2 {
+		t.Fatalf("semantic recommendation lines = %d, want 2", len(lines))
+	}
+	for _, want := range []string{"[curia-recommend]", "classifier=my-codex", "risk=high", "intent=approval_request"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("curia recommendation line = %q, missing %q", lines[0], want)
+		}
+	}
+	for _, want := range []string{"[approval-recommend]", "classifier=my-codex", "risk=high", "intent=destructive_write"} {
+		if !strings.Contains(lines[1], want) {
+			t.Fatalf("approval recommendation line = %q, missing %q", lines[1], want)
+		}
+	}
+}
+
 func TestParseRunArgsWithAlias(t *testing.T) {
 	t.Parallel()
 

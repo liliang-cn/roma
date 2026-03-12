@@ -314,6 +314,23 @@ func TestServerQueueInspect(t *testing.T) {
 	if err := artifactStore.Save(context.Background(), artifact); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
+	semanticArtifact, err := artifacts.NewService().BuildSemanticReport(context.Background(), artifacts.BuildSemanticReportRequest{
+		SessionID:        "sess_1",
+		TaskID:           "task_1",
+		RunID:            "semantic_1",
+		Agent:            domain.AgentProfile{ID: "my-codex"},
+		SignalKind:       "dangerous_command_detected",
+		SignalReason:     "dangerous_shell_rm_root",
+		SignalConfidence: domain.ConfidenceHigh,
+		SignalText:       "$ rm -rf /",
+		Output:           "intent: destructive_write\nrisk: high\nneeds_approval: true\nrecommend_curia: true\nsummary: Escalate this run and require approval.",
+	})
+	if err != nil {
+		t.Fatalf("BuildSemanticReport() error = %v", err)
+	}
+	if err := artifactStore.Save(context.Background(), semanticArtifact); err != nil {
+		t.Fatalf("Save(semantic) error = %v", err)
+	}
 	eventRecord := events.Record{
 		ID:         "evt_1",
 		SessionID:  "sess_1",
@@ -371,8 +388,8 @@ func TestServerQueueInspect(t *testing.T) {
 	if resp.Session == nil || resp.Session.ID != "sess_1" {
 		t.Fatalf("session = %#v, want sess_1", resp.Session)
 	}
-	if resp.ArtifactCount != 1 {
-		t.Fatalf("artifact count = %d, want 1", resp.ArtifactCount)
+	if resp.ArtifactCount != 2 {
+		t.Fatalf("artifact count = %d, want 2", resp.ArtifactCount)
 	}
 	if resp.EventCount != 2 {
 		t.Fatalf("event count = %d, want 2", resp.EventCount)
@@ -387,8 +404,8 @@ func TestServerQueueInspect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueueInspect(raw) error = %v", err)
 	}
-	if len(rawResp.Artifacts) != 1 {
-		t.Fatalf("raw artifact count = %d, want 1", len(rawResp.Artifacts))
+	if len(rawResp.Artifacts) != 2 {
+		t.Fatalf("raw artifact count = %d, want 2", len(rawResp.Artifacts))
 	}
 	if len(rawResp.Events) != 2 {
 		t.Fatalf("raw event count = %d, want 2", len(rawResp.Events))
@@ -408,6 +425,9 @@ func TestServerQueueInspect(t *testing.T) {
 	}
 	if resp.ApprovalResumeReady || len(resp.PendingApprovalTaskIDs) != 1 {
 		t.Fatalf("approval readiness = %t pending = %#v, want false with one pending task", resp.ApprovalResumeReady, resp.PendingApprovalTaskIDs)
+	}
+	if resp.Semantic == nil || !resp.Semantic.NeedsApproval || !resp.Semantic.RecommendCuria {
+		t.Fatalf("semantic = %#v, want approval + curia recommendation", resp.Semantic)
 	}
 }
 

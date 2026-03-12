@@ -213,6 +213,77 @@ func TestExecutorUsesAugustusArbitration(t *testing.T) {
 	}
 }
 
+func TestExecutorDefaultsToAugustusWhenArbitratorIsPresent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	executor := NewExecutor(root, runtime.NewSupervisor(augustusTestAdapter{}), artifacts.NewService())
+	result, err := executor.Execute(context.Background(), ExecuteRequest{
+		SessionID:  "sess_augustus",
+		TaskID:     "task_augustus",
+		BasePrompt: "Resolve conflicting API designs automatically",
+		WorkingDir: root,
+		NodeTitle:  "curia arbitration demo",
+		Senators:   []domain.AgentProfile{{ID: "codex-cli"}, {ID: "gemini-cli"}, {ID: "copilot-cli"}},
+		Quorum:     2,
+		Arbitrator: domain.AgentProfile{ID: "claude-code"},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var decision artifacts.DecisionPackPayload
+	found := false
+	for _, item := range result.RelatedArtifacts {
+		if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+			decision = payload
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing decision pack")
+	}
+	if !decision.Arbitrated || decision.ArbitratorID != "claude-code" {
+		t.Fatalf("decision pack = %#v, want automatic augustus arbitration", decision)
+	}
+}
+
+func TestExecutorKeepsHumanArbitrationWhenExplicitlyRequested(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	executor := NewExecutor(root, runtime.NewSupervisor(augustusTestAdapter{}), artifacts.NewService())
+	result, err := executor.Execute(context.Background(), ExecuteRequest{
+		SessionID:       "sess_human_curia",
+		TaskID:          "task_human_curia",
+		BasePrompt:      "Resolve conflicting API designs automatically",
+		WorkingDir:      root,
+		NodeTitle:       "curia arbitration demo",
+		Senators:        []domain.AgentProfile{{ID: "codex-cli"}, {ID: "gemini-cli"}, {ID: "copilot-cli"}},
+		Quorum:          2,
+		ArbitrationMode: "human",
+		Arbitrator:      domain.AgentProfile{ID: "claude-code"},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	plan, ok := artifacts.ExecutionPlanFromEnvelope(result.Primary)
+	if !ok {
+		t.Fatal("ExecutionPlanFromEnvelope() = false")
+	}
+	if !plan.HumanApprovalRequired {
+		t.Fatalf("human approval required = false, want true for explicit human arbitration")
+	}
+	for _, item := range result.RelatedArtifacts {
+		if payload, ok := artifacts.DecisionPackFromEnvelope(item); ok {
+			if payload.Arbitrated {
+				t.Fatalf("decision pack = %#v, want non-automatic arbitration", payload)
+			}
+			return
+		}
+	}
+	t.Fatal("missing decision pack")
+}
+
 func TestReputationStorePersistsReviewerWeight(t *testing.T) {
 	t.Parallel()
 

@@ -382,6 +382,11 @@
   - decision packs persist `arbitration_confidence`, `consensus_strength`, and `dissent_summary`
   - execution plans persist `decision_confidence`, `consensus_strength`, and `selected_proposal_ids`
 - High-confidence `Augustus` outcomes can now produce non-human-approval execution plans instead of always forcing manual approval.
+- Curia now defaults to automatic `Augustus` arbitration whenever a disputed node has an arbitrator available; explicit `arbitration_mode=human` remains the opt-out path.
+- Semantic review is now exposed as first-class runtime truth:
+  - classifier output now emits `SemanticApprovalRecommended` and `CuriaPromotionRecommended` events
+  - `queue tail` / `queue attach` render those recommendations as structured lines instead of leaving them buried in artifacts
+  - `queue inspect` / `session inspect` now include a top-level `semantic` summary for the most recent semantic report
 - CLI fallback Curia summaries are now aligned with daemon API summaries:
   - `roma sessions curia`
   - `queue inspect`

@@ -18,6 +18,8 @@ const (
 	TypeParseWarning                Type = "ParseWarning"
 	TypeArtifactStored              Type = "ArtifactStored"
 	TypeSemanticReportProduced      Type = "SemanticReportProduced"
+	TypeSemanticApprovalRecommended Type = "SemanticApprovalRecommended"
+	TypeCuriaPromotionRecommended   Type = "CuriaPromotionRecommended"
 	TypeRelayNodeStarted            Type = "RelayNodeStarted"
 	TypeRelayNodeCompleted          Type = "RelayNodeCompleted"
 	TypePolicyDecisionRecorded      Type = "PolicyDecisionRecorded"

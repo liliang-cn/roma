@@ -277,6 +277,13 @@
 - High-confidence `Augustus` outcomes can now lower the approval burden:
   - Curia execution plans are no longer always forced into human approval
   - automatic arbitration can now produce execution plans with `human_approval_required=false`
+- Curia no longer requires an explicit `arbitration_mode=augustus` switch when an arbitrator is already available:
+  - automatic arbitration is now the default for disputed Curia nodes
+  - `arbitration_mode=human` is the explicit escape hatch
+- Semantic review was too easy to ignore when it only produced artifacts:
+  - the system now emits explicit recommendation events for approval and Curia escalation
+  - queue/session inspection now surfaces the latest semantic summary directly
+  - structured tail/attach output can now show AI judgment without forcing operators to inspect raw artifacts
  - Automatic Curia promotion is viable without a new scheduler mode if promotion happens at assignment construction time:
    - orchestrated multi-agent prompt runs can collapse into one Curia node
    - graph nodes can be upgraded in place before dispatch
