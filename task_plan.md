@@ -181,7 +181,7 @@ Status: in_progress
 - [x] Add a first-class `roma cancel <job_id>` / daemon queue-cancel path so operators do not have to kill child processes manually
 - [x] Refresh running-job timestamps and journald output with daemon heartbeats while a job is still executing
 - [x] Simplify CLI entrypoints so top-level help emphasizes `run`, `submit`, `status`, `cancel`, `help`, with `agent` as management and deep inspection under `debug`
-- [x] Remove built-in coding-agent registry entries so runtime selection is fully driven by user-provided profiles (`name`, `path`, `args`, default, PTY)
+- [x] Remove built-in coding-agent registry entries so runtime selection is fully driven by user-provided profiles (`name`, `path`, `args`, PTY)
 - [x] Add running-job heartbeat updates so `queue.updated_at` and top-level status change while an agent is still executing
 - [x] Persist enough running-node runtime metadata for live inspection:
   - current node id
@@ -218,7 +218,7 @@ Status: in_progress
 - Dynamic follow-up node generation now uses structured report payloads, but follow-up validation is still permissive compared with a future formal command schema.
 - Curia minimal is now real, but still human-first and score-lite; there is no Augustus arbitration or automatic dispute engine yet.
 - Execution-plan apply now works through daemon API too, but it still needs richer eventing and plan-specific approval inbox UX.
-- Running jobs still look stalled from the outside because queue/session inspection mostly updates on node completion; there is no live heartbeat, runtime metadata, or attach/tail path yet.
+- Running jobs are now observable, but the structured live view still needs richer progress semantics beyond heartbeat, pid, and workspace metadata.
 
 ## Next Immediate Steps
 

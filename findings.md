@@ -242,7 +242,7 @@
   - top-level help exposed too many internal inspection nouns at once
   - `agent` belongs to the management layer, not to `debug`
   - `session/task/artifact/event/plan/workspace` are better treated as internal inspection surfaces under a `debug` namespace
-- `roma sessions inspect <session_id>` is not reliable enough on running sessions yet; recent inspection returned a non-JSON response and failed decode on a live session.
+- The live inspection path now resolves control-plane truth from `$HOME/.roma` and workspace/runtime truth from the session `WorkingDir`; running-session inspection no longer depends on the current repository shell.
 - `roma` and `romad` were previously coupled too tightly to the current workspace root:
   - stale local `.roma/run/api.json` could shadow a healthy global daemon
   - `systemd --user` service needed explicit PATH for `codex/gemini/copilot`

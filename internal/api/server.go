@@ -1316,7 +1316,10 @@ func (s *Server) workspaceRootForSession(ctx context.Context, sessionID string) 
 }
 
 func (s *Server) listAllWorkspaces(ctx context.Context) ([]workspacepkg.Prepared, error) {
-	sessionStore := preferredHistoryStore(s.workDir)
+	sessionStore := s.sessionStore
+	if sessionStore == nil {
+		sessionStore = preferredHistoryStore(s.workDir)
+	}
 	sessions, err := sessionStore.List(ctx)
 	if err != nil {
 		return nil, err

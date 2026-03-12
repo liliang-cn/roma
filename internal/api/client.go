@@ -36,6 +36,15 @@ func NewClient(workDir string) *Client {
 	return &Client{metaPaths: candidateMetaPaths(workDir)}
 }
 
+// NewClientForControlDir constructs a client pinned to an explicit daemon control root.
+func NewClientForControlDir(workDir, controlDir string) *Client {
+	controlDir = strings.TrimSpace(controlDir)
+	if controlDir == "" {
+		return NewClient(workDir)
+	}
+	return &Client{metaPaths: []string{romapath.Join(controlDir, "run", "api.json")}}
+}
+
 // Available reports whether the daemon socket exists.
 func (c *Client) Available() bool {
 	_, _, err := c.httpClient()

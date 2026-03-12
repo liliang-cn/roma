@@ -326,11 +326,12 @@
   - `roma queue tail <job_id>` now prints structured event lines by default
   - `roma queue tail --raw <job_id>` preserves raw stdout chunks for debugging
   - live queue/session inspection now reads execution truth from the job/session working directory instead of the daemon home
+  - `roma queue attach <job_id>` now aliases the same live structured stream
 - Added a user-facing result layer:
   - runs and graphs now persist a `final_answer` artifact at session closeout
   - session history now records `final_artifact_id`
   - `roma result show <session_id>` / daemon `/results/{session_id}` now expose the final human-facing outcome instead of forcing users to assemble it from raw artifacts
 - Moved the agent registry to a global per-user config flow:
-  - built-in defaults still load automatically
   - user-defined agents now default to `$HOME/.roma/agents.json`
-  - `roma agents inspect` now reports the active config path alongside the profile payload
+  - the first configured agent is the implicit default when `--agent` is omitted
+  - `roma agent inspect` now reports the active config path alongside the profile payload

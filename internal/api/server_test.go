@@ -61,6 +61,11 @@ else:
 	return exec.CommandContext(ctx, "python3", "-c", script, req.Profile.ID, req.Prompt), nil
 }
 
+func newTestClient(t *testing.T, workDir string) *Client {
+	t.Helper()
+	return NewClientForControlDir(workDir, workDir)
+}
+
 func TestServerSubmitAndQueueList(t *testing.T) {
 	t.Parallel()
 
@@ -79,7 +84,7 @@ func TestServerSubmitAndQueueList(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -124,7 +129,7 @@ func TestServerSubmitInlineGraph(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -171,7 +176,7 @@ func TestServerQueueCancel(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -225,7 +230,7 @@ func TestServerQueueCancelDelegatesToDaemonCanceler(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -258,7 +263,7 @@ func TestServerQueueInspect(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -395,7 +400,10 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 	workDir := t.TempDir()
 	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
-	sessionStore := history.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
 	server := NewServer(workDir, queueStore, sessionStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -408,7 +416,7 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -665,7 +673,7 @@ func TestServerTaskListAndShow(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -713,7 +721,10 @@ func TestServerWorkspaceListShowAndCleanup(t *testing.T) {
 	workDir := t.TempDir()
 	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
-	sessionStore := history.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
 	server := NewServer(workDir, queueStore, sessionStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -726,10 +737,22 @@ func TestServerWorkspaceListShowAndCleanup(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
+	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_1",
+		TaskID:     "task_1",
+		Prompt:     "workspace list",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
 	}
 
 	manager := workspacepkg.NewManager(workDir, nil)
@@ -772,7 +795,10 @@ func TestServerWorkspaceMerge(t *testing.T) {
 	workDir := t.TempDir()
 	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
-	sessionStore := history.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
 	server := NewServer(workDir, queueStore, sessionStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -785,10 +811,22 @@ func TestServerWorkspaceMerge(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
+	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_merge",
+		TaskID:     "task_merge",
+		Prompt:     "workspace merge",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
 	}
 
 	manager := workspacepkg.NewManager(workDir, nil)
@@ -821,7 +859,10 @@ func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
 	workDir := t.TempDir()
 	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
-	sessionStore := history.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
 	server := NewServer(workDir, queueStore, sessionStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -834,7 +875,7 @@ func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -914,7 +955,7 @@ func TestServerRecoveryListIncludesLeaseState(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -985,7 +1026,10 @@ func TestServerStatus(t *testing.T) {
 	workDir := t.TempDir()
 	initAPIGitRepo(t, workDir)
 	queueStore := queue.NewStore(workDir)
-	sessionStore := history.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
 	server := NewServer(workDir, queueStore, sessionStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -998,7 +1042,7 @@ func TestServerStatus(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -1037,6 +1081,18 @@ func TestServerStatus(t *testing.T) {
 	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
 		t.Fatalf("Release() error = %v", err)
 	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_status",
+		TaskID:     "task_status",
+		Prompt:     "status workspace",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "succeeded",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
 
 	status, err := client.Status(context.Background())
 	if err != nil {
@@ -1045,8 +1101,8 @@ func TestServerStatus(t *testing.T) {
 	if status.QueueItems != 1 {
 		t.Fatalf("queue items = %d, want 1", status.QueueItems)
 	}
-	if status.Sessions != 1 {
-		t.Fatalf("sessions = %d, want 1", status.Sessions)
+	if status.Sessions != 2 {
+		t.Fatalf("sessions = %d, want 2", status.Sessions)
 	}
 	if status.ReleasedLeases != 1 {
 		t.Fatalf("released leases = %d, want 1", status.ReleasedLeases)
@@ -1077,7 +1133,7 @@ func TestServerQueueApproveDelegatesToPendingTasks(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -1308,13 +1364,25 @@ func TestServerPlanApplyDryRunAndApprovalGate(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	manager := workspacepkg.NewManager(workDir, storepkg.NewMemoryStore())
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_plan",
+		TaskID:     "task_plan",
+		Prompt:     "Apply README change",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
 	prepared, err := manager.Prepare(context.Background(), "sess_plan", "task_plan", workDir, domain.TaskStrategyDirect)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -1446,7 +1514,7 @@ func TestServerPlanInbox(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	client := NewClient(workDir)
+	client := newTestClient(t, workDir)
 	deadline := time.Now().Add(2 * time.Second)
 	for !client.Available() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)

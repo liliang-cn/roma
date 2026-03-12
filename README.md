@@ -10,7 +10,6 @@ ROMA treats multi-agent coding like a Roman state, not a chat room.
 
 - `romad` is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
 - `roma` is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
-- `roma-tui` is an interactive TUI for managing ROMA. It runs `romad` in the background and provides a command interface.
 - Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
 - Each task runs in an isolated workspace when possible. Agents work there first, then ROMA decides whether a plan can be merged back.
 
@@ -48,7 +47,6 @@ This produces:
 ```text
 bin/roma
 bin/romad
-bin/roma-tui
 ```
 
 Install them to `~/.local/bin`:
