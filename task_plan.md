@@ -193,8 +193,10 @@ Status: in_progress
 - [x] Improve daemon logs so `journalctl --user -u romad -f` shows periodic heartbeats instead of only start/end markers
 - [ ] Fix running-session inspection parity so daemon/API and CLI fallback return the same structure while a job is in progress
 - [ ] Persist runtime pid and expose it through live inspection
-- [ ] Emit lightweight progress events while nodes are running instead of only at node completion
+- [x] Emit lightweight progress events while nodes are running instead of only at node completion
 - [ ] Add an attach mode beyond polling tail so users can watch one running session without re-printing full inspect payloads
+- [x] Make `queue tail` default to structured runtime events, with `--raw` preserving raw stdout chunks
+- [x] Add a first-class user-facing session outcome artifact and expose it via `roma result show <session_id>`
 
 ## Risks
 
@@ -215,5 +217,6 @@ Status: in_progress
 1. Finish Phase 19 by persisting runtime pid and adding an attach mode richer than polling `queue tail`.
 2. Tighten running-session parity so daemon/API and CLI fallback expose exactly the same live structure while a job is active.
 3. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
-4. Add stronger daemon-side progress events while nodes are still running, not only at node completion.
+4. Extend structured runtime logging beyond `queue tail`, especially for daemon journald summaries and session-level watch flows.
 5. Use the improved live surface to continue CLI product simplification around `run`, `submit`, and `cancel`.
+6. Keep improving the user-facing outcome layer so `result show` can remain the main exit, not just a thin artifact wrapper.

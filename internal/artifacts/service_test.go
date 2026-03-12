@@ -237,3 +237,109 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 		t.Fatalf("reviewer breakdown = %#v, want reviewer contribution", decisionPayload.ReviewerBreakdown)
 	}
 }
+
+func TestBuildFinalAnswer(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	plan, err := svc.BuildExecutionPlan(context.Background(), BuildExecutionPlanRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		RunID:     "run_plan",
+		Goal:      "Implement the API surface",
+		Proposal: ProposalPayload{
+			ProposalID:     "prop_1",
+			Summary:        "Implement the API surface",
+			EstimatedSteps: []string{"Update handlers", "Add tests"},
+			AffectedFiles:  []string{"internal/api/server.go"},
+		},
+		HumanApprovalRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildExecutionPlan() error = %v", err)
+	}
+
+	envelope, err := svc.BuildFinalAnswer(context.Background(), BuildFinalAnswerRequest{
+		SessionID:    "sess_1",
+		TaskID:       "task_1",
+		RunID:        "run_final",
+		Status:       "awaiting_approval",
+		Prompt:       "Implement the API surface",
+		StarterAgent: "my-codex",
+		Artifacts:    []domain.ArtifactEnvelope{plan},
+	})
+	if err != nil {
+		t.Fatalf("BuildFinalAnswer() error = %v", err)
+	}
+	if envelope.Kind != domain.ArtifactKindFinalAnswer {
+		t.Fatalf("kind = %s, want %s", envelope.Kind, domain.ArtifactKindFinalAnswer)
+	}
+	payload, ok := FinalAnswerFromEnvelope(envelope)
+	if !ok {
+		t.Fatal("FinalAnswerFromEnvelope() = false")
+	}
+	if payload.OutcomeType != "pending_approval" {
+		t.Fatalf("outcome_type = %q, want pending_approval", payload.OutcomeType)
+	}
+	if !payload.ApprovalRequired {
+		t.Fatal("approval_required = false, want true")
+	}
+	if len(payload.ChangedFiles) != 1 || payload.ChangedFiles[0] != "internal/api/server.go" {
+		t.Fatalf("changed_files = %#v, want internal/api/server.go", payload.ChangedFiles)
+	}
+	if len(payload.ArtifactRefs) != 1 || payload.ArtifactRefs[0] != plan.ID {
+		t.Fatalf("artifact_refs = %#v, want [%s]", payload.ArtifactRefs, plan.ID)
+	}
+	if got := SummaryFromEnvelope(envelope); got == "" {
+		t.Fatal("SummaryFromEnvelope(final answer) returned empty summary")
+	}
+}
+
+func TestBuildFinalAnswerPrefersMeaningfulReportLine(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	report, err := svc.BuildReport(context.Background(), BuildReportRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		RunID:     "run_1",
+		Agent: domain.AgentProfile{
+			ID:          "my-codex",
+			DisplayName: "My Codex",
+		},
+		Result: "success",
+		Output: strings.Join([]string{
+			"OpenAI Codex v0.114.0 (research preview)",
+			"--------",
+			"workdir: /tmp/work",
+			"model: gpt-5.4",
+			"codex",
+			"ROMA is a daemon-first local orchestrator for multi-agent AI coding sessions.",
+			"tokens used",
+			"7,671",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatalf("BuildReport() error = %v", err)
+	}
+	finalAnswer, err := svc.BuildFinalAnswer(context.Background(), BuildFinalAnswerRequest{
+		SessionID:    "sess_1",
+		TaskID:       "task_1",
+		RunID:        "run_final",
+		Status:       "succeeded",
+		Prompt:       "Describe the repository.",
+		StarterAgent: "my-codex",
+		Artifacts:    []domain.ArtifactEnvelope{report},
+	})
+	if err != nil {
+		t.Fatalf("BuildFinalAnswer() error = %v", err)
+	}
+	payload, ok := FinalAnswerFromEnvelope(finalAnswer)
+	if !ok {
+		t.Fatal("FinalAnswerFromEnvelope() = false")
+	}
+	want := "ROMA is a daemon-first local orchestrator for multi-agent AI coding sessions."
+	if payload.Summary != want {
+		t.Fatalf("summary = %q, want %q", payload.Summary, want)
+	}
+}

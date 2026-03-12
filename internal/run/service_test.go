@@ -131,6 +131,9 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 	if record.Status != "awaiting_approval" {
 		t.Fatalf("record status = %s, want awaiting_approval", record.Status)
 	}
+	if record.FinalArtifactID == "" {
+		t.Fatal("final artifact id = empty, want final answer artifact")
+	}
 	taskStore, err := taskstore.NewSQLiteStore(workDir)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
@@ -152,5 +155,16 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 	}
 	if len(lease.PendingApprovalTaskIDs) != 1 || lease.PendingApprovalTaskIDs[0] != tasks[0].ID {
 		t.Fatalf("pending approvals = %#v, want [%s]", lease.PendingApprovalTaskIDs, tasks[0].ID)
+	}
+	artifactStore, err := artifacts.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	envelope, err := artifactStore.Get(context.Background(), record.FinalArtifactID)
+	if err != nil {
+		t.Fatalf("Get(final artifact) error = %v", err)
+	}
+	if envelope.Kind != domain.ArtifactKindFinalAnswer {
+		t.Fatalf("final artifact kind = %s, want %s", envelope.Kind, domain.ArtifactKindFinalAnswer)
 	}
 }

@@ -182,6 +182,12 @@ type SessionInspectResponse struct {
 	Curia                  *CuriaSummary             `json:"curia,omitempty"`
 }
 
+// ResultShowResponse returns the user-facing final session outcome.
+type ResultShowResponse struct {
+	Session  history.SessionRecord   `json:"session"`
+	Artifact domain.ArtifactEnvelope `json:"artifact"`
+}
+
 type PlanApplyRequest struct {
 	SessionID           string `json:"session_id,omitempty"`
 	TaskID              string `json:"task_id,omitempty"`

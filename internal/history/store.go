@@ -15,16 +15,17 @@ import (
 
 // SessionRecord is the persisted metadata for one local ROMA run.
 type SessionRecord struct {
-	ID          string    `json:"id"`
-	TaskID      string    `json:"task_id"`
-	Prompt      string    `json:"prompt"`
-	Starter     string    `json:"starter"`
-	Delegates   []string  `json:"delegates,omitempty"`
-	WorkingDir  string    `json:"working_dir"`
-	Status      string    `json:"status"`
-	ArtifactIDs []string  `json:"artifact_ids,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	TaskID          string    `json:"task_id"`
+	Prompt          string    `json:"prompt"`
+	Starter         string    `json:"starter"`
+	Delegates       []string  `json:"delegates,omitempty"`
+	WorkingDir      string    `json:"working_dir"`
+	Status          string    `json:"status"`
+	ArtifactIDs     []string  `json:"artifact_ids,omitempty"`
+	FinalArtifactID string    `json:"final_artifact_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Store persists session records under .roma/sessions.

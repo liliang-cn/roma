@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS session_history (
   working_dir TEXT NOT NULL,
   status TEXT NOT NULL,
   artifact_ids_json TEXT,
+  final_artifact_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -144,6 +145,12 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_leases_status_updated ON scheduler_leas
 		if !alreadyExists(err) {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate queue_requests.max_rounds: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE session_history ADD COLUMN final_artifact_id TEXT`); err != nil {
+		if !alreadyExists(err) {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate session_history.final_artifact_id: %w", err)
 		}
 	}
 	if _, err := db.Exec(`ALTER TABLE task_records ADD COLUMN approval_granted INTEGER NOT NULL DEFAULT 0`); err != nil {

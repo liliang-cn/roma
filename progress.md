@@ -280,6 +280,7 @@
 - Surface more Curia truth through CLI/API inspection instead of only raw artifacts.
 - Tighten merge conflict UX further with explicit preview endpoints and clearer remediation hints.
 - Extend the concurrent DAG soak baseline toward repeated/race-focused runs and lease/workspace metrics.
+- Keep improving runtime observability, especially structured live progress for long-running daemon jobs.
 
 ## 2026-03-11 Runtime Visibility Diagnosis
 
@@ -307,6 +308,14 @@
 - Added first heartbeat-level visibility:
   - running jobs now refresh queue timestamps while execution is still in progress
   - `romad` now emits `romad heartbeat job=... session=... task=... status=running` to journald
+- Added structured watch output for live jobs:
+  - `roma queue tail <job_id>` now prints structured event lines by default
+  - `roma queue tail --raw <job_id>` preserves raw stdout chunks for debugging
+  - live queue/session inspection now reads execution truth from the job/session working directory instead of the daemon home
+- Added a user-facing result layer:
+  - runs and graphs now persist a `final_answer` artifact at session closeout
+  - session history now records `final_artifact_id`
+  - `roma result show <session_id>` / daemon `/results/{session_id}` now expose the final human-facing outcome instead of forcing users to assemble it from raw artifacts
 - Moved the agent registry to a global per-user config flow:
   - built-in defaults still load automatically
   - user-defined agents now default to `$HOME/.roma/agents.json`

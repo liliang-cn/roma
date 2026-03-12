@@ -440,6 +440,32 @@ func (c *Client) SessionInspect(ctx context.Context, id string) (SessionInspectR
 	return out, nil
 }
 
+// ResultShow returns the user-facing final session outcome.
+func (c *Client) ResultShow(ctx context.Context, sessionID string) (ResultShowResponse, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return ResultShowResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/results/"+sessionID, nil)
+	if err != nil {
+		return ResultShowResponse{}, fmt.Errorf("create result show request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return ResultShowResponse{}, fmt.Errorf("result show request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ResultShowResponse{}, fmt.Errorf("result show request returned %s", resp.Status)
+	}
+
+	var out ResultShowResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return ResultShowResponse{}, fmt.Errorf("decode result show response: %w", err)
+	}
+	return out, nil
+}
+
 // TaskList returns persisted task records from the daemon.
 func (c *Client) TaskList(ctx context.Context, sessionID string) ([]domain.TaskRecord, error) {
 	httpClient, baseURL, err := c.httpClient()

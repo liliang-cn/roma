@@ -229,6 +229,15 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 		if s.history != nil {
 			_ = s.history.Save(ctx, record)
 		}
+		if finalID, finalErr := s.persistFinalAnswer(ctx, record, starter.ID, req.Prompt, collectRelayArtifacts(execResult), nil); finalErr == nil {
+			record.FinalArtifactID = finalID
+			if finalID != "" {
+				record.ArtifactIDs = append(record.ArtifactIDs, finalID)
+				if s.history != nil {
+					_ = s.history.Save(ctx, record)
+				}
+			}
+		}
 		s.appendSessionStateEvent(ctx, record)
 		writeRelayResult(w, assignments, execResult)
 		return Result{
@@ -258,6 +267,12 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 	record.Status = "succeeded"
 	record.UpdatedAt = time.Now().UTC()
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
+	if finalID, err := s.persistFinalAnswer(ctx, record, starter.ID, req.Prompt, collectRelayArtifacts(execResult), nil); err != nil {
+		return Result{}, err
+	} else if finalID != "" {
+		record.FinalArtifactID = finalID
+		record.ArtifactIDs = append(record.ArtifactIDs, finalID)
+	}
 	if s.history != nil {
 		if err := s.history.Save(ctx, record); err != nil {
 			return Result{}, fmt.Errorf("save completed session: %w", err)
@@ -366,6 +381,12 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 	} else {
 		record.Status = "succeeded"
 	}
+	if finalID, finalErr := s.persistFinalAnswer(ctx, record, profile.ID, req.Prompt, collectRelayArtifacts(execResult), err); finalErr != nil {
+		return Result{}, finalErr
+	} else if finalID != "" {
+		record.FinalArtifactID = finalID
+		record.ArtifactIDs = append(record.ArtifactIDs, finalID)
+	}
 	if s.history != nil {
 		if saveErr := s.history.Save(ctx, record); saveErr != nil {
 			return Result{}, fmt.Errorf("save completed session: %w", saveErr)
@@ -410,6 +431,49 @@ func collectRelayArtifactIDs(result scheduler.DispatchResult) []string {
 		}
 	}
 	return out
+}
+
+func collectRelayArtifacts(result scheduler.DispatchResult) []domain.ArtifactEnvelope {
+	out := make([]domain.ArtifactEnvelope, 0, len(result.Order))
+	for _, nodeID := range result.Order {
+		if artifact := result.Artifacts[nodeID]; artifact.ID != "" {
+			out = append(out, artifact)
+		}
+		for _, related := range result.RelatedArtifacts[nodeID] {
+			if related.ID != "" {
+				out = append(out, related)
+			}
+		}
+	}
+	return out
+}
+
+func (s *Service) persistFinalAnswer(ctx context.Context, record history.SessionRecord, starterID, prompt string, related []domain.ArtifactEnvelope, runErr error) (string, error) {
+	if s.store == nil {
+		return "", nil
+	}
+	runID := record.TaskID
+	if runID == "" {
+		runID = record.ID
+	}
+	envelope, err := artifacts.NewService().BuildFinalAnswer(ctx, artifacts.BuildFinalAnswerRequest{
+		SessionID:    record.ID,
+		TaskID:       record.TaskID,
+		RunID:        runID,
+		Status:       record.Status,
+		Prompt:       prompt,
+		StarterAgent: starterID,
+		Artifacts:    related,
+		Err:          runErr,
+	})
+	if err != nil {
+		return "", fmt.Errorf("build final answer: %w", err)
+	}
+	if err := s.store.Save(ctx, envelope); err != nil {
+		return "", fmt.Errorf("save final answer %s: %w", envelope.ID, err)
+	}
+	s.appendArtifactStoredEvent(ctx, envelope)
+	return envelope.ID, nil
 }
 
 func findAssignment(assignments []scheduler.NodeAssignment, nodeID string) scheduler.NodeAssignment {

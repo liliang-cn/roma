@@ -219,6 +219,12 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 	} else {
 		record.Status = "succeeded"
 	}
+	if finalID, finalErr := s.persistFinalAnswer(ctx, record, assignments[0].Profile.ID, req.Prompt, collectRelayArtifacts(execResult), err); finalErr != nil {
+		return Result{}, finalErr
+	} else if finalID != "" {
+		record.FinalArtifactID = finalID
+		record.ArtifactIDs = append(record.ArtifactIDs, finalID)
+	}
 	if s.history != nil {
 		if saveErr := s.history.Save(ctx, record); saveErr != nil {
 			return Result{}, fmt.Errorf("save completed session: %w", saveErr)

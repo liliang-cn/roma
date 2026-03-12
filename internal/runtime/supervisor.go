@@ -1,15 +1,18 @@
 package runtime
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -79,6 +82,7 @@ type Supervisor struct {
 	now        func() time.Time
 	mu         sync.RWMutex
 	executions map[string]Execution
+	eventSeq   uint64
 }
 
 // NewSupervisor constructs a runtime supervisor.
@@ -185,22 +189,45 @@ func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (R
 		command.Dir = req.WorkingDir
 	}
 
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		s.markFinished(execID, req.Profile, ExecutionStateFailed)
+		return Result{}, fmt.Errorf("stdout pipe for agent %s: %w", req.Profile.ID, err)
+	}
+	stderrPipe, err := command.StderrPipe()
+	if err != nil {
+		s.markFinished(execID, req.Profile, ExecutionStateFailed)
+		return Result{}, fmt.Errorf("stderr pipe for agent %s: %w", req.Profile.ID, err)
+	}
+	if err := command.Start(); err != nil {
+		s.markFinished(execID, req.Profile, ExecutionStateFailed)
+		return Result{}, fmt.Errorf("run agent %s: %w", req.Profile.ID, err)
+	}
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
+	go func() {
+		defer copyWG.Done()
+		s.streamOutput(req, execID, stdoutPipe, &stdout, "stdout")
+	}()
+	go func() {
+		defer copyWG.Done()
+		s.streamOutput(req, execID, stderrPipe, &stderr, "stderr")
+	}()
 
-	if err := command.Run(); err != nil {
+	waitErr := command.Wait()
+	copyWG.Wait()
+	if waitErr != nil {
 		s.markFinished(execID, req.Profile, ExecutionStateFailed)
-		s.appendOutputEvent(execID, req, stdout.String())
 		return Result{
 			ExecutionID: execID,
 			Profile:     req.Profile,
 			Stdout:      stdout.String(),
 			Stderr:      stderr.String(),
-		}, fmt.Errorf("run agent %s: %w", req.Profile.ID, err)
+		}, fmt.Errorf("run agent %s: %w", req.Profile.ID, waitErr)
 	}
-	s.appendOutputEvent(execID, req, stdout.String())
 	s.markFinished(execID, req.Profile, ExecutionStateSucceeded)
 
 	return Result{
@@ -362,8 +389,9 @@ func (s *Supervisor) appendOutputEvent(execID string, req StartRequest, stdout s
 	if s.events == nil || stdout == "" {
 		return
 	}
+	id := fmt.Sprintf("evt_%s_stdout_%d", execID, atomic.AddUint64(&s.eventSeq, 1))
 	_ = s.events.AppendEvent(context.Background(), events.Record{
-		ID:         "evt_" + execID + "_stdout",
+		ID:         id,
 		SessionID:  req.SessionID,
 		TaskID:     req.TaskID,
 		Type:       events.TypeRuntimeStdoutCaptured,
@@ -375,6 +403,7 @@ func (s *Supervisor) appendOutputEvent(execID string, req StartRequest, stdout s
 			"working_dir": req.WorkingDir,
 		},
 	})
+	logRuntimeChunk(req, stdout)
 }
 
 func (s *Supervisor) shouldUsePTY(adapter Adapter, profile domain.AgentProfile) bool {
@@ -425,12 +454,16 @@ func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *ex
 	}
 	defer session.Close()
 
-	output, readErr := io.ReadAll(session)
+	var output bytes.Buffer
+	readErrCh := make(chan error, 1)
+	go func() {
+		readErrCh <- s.streamOutput(req, execID, session, &output, "pty")
+	}()
 	waitErr := session.Wait()
+	readErr := <-readErrCh
 	s.markFinished(execID, req.Profile, mapExecutionState(waitErr))
 
-	combined := string(output)
-	s.appendOutputEvent(execID, req, combined)
+	combined := output.String()
 	result := Result{
 		ExecutionID: execID,
 		Profile:     req.Profile,
@@ -443,6 +476,39 @@ func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *ex
 		return result, fmt.Errorf("run agent %s: %w", req.Profile.ID, waitErr)
 	}
 	return result, nil
+}
+
+func (s *Supervisor) streamOutput(req StartRequest, execID string, reader io.Reader, dst *bytes.Buffer, stream string) error {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		chunk := line + "\n"
+		dst.WriteString(chunk)
+		if stream != "stderr" {
+			s.appendOutputEvent(execID, req, chunk)
+		} else {
+			logRuntimeChunk(req, chunk)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func logRuntimeChunk(req StartRequest, chunk string) {
+	chunk = strings.TrimSpace(chunk)
+	if chunk == "" {
+		return
+	}
+	if len(chunk) > 240 {
+		chunk = chunk[:237] + "..."
+	}
+	log.Printf("romad output session=%s task=%s agent=%s: %s", req.SessionID, req.TaskID, req.Profile.ID, chunk)
 }
 
 func mapExecutionState(err error) ExecutionState {

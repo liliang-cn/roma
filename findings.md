@@ -203,6 +203,14 @@
   - `roma queue tail <job_id>` gives a minimal watch mode for active jobs
   - `roma queue list` now appends the current running task and agent for active jobs when that live state can be derived
   - the biggest remaining observability gaps are runtime pid, richer progress events while a node is still running, and a true attach mode beyond polling
+- Runtime visibility needed another pass because the first version still felt like raw noise:
+  - default `queue tail` output is now structured per event with timestamps, task ids, agent ids, and event classes
+  - `roma queue tail --raw <job_id>` preserves the original stdout chunks when the operator wants the unstructured agent stream
+  - heartbeat lines now show up as structured records in the watch loop instead of forcing users to infer liveness from unchanged JSON
+- There was still no stable user-facing endpoint for "what is the answer?":
+  - ROMA had strong internal truth (`session`, `task`, `artifact`, `plan`) but no single human-facing outcome object
+  - `report` was too executor-centric and overloaded to serve as the final answer for code changes, Curia, and pure architecture/advice runs
+  - the system now needs a first-class final outcome artifact, not more ad hoc CLI summaries
 - There is now a first-class queue cancellation path:
   - `roma cancel <job_id>`
   - `roma queue cancel <job_id>`

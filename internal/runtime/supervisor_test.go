@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/store"
 )
 
 func TestBuildCommandForProfileArgs(t *testing.T) {
@@ -101,5 +103,43 @@ func TestRunCapturedContinuous(t *testing.T) {
 	}
 	if !strings.Contains(result.Stdout, "ROMA_DONE:") {
 		t.Fatalf("continuous output missing completion marker: %s", result.Stdout)
+	}
+}
+
+func TestRunCapturedStreamsStdoutEvents(t *testing.T) {
+	t.Parallel()
+
+	mem := store.NewMemoryStore()
+	supervisor := NewSupervisorWithEvents(mem, continuousFakeAdapter{})
+	result, err := supervisor.RunCaptured(context.Background(), StartRequest{
+		ExecutionID: "exec_stream",
+		SessionID:   "sess_stream",
+		TaskID:      "task_stream",
+		Profile: domain.AgentProfile{
+			ID:      "fake",
+			Command: "python3",
+		},
+		Prompt:     "build feature",
+		WorkingDir: ".",
+	})
+	if err != nil {
+		t.Fatalf("RunCaptured() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "still working") {
+		t.Fatalf("stdout = %q, want streamed content", result.Stdout)
+	}
+	records, err := mem.ListEvents(context.Background(), store.EventFilter{
+		SessionID: "sess_stream",
+		TaskID:    "task_stream",
+		Type:      events.TypeRuntimeStdoutCaptured,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("runtime stdout events = 0, want streamed events")
+	}
+	if got := records[0].Payload["stdout"]; got == "" {
+		t.Fatalf("stdout payload = %#v, want chunk", records[0].Payload)
 	}
 }

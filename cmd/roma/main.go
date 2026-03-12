@@ -86,6 +86,8 @@ func run(ctx context.Context, args []string) error {
 		return runPlans(ctx, args[1:])
 	case "queue":
 		return runQueue(ctx, args[1:])
+	case "result", "results":
+		return runResults(ctx, args[1:])
 	case "replay":
 		return runReplay(ctx, args[1:])
 	case "recover":
@@ -452,6 +454,79 @@ func runCuria(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runResults(ctx context.Context, args []string) error {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		printTopicUsage("result")
+		return nil
+	}
+	if len(args) < 2 || args[0] != "show" {
+		return fmt.Errorf("usage: roma result show <session_id>")
+	}
+	sessionID := args[1]
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	_ = syncWorkspace(ctx, wd)
+	client := api.NewClient(wd)
+	if client.Available() {
+		resp, err := client.ResultShow(ctx, sessionID)
+		if err == nil {
+			return printResultShow(resp)
+		}
+	}
+	sessionStore := preferredHistoryStore(wd)
+	session, err := sessionStore.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	inspectDir := wd
+	if strings.TrimSpace(session.WorkingDir) != "" {
+		inspectDir = session.WorkingDir
+	}
+	artifact, err := resolveFinalAnswerEnvelopeLocal(ctx, preferredArtifactStore(inspectDir), session)
+	if err != nil {
+		return err
+	}
+	return printResultShow(api.ResultShowResponse{Session: session, Artifact: artifact})
+}
+
+func printResultShow(resp api.ResultShowResponse) error {
+	payload, ok := artifacts.FinalAnswerFromEnvelope(resp.Artifact)
+	if !ok {
+		raw, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal result: %w", err)
+		}
+		fmt.Println(string(raw))
+		return nil
+	}
+	fmt.Printf("session=%s\n", resp.Session.ID)
+	fmt.Printf("status=%s\n", resp.Session.Status)
+	fmt.Printf("outcome=%s\n", payload.OutcomeType)
+	fmt.Printf("summary=%s\n", payload.Summary)
+	if payload.Answer != "" {
+		fmt.Printf("\n%s\n", payload.Answer)
+	}
+	if len(payload.ChangedFiles) > 0 {
+		fmt.Println("\nchanged_files:")
+		for _, item := range payload.ChangedFiles {
+			fmt.Printf("- %s\n", item)
+		}
+	}
+	if payload.ApprovalRequired {
+		fmt.Println("\napproval_required=true")
+	}
+	if len(payload.NextActions) > 0 {
+		fmt.Println("\nnext_actions:")
+		for _, item := range payload.NextActions {
+			fmt.Printf("- %s\n", item)
+		}
+	}
+	fmt.Printf("\nartifact=%s\n", resp.Artifact.ID)
+	return nil
+}
+
 func runSubmit(ctx context.Context, args []string) error {
 	if len(args) > 0 && isHelpArg(args[0]) {
 		printTopicUsage("submit")
@@ -537,7 +612,7 @@ func runQueue(ctx context.Context, args []string) error {
 	_ = syncWorkspace(ctx, wd)
 	store := preferredQueueStore(wd)
 	client := api.NewClient(wd)
-	statusFilter, modeFilter, subcommand, subArg, err := parseQueueArgs(args)
+	statusFilter, modeFilter, subcommand, subArg, rawTail, err := parseQueueArgs(args)
 	if err != nil {
 		return err
 	}
@@ -593,7 +668,7 @@ func runQueue(ctx context.Context, args []string) error {
 	if client.Available() && subcommand == "tail" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
 			return client.QueueInspect(ctx, id)
-		}, subArg)
+		}, subArg, rawTail)
 	}
 
 	if client.Available() && subcommand == "cancel" {
@@ -660,7 +735,7 @@ func runQueue(ctx context.Context, args []string) error {
 	if subcommand == "tail" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
 			return inspectQueueLocal(ctx, wd, id)
-		}, subArg)
+		}, subArg, rawTail)
 	}
 
 	if subcommand == "cancel" {
@@ -771,15 +846,22 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 	return nil
 }
 
-func runQueueTail(ctx context.Context, inspect func(context.Context, string) (api.QueueInspectResponse, error), jobID string) error {
+func runQueueTail(ctx context.Context, inspect func(context.Context, string) (api.QueueInspectResponse, error), jobID string, raw bool) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	var lastLine string
+	var lastHeartbeat string
+	seenEvents := map[string]struct{}{}
 	for {
 		resp, err := inspect(ctx, jobID)
 		if err != nil {
 			return err
+		}
+		printQueueTailEvents(resp.Events, seenEvents, raw)
+		if line := formatQueueHeartbeatLine(resp); line != "" && line != lastHeartbeat {
+			fmt.Println(line)
+			lastHeartbeat = line
 		}
 		line := formatQueueTailLine(resp)
 		if line != lastLine {
@@ -795,6 +877,56 @@ func runQueueTail(ctx context.Context, inspect func(context.Context, string) (ap
 		case <-ticker.C:
 		}
 	}
+}
+
+func printQueueTailEvents(records []events.Record, seen map[string]struct{}, raw bool) {
+	for _, line := range queueTailEventLines(records, seen, raw) {
+		fmt.Println(line)
+	}
+}
+
+func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw bool) []string {
+	lines := make([]string, 0)
+	for _, record := range records {
+		if _, ok := seen[record.ID]; ok {
+			continue
+		}
+		seen[record.ID] = struct{}{}
+		prefix := fmt.Sprintf("[%s] time=%s task=%s", queueTailEventLabel(record.Type), record.OccurredAt.Format(time.RFC3339), record.TaskID)
+		switch record.Type {
+		case events.TypeRelayNodeStarted:
+			lines = append(lines, fmt.Sprintf("%s agent=%s", prefix, payloadString(record.Payload, "agent")))
+		case events.TypeRelayNodeCompleted:
+			lines = append(lines, fmt.Sprintf("%s reason=%s artifact=%s", prefix, record.ReasonCode, payloadString(record.Payload, "artifact_id")))
+		case events.TypeWorkspacePrepared:
+			lines = append(lines, fmt.Sprintf("%s dir=%s provider=%s", prefix, payloadString(record.Payload, "effective_dir"), payloadString(record.Payload, "provider")))
+		case events.TypeRuntimeStarted:
+			lines = append(lines, fmt.Sprintf("%s exec=%s agent=%s", prefix, payloadString(record.Payload, "execution_id"), payloadString(record.Payload, "agent")))
+		case events.TypeRuntimeStdoutCaptured:
+			chunk := strings.TrimSpace(payloadString(record.Payload, "stdout"))
+			if chunk == "" {
+				continue
+			}
+			for _, line := range strings.Split(chunk, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if raw {
+					lines = append(lines, line)
+					continue
+				}
+				lines = append(lines, fmt.Sprintf("%s agent=%s text=%s", prefix, payloadString(record.Payload, "agent"), strconv.Quote(line)))
+			}
+		case events.TypeRuntimeExited:
+			lines = append(lines, fmt.Sprintf("%s exec=%s state=%s", prefix, payloadString(record.Payload, "execution_id"), record.ReasonCode))
+		case events.TypePlanApplyRejected, events.TypePlanApplied, events.TypePlanRolledBack:
+			lines = append(lines, fmt.Sprintf("%s reason=%s artifact=%s", prefix, record.ReasonCode, payloadString(record.Payload, "artifact_id")))
+		case events.TypeTaskStateChanged:
+			lines = append(lines, fmt.Sprintf("%s state=%s", prefix, record.ReasonCode))
+		}
+	}
+	return lines
 }
 
 func formatQueueTailLine(resp api.QueueInspectResponse) string {
@@ -821,6 +953,25 @@ func formatQueueTailLine(resp api.QueueInspectResponse) string {
 		if resp.Live.LastOutputPreview != "" {
 			parts = append(parts, "output="+strconv.Quote(resp.Live.LastOutputPreview))
 		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatQueueHeartbeatLine(resp api.QueueInspectResponse) string {
+	if resp.Live == nil || resp.Live.LastHeartbeatAt == nil {
+		return ""
+	}
+	parts := []string{
+		"[heartbeat]",
+		"at=" + resp.Live.LastHeartbeatAt.Format(time.RFC3339),
+		"job=" + resp.Job.ID,
+		"status=" + string(resp.Job.Status),
+	}
+	if resp.Live.CurrentTaskID != "" {
+		parts = append(parts, "task="+resp.Live.CurrentTaskID)
+	}
+	if resp.Live.CurrentAgentID != "" {
+		parts = append(parts, "agent="+resp.Live.CurrentAgentID)
 	}
 	return strings.Join(parts, " ")
 }
@@ -1154,6 +1305,33 @@ func runArtifacts(ctx context.Context, args []string) error {
 	}
 
 	return fmt.Errorf("unknown artifacts subcommand %q", args[0])
+}
+
+func resolveFinalAnswerEnvelopeLocal(ctx context.Context, artifactStore artifacts.Backend, session history.SessionRecord) (domain.ArtifactEnvelope, error) {
+	if session.FinalArtifactID != "" {
+		return artifactStore.Get(ctx, session.FinalArtifactID)
+	}
+	items, err := artifactStore.List(ctx, session.ID)
+	if err != nil {
+		return domain.ArtifactEnvelope{}, err
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Kind == domain.ArtifactKindFinalAnswer {
+			return items[i], nil
+		}
+	}
+	if len(items) == 0 {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("session %s has no final answer", session.ID)
+	}
+	return artifacts.NewService().BuildFinalAnswer(ctx, artifacts.BuildFinalAnswerRequest{
+		SessionID:    session.ID,
+		TaskID:       session.TaskID,
+		RunID:        session.TaskID,
+		Status:       session.Status,
+		Prompt:       session.Prompt,
+		StarterAgent: session.Starter,
+		Artifacts:    items,
+	})
 }
 
 func runSessions(ctx context.Context, args []string) error {
@@ -2657,6 +2835,7 @@ func printUsage() {
 	fmt.Println(`  roma submit --agent codex "build a feature"`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma cancel <job_id>")
+	fmt.Println("  roma result show <session_id>")
 	fmt.Println("  roma help <topic>")
 	fmt.Println("")
 	fmt.Println("Management:")
@@ -2708,11 +2887,14 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma queue list [--status <status>] [--mode <direct|graph>]")
 		fmt.Println("  roma queue show <job_id>")
 		fmt.Println("  roma queue inspect <job_id>")
-		fmt.Println("  roma queue tail <job_id>")
+		fmt.Println("  roma queue tail <job_id> [--raw]")
 		fmt.Println("  roma queue cancel <job_id>")
 		fmt.Println("  roma approve <job_id>")
 		fmt.Println("  roma reject <job_id>")
 		fmt.Println("  roma cancel <job_id>")
+	case "result", "results":
+		fmt.Println("roma result usage:")
+		fmt.Println("  roma result show <session_id>")
 	case "debug":
 		fmt.Println("roma debug usage:")
 		fmt.Println("  roma debug session <subcommand>")
@@ -2918,36 +3100,44 @@ func queueCuriaSuffix(items []domain.ArtifactEnvelope) string {
 	return strings.Join(parts, " ")
 }
 
-func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subcommand string, subArg string, err error) {
+func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subcommand string, subArg string, raw bool, err error) {
 	subcommand = "list"
+	expectJobID := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "list":
 			subcommand = "list"
+			expectJobID = false
 		case "show", "inspect", "cancel", "tail":
 			subcommand = args[i]
-			i++
-			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("roma queue %s requires a job id", subcommand)
-			}
-			subArg = args[i]
+			expectJobID = true
 		case "--status":
 			i++
 			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("--status requires a value")
+				return "", "", "", "", false, fmt.Errorf("--status requires a value")
 			}
 			statusFilter = args[i]
 		case "--mode":
 			i++
 			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("--mode requires a value")
+				return "", "", "", "", false, fmt.Errorf("--mode requires a value")
 			}
 			modeFilter = args[i]
+		case "--raw":
+			raw = true
 		default:
-			return "", "", "", "", fmt.Errorf("unknown queue argument %q", args[i])
+			if expectJobID && subArg == "" {
+				subArg = args[i]
+				expectJobID = false
+				continue
+			}
+			return "", "", "", "", false, fmt.Errorf("unknown queue argument %q", args[i])
 		}
 	}
-	return statusFilter, modeFilter, subcommand, subArg, nil
+	if expectJobID || ((subcommand == "show" || subcommand == "inspect" || subcommand == "cancel" || subcommand == "tail") && subArg == "") {
+		return "", "", "", "", false, fmt.Errorf("roma queue %s requires a job id", subcommand)
+	}
+	return statusFilter, modeFilter, subcommand, subArg, raw, nil
 }
 
 func filterQueueRequests(requests []queue.Request, statusFilter, modeFilter string) []queue.Request {
@@ -2971,4 +3161,43 @@ func filterQueueRequests(requests []queue.Request, statusFilter, modeFilter stri
 		filtered = append(filtered, req)
 	}
 	return filtered
+}
+
+func queueTailEventLabel(typ events.Type) string {
+	switch typ {
+	case events.TypeRelayNodeStarted:
+		return "node-start"
+	case events.TypeRelayNodeCompleted:
+		return "node-done"
+	case events.TypeWorkspacePrepared:
+		return "workspace"
+	case events.TypeRuntimeStarted:
+		return "runtime-start"
+	case events.TypeRuntimeStdoutCaptured:
+		return "output"
+	case events.TypeRuntimeExited:
+		return "runtime-exit"
+	case events.TypePlanApplyRejected, events.TypePlanApplied, events.TypePlanRolledBack:
+		return "plan"
+	case events.TypeTaskStateChanged:
+		return "task"
+	default:
+		return string(typ)
+	}
+}
+
+func payloadString(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
 }

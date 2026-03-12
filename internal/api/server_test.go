@@ -534,6 +534,115 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 	}
 }
 
+func TestServerQueueInspectUsesJobWorkingDirForExecutionTruth(t *testing.T) {
+	t.Parallel()
+
+	daemonDir := t.TempDir()
+	repoDir := t.TempDir()
+	initAPIGitRepo(t, repoDir)
+
+	queueStore := queue.NewStore(daemonDir)
+	sessionStore := history.NewStore(daemonDir)
+	server := NewServer(daemonDir, queueStore, sessionStore)
+
+	startedAt := time.Now().UTC().Add(-3 * time.Second)
+	job := queue.Request{
+		ID:           "job_cross_root",
+		Prompt:       "cross root inspect",
+		StarterAgent: "my-codex",
+		WorkingDir:   repoDir,
+		SessionID:    "sess_cross_root",
+		TaskID:       "task_cross_root",
+		Status:       queue.StatusRunning,
+		CreatedAt:    startedAt,
+		UpdatedAt:    startedAt.Add(2 * time.Second),
+	}
+	if err := queueStore.Enqueue(context.Background(), job); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	jobRecord, err := queueStore.Get(context.Background(), "job_cross_root")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	jobRecord.Status = queue.StatusRunning
+	jobRecord.SessionID = "sess_cross_root"
+	jobRecord.TaskID = "task_cross_root"
+	jobRecord.WorkingDir = repoDir
+	if err := queueStore.Update(context.Background(), jobRecord); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_cross_root",
+		TaskID:     "task_cross_root",
+		Prompt:     "cross root inspect",
+		Starter:    "my-codex",
+		WorkingDir: repoDir,
+		Status:     "running",
+		CreatedAt:  startedAt,
+		UpdatedAt:  jobRecord.UpdatedAt,
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	taskStore, err := taskstore.NewSQLiteStore(repoDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	if err := taskStore.UpsertTask(context.Background(), domain.TaskRecord{
+		ID:        "task_cross_root",
+		SessionID: "sess_cross_root",
+		Title:     "Cross Root Task",
+		Strategy:  domain.TaskStrategyDirect,
+		State:     domain.TaskStateRunning,
+		AgentID:   "my-codex",
+		CreatedAt: startedAt,
+		UpdatedAt: jobRecord.UpdatedAt,
+	}); err != nil {
+		t.Fatalf("UpsertTask() error = %v", err)
+	}
+
+	manager := workspacepkg.NewManager(repoDir, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_cross_root", "task_cross_root", repoDir, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	eventStore := preferredEventStore(repoDir)
+	if err := eventStore.AppendEvent(context.Background(), events.Record{
+		ID:         "evt_cross_root_started",
+		SessionID:  "sess_cross_root",
+		TaskID:     "task_cross_root",
+		Type:       events.TypeRuntimeStarted,
+		ActorType:  events.ActorTypeSystem,
+		OccurredAt: startedAt,
+		Payload: map[string]any{
+			"execution_id": "exec_cross_root",
+			"agent":        "my-codex",
+		},
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/queue-inspect/job_cross_root", nil)
+	server.handleQueueInspect(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var resp QueueInspectResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response error = %v", err)
+	}
+	if resp.Live == nil {
+		t.Fatal("live = nil, want runtime summary")
+	}
+	if resp.Live.CurrentTaskID != "task_cross_root" {
+		t.Fatalf("live task id = %q, want task_cross_root", resp.Live.CurrentTaskID)
+	}
+	if resp.Live.WorkspacePath != prepared.EffectiveDir {
+		t.Fatalf("live workspace = %q, want %q", resp.Live.WorkspacePath, prepared.EffectiveDir)
+	}
+}
+
 func TestServerTaskListAndShow(t *testing.T) {
 	t.Parallel()
 

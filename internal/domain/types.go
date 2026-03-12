@@ -75,6 +75,7 @@ const (
 	ArtifactKindDebateLog     ArtifactKind = "debate_log"
 	ArtifactKindDecisionPack  ArtifactKind = "decision_pack"
 	ArtifactKindExecutionPlan ArtifactKind = "execution_plan"
+	ArtifactKindFinalAnswer   ArtifactKind = "final_answer"
 	ArtifactKindReport        ArtifactKind = "report"
 )
 

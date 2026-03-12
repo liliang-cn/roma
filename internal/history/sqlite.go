@@ -37,8 +37,8 @@ func (s *SQLiteStore) Save(ctx context.Context, record SessionRecord) error {
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT OR REPLACE INTO session_history
-		(id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, final_artifact_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID,
 		record.TaskID,
 		record.Prompt,
@@ -47,6 +47,7 @@ func (s *SQLiteStore) Save(ctx context.Context, record SessionRecord) error {
 		record.WorkingDir,
 		record.Status,
 		string(artifacts),
+		record.FinalArtifactID,
 		record.CreatedAt.Format(time.RFC3339Nano),
 		record.UpdatedAt.Format(time.RFC3339Nano),
 	)
@@ -60,7 +61,7 @@ func (s *SQLiteStore) Save(ctx context.Context, record SessionRecord) error {
 func (s *SQLiteStore) Get(ctx context.Context, sessionID string) (SessionRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, created_at, updated_at
+		`SELECT id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, final_artifact_id, created_at, updated_at
 		 FROM session_history WHERE id = ?`,
 		sessionID,
 	)
@@ -71,7 +72,7 @@ func (s *SQLiteStore) Get(ctx context.Context, sessionID string) (SessionRecord,
 func (s *SQLiteStore) List(ctx context.Context) ([]SessionRecord, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, created_at, updated_at
+		`SELECT id, task_id, prompt, starter, delegates_json, working_dir, status, artifact_ids_json, final_artifact_id, created_at, updated_at
 		 FROM session_history ORDER BY created_at`,
 	)
 	if err != nil {
@@ -129,6 +130,7 @@ func scanSessionRecord(scanner rowScanner) (SessionRecord, error) {
 		&record.WorkingDir,
 		&record.Status,
 		&artifactsRaw,
+		&record.FinalArtifactID,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
