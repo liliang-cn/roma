@@ -494,12 +494,14 @@ func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
 			LastOccurredAt:        item.LastOccurredAt,
 			Violations:            item.Violations,
 			Conflict:              item.Conflict,
+			ConflictKind:          item.ConflictKind,
 			ConflictDetail:        item.ConflictDetail,
 			ConflictSummary:       item.ConflictSummary,
 			ConflictPaths:         item.ConflictPaths,
 			ConflictContext:       item.ConflictContext,
 			RemediationHint:       item.RemediationHint,
 			ResolutionOptions:     item.ResolutionOptions,
+			ResolutionSteps:       item.ResolutionSteps,
 		})
 	}
 	writeJSON(w, http.StatusOK, PlanInboxResponse{Items: out})
@@ -772,11 +774,14 @@ func summarizeCuriaArtifacts(workDir string, items []domain.ArtifactEnvelope) *C
 	if latestDebate != nil {
 		out.Dispute = latestDebate.DisputeDetected
 		out.DisputeClass = latestDebate.DisputeClass
+		out.ArbitrationStrategy = latestDebate.ArbitrationStrategy
 		out.ArbitrationConfidence = latestDebate.ArbitrationConfidence
 		out.ConsensusStrength = latestDebate.ConsensusStrength
 		out.CriticalVeto = latestDebate.CriticalVeto
 		out.TopScoreGap = latestDebate.TopScoreGap
 		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
+		out.EscalationReasons = append([]string(nil), latestDebate.EscalationReasons...)
+		out.CompetingProposalIDs = append([]string(nil), latestDebate.CompetingProposalIDs...)
 		for _, item := range latestDebate.Scoreboard {
 			out.Scoreboard = append(out.Scoreboard, CuriaScoreSummary{
 				ProposalID:    item.ProposalID,
@@ -789,11 +794,17 @@ func summarizeCuriaArtifacts(workDir string, items []domain.ArtifactEnvelope) *C
 	}
 	if latestDecision != nil {
 		out.WinningMode = latestDecision.WinningMode
+		out.ArbitrationStrategy = latestDecision.ArbitrationStrategy
 		out.ArbitrationConfidence = latestDecision.ArbitrationConfidence
 		out.ConsensusStrength = latestDecision.ConsensusStrength
 		out.Arbitrated = latestDecision.Arbitrated
 		out.ArbitratorID = latestDecision.ArbitratorID
 		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
+		out.CompetingProposalIDs = append([]string(nil), latestDecision.CompetingProposalIDs...)
+		out.ApprovalReason = latestDecision.ApprovalReason
+		if len(out.EscalationReasons) == 0 {
+			out.EscalationReasons = append([]string(nil), latestDecision.EscalationReasons...)
+		}
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
 		out.DissentSummary = append([]string(nil), latestDecision.DissentSummary...)

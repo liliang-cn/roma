@@ -97,6 +97,10 @@
 - Queue requests now reserve `session_id` / `task_id` before execution starts, so crash recovery can resume the same session instead of spawning a replacement one.
 - Coding-agent execution can now opt into continuous multi-round mode with `--continuous` and `--max-rounds`, and runtime supervision will keep prompting until the agent emits `ROMA_DONE:` or the round budget is exhausted.
 - `MemoryStore.ListEvents` was missing `Type` filtering; fixing it removed a hidden testing/runtime inconsistency between memory-backed and SQLite/file-backed event stores.
+- The stream classifier is no longer a single ad hoc matcher:
+  - transport, pattern, and semantic layers now exist explicitly
+  - coverage now includes dangerous commands, approval phrases, protected-path high-risk changes, delegation hints, and completion hints
+  - the remaining gap is semantic depth and confidence modeling, not the absence of a layered classifier
 
 ## Remaining Gaps
 
@@ -146,6 +150,7 @@
   - multiple concurrent graph sessions run back-to-back
   - no active scheduler leases remain afterward
   - all related workspaces can still be reclaimed cleanly
+  - serializing `git worktree add/remove` inside the workspace manager removed a real concurrent reclaim flake without changing scheduler semantics
 - daemon and CLI status now expose lease/workspace buckets directly:
   - `released_leases`
   - `recovered_leases`
@@ -168,6 +173,7 @@
   - `queue inspect` / `sessions inspect` now also expose a structured `curia` summary instead of forcing callers to recompute it from raw artifacts
   - decision packs now also carry `risk_flags`, `review_questions`, and `candidate_summaries`, which makes the current human-first arbitration output reviewable without reopening every proposal and ballot manually
   - decision packs now also carry a `reviewer_breakdown`, making it explicit which reviewer weighted which proposal and where veto pressure came from
+  - debate logs, decision packs, and execution plans now also persist `arbitration_strategy`, `competing_proposal_ids`, `escalation_reasons`, and `approval_reason`, so the automatic arbitration path is inspectable instead of opaque
   - Curia summary readers must filter by `artifact.Kind`; decoding every artifact as every Curia payload type lets zero-value structs overwrite real debate/decision data in CLI/API summaries
   - `Augustus` no longer has to be theoretical: Curia can now run a dedicated arbitrator agent when `arbitration_mode=augustus`, and the resulting decision pack records whether arbitration was automatic plus which arbitrator produced it
   - reviewer reputation can be persisted without another database migration; a file-backed `.roma/curia-reputation.json` is enough to carry forward effective reviewer weights between Curia runs
@@ -184,6 +190,7 @@
     - `Augustus` automatic arbitration exists
     - reviewer reputation is persisted on disk
     - automatic Curia promotion exists for risky multi-agent runs and graph nodes
+    - disputed nodes now default to `Augustus` whenever an arbitrator is present, unless explicitly forced back to human mode
   - the remaining Curia gap is not the absence of arbitration primitives; it is the lack of a mature high-confidence automatic dispute engine for more complex arguments
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.
 - execution-plan preview is now a first-class concept:
@@ -191,6 +198,7 @@
   - CLI exposes `roma plans preview <session> <task> <artifact>`
   - apply/preview/rollback results now carry `remediation_hint`, so conflict and approval failures come back with an explicit next step instead of only raw error text
   - preview must stay side-effect free: reusing `Apply(DryRun=true)` for `/plans/preview` polluted audit trails with an extra `PlanApplied(dry_run)` event and broke API tests until preview was split into a non-recording service path
+  - preview/apply/inbox now also expose `conflict_kind` and structured `resolution_steps`, so conflict handling is no longer just raw git output plus a path list
 - there is now a deterministic Curia decision-flow regression:
   - `TestServerCuriaDecisionFlowProducesPlanInboxApproval`
   - it proves `proposal -> ballot -> debate_log -> decision_pack -> execution_plan -> plans inbox`

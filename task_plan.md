@@ -158,6 +158,7 @@ Status: in_progress
 - [x] Surface runtime semantic events through the same structured live tail path used by queue attach/tail
 - [x] Emit explicit semantic recommendation events for approval and Curia escalation, not only raw `semantic_report` artifacts
 - [x] Surface the latest semantic-report summary directly in queue/session inspection payloads
+- [x] Expand stream classification beyond danger/approval/parse to include protected-path high-risk changes, delegation hints, and completion hints
 
 ### Phase 17: Curia Minimal
 Status: in_progress
@@ -174,6 +175,7 @@ Status: in_progress
 - [x] Carry arbitration confidence, consensus strength, and dissent summaries through debate logs, decision packs, execution plans, and Curia inspect output
 - [x] Allow high-confidence `Augustus` arbitration results to produce non-human-approval execution plans
 - [x] Default Curia disputes to automatic `Augustus` arbitration whenever an arbitrator is present, unless the node explicitly requests human arbitration
+- [x] Persist arbitration strategy, competing proposals, escalation reasons, and approval reasons through debate logs, decision packs, execution plans, and Curia inspect output
 
 ### Phase 18: ExecutionPlan Closure
 Status: in_progress
@@ -188,6 +190,7 @@ Status: in_progress
 - [x] Make `dry-run` perform real merge preview instead of static path checks only
 - [x] Return conflict-context snippets alongside conflict paths during plan preview and apply failures
 - [x] Add structured conflict summaries and resolution options to preview/apply/inbox responses
+- [x] Add structured conflict kinds and resolution steps to preview/apply/inbox responses so conflict handling can be rendered as a product flow, not raw git output only
 - [x] Route Curia decision confidence and consensus metadata into `execution_plan` payloads so apply policy can distinguish low-confidence versus high-confidence arbitration results
 
 ### Phase 19: Runtime Visibility and Attachability
@@ -227,8 +230,8 @@ Status: in_progress
 
 ## Risks
 
-- The runtime stream classifier is now layered, but it is still rules-first; it does not yet provide mature confidence-scored semantic extraction for arbitrary agent output.
-- Curia is now well beyond the original minimum, but complex disputes still need more sophisticated arbitration and escalation heuristics before it can be treated as fully autonomous.
+- The runtime stream classifier is now transport/pattern/semantic layered, but it is still rules-first and not yet a mature generalized semantic parser for arbitrary agent output.
+- Curia is now well beyond the original minimum and defaults disputed nodes to `Augustus` when available, but complex disputes still need more sophisticated automatic arbitration and escalation heuristics before it can be treated as fully autonomous.
 - Gateway and presentation-plane work still lag the control plane and should not be described as complete.
 
 - PTY behavior differs across coding CLIs; some still assume stronger TTY semantics.
@@ -237,7 +240,7 @@ Status: in_progress
 - Scheduler leases now persist ownership/checkpoint state in SQLite and are recovered on daemon restart.
 - Real worktree isolation now exists only when the working directory is a Git repository; non-Git execution still falls back to shared-read mode.
 - Continuous execution currently relies on agent-emitted `ROMA_DONE:` markers and is still coarse-grained.
-- Policy merge/apply boundaries still need tightening; current run-time path-scoped checks are stronger, but plan apply is not yet daemon-governed.
+- Policy merge/apply boundaries still need tightening; current run-time path-scoped checks are stronger, and plan apply has structured conflict guidance, but fully automated conflict resolution is still not present.
 - Dynamic follow-up node generation now uses structured report payloads, but follow-up validation is still permissive compared with a future formal command schema.
 - Curia minimal is now real, but still human-first and score-lite; there is no Augustus arbitration or automatic dispute engine yet.
 - Execution-plan apply now works through daemon API too, but it still needs richer eventing and plan-specific approval inbox UX.

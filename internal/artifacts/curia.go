@@ -81,9 +81,12 @@ type DebateLogPayload struct {
 	BallotIDs             []string          `json:"ballot_ids"`
 	DisputeSummary        string            `json:"dispute_summary"`
 	DisputeClass          string            `json:"dispute_class,omitempty"`
+	ArbitrationStrategy   string            `json:"arbitration_strategy,omitempty"`
 	ArbitrationConfidence domain.Confidence `json:"arbitration_confidence,omitempty"`
 	ConsensusStrength     string            `json:"consensus_strength,omitempty"`
 	DisputeReasons        []string          `json:"dispute_reasons,omitempty"`
+	EscalationReasons     []string          `json:"escalation_reasons,omitempty"`
+	CompetingProposalIDs  []string          `json:"competing_proposal_ids,omitempty"`
 	DisputeDetected       bool              `json:"dispute_detected"`
 	CriticalVeto          bool              `json:"critical_veto"`
 	TopScoreGap           int               `json:"top_score_gap"`
@@ -97,13 +100,16 @@ type DecisionPackPayload struct {
 	DecisionPackID        string                    `json:"decision_pack_id"`
 	WinningMode           string                    `json:"winning_mode"`
 	DisputeClass          string                    `json:"dispute_class,omitempty"`
+	ArbitrationStrategy   string                    `json:"arbitration_strategy,omitempty"`
 	ArbitrationConfidence domain.Confidence         `json:"arbitration_confidence,omitempty"`
 	ConsensusStrength     string                    `json:"consensus_strength,omitempty"`
 	Arbitrated            bool                      `json:"arbitrated,omitempty"`
 	ArbitratorID          string                    `json:"arbitrator_id,omitempty"`
 	SelectedProposalIDs   []string                  `json:"selected_proposal_ids"`
+	CompetingProposalIDs  []string                  `json:"competing_proposal_ids,omitempty"`
 	MergedRationale       string                    `json:"merged_rationale"`
 	RejectedReasons       []string                  `json:"rejected_reasons,omitempty"`
+	EscalationReasons     []string                  `json:"escalation_reasons,omitempty"`
 	RiskFlags             []string                  `json:"risk_flags,omitempty"`
 	ReviewQuestions       []string                  `json:"review_questions,omitempty"`
 	DissentSummary        []string                  `json:"dissent_summary,omitempty"`
@@ -112,6 +118,7 @@ type DecisionPackPayload struct {
 	Scoreboard            []CuriaScoreEntry         `json:"scoreboard,omitempty"`
 	ExecutionPlanID       string                    `json:"execution_plan_id"`
 	ApprovalRequired      bool                      `json:"approval_required"`
+	ApprovalReason        string                    `json:"approval_reason,omitempty"`
 }
 
 type ExecutionPlanPayload struct {
@@ -125,6 +132,10 @@ type ExecutionPlanPayload struct {
 	ApplyMode             string            `json:"apply_mode"`
 	DecisionConfidence    domain.Confidence `json:"decision_confidence,omitempty"`
 	ConsensusStrength     string            `json:"consensus_strength,omitempty"`
+	ArbitrationStrategy   string            `json:"arbitration_strategy,omitempty"`
+	CompetingProposalIDs  []string          `json:"competing_proposal_ids,omitempty"`
+	EscalationReasons     []string          `json:"escalation_reasons,omitempty"`
+	ApprovalReason        string            `json:"approval_reason,omitempty"`
 	RollbackHint          string            `json:"rollback_hint,omitempty"`
 	HumanApprovalRequired bool              `json:"human_approval_required"`
 }
@@ -156,9 +167,12 @@ type BuildDebateLogRequest struct {
 	BallotIDs             []string
 	WinningProposalID     string
 	DisputeClass          string
+	ArbitrationStrategy   string
 	ArbitrationConfidence domain.Confidence
 	ConsensusStrength     string
 	DisputeReasons        []string
+	EscalationReasons     []string
+	CompetingProposalIDs  []string
 	DisputeDetected       bool
 	CriticalVeto          bool
 	TopScoreGap           int
@@ -172,6 +186,7 @@ type BuildDecisionPackRequest struct {
 	RunID                 string
 	WinningMode           string
 	DisputeClass          string
+	ArbitrationStrategy   string
 	ArbitrationConfidence domain.Confidence
 	ConsensusStrength     string
 	Arbitrated            bool
@@ -179,10 +194,13 @@ type BuildDecisionPackRequest struct {
 	ProducerRole          domain.ProducerRole
 	ProducerAgentID       string
 	SelectedProposalIDs   []string
+	CompetingProposalIDs  []string
 	ExecutionPlanID       string
 	ApprovalRequired      bool
+	ApprovalReason        string
 	MergedRationale       string
 	RejectedReasons       []string
+	EscalationReasons     []string
 	RiskFlags             []string
 	ReviewQuestions       []string
 	DissentSummary        []string
@@ -199,8 +217,12 @@ type BuildExecutionPlanRequest struct {
 	Proposal              ProposalPayload
 	WinningMode           string
 	SelectedProposalIDs   []string
+	CompetingProposalIDs  []string
 	DecisionConfidence    domain.Confidence
 	ConsensusStrength     string
+	ArbitrationStrategy   string
+	EscalationReasons     []string
+	ApprovalReason        string
 	HumanApprovalRequired bool
 }
 
@@ -249,9 +271,12 @@ func (s *Service) BuildDebateLog(_ context.Context, req BuildDebateLogRequest) (
 		BallotIDs:             append([]string(nil), req.BallotIDs...),
 		DisputeSummary:        disputeSummary(req.WinningProposalID, req.ArbitrationRequired),
 		DisputeClass:          req.DisputeClass,
+		ArbitrationStrategy:   req.ArbitrationStrategy,
 		ArbitrationConfidence: req.ArbitrationConfidence,
 		ConsensusStrength:     req.ConsensusStrength,
 		DisputeReasons:        append([]string(nil), req.DisputeReasons...),
+		EscalationReasons:     append([]string(nil), req.EscalationReasons...),
+		CompetingProposalIDs:  append([]string(nil), req.CompetingProposalIDs...),
 		DisputeDetected:       req.DisputeDetected,
 		CriticalVeto:          req.CriticalVeto,
 		TopScoreGap:           req.TopScoreGap,
@@ -268,13 +293,16 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		DecisionPackID:        "dp_" + req.RunID,
 		WinningMode:           req.WinningMode,
 		DisputeClass:          req.DisputeClass,
+		ArbitrationStrategy:   req.ArbitrationStrategy,
 		ArbitrationConfidence: req.ArbitrationConfidence,
 		ConsensusStrength:     req.ConsensusStrength,
 		Arbitrated:            req.Arbitrated,
 		ArbitratorID:          req.ArbitratorID,
 		SelectedProposalIDs:   append([]string(nil), req.SelectedProposalIDs...),
+		CompetingProposalIDs:  append([]string(nil), req.CompetingProposalIDs...),
 		MergedRationale:       req.MergedRationale,
 		RejectedReasons:       append([]string(nil), req.RejectedReasons...),
+		EscalationReasons:     append([]string(nil), req.EscalationReasons...),
 		RiskFlags:             append([]string(nil), req.RiskFlags...),
 		ReviewQuestions:       append([]string(nil), req.ReviewQuestions...),
 		DissentSummary:        append([]string(nil), req.DissentSummary...),
@@ -283,6 +311,7 @@ func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequ
 		Scoreboard:            append([]CuriaScoreEntry(nil), req.Scoreboard...),
 		ExecutionPlanID:       req.ExecutionPlanID,
 		ApprovalRequired:      req.ApprovalRequired,
+		ApprovalReason:        req.ApprovalReason,
 	}
 	role := req.ProducerRole
 	agentID := req.ProducerAgentID
@@ -301,12 +330,16 @@ func (s *Service) BuildExecutionPlan(_ context.Context, req BuildExecutionPlanRe
 		Goal:                  req.Goal,
 		Steps:                 append([]string(nil), req.Proposal.EstimatedSteps...),
 		SelectedProposalIDs:   append([]string(nil), req.SelectedProposalIDs...),
+		CompetingProposalIDs:  append([]string(nil), req.CompetingProposalIDs...),
 		ExpectedFiles:         append([]string(nil), req.Proposal.AffectedFiles...),
 		ForbiddenPaths:        []string{".git/", ".roma/"},
 		RequiredChecks:        []string{"go test ./...", "go build ./..."},
 		ApplyMode:             executionApplyMode(req.WinningMode),
 		DecisionConfidence:    req.DecisionConfidence,
 		ConsensusStrength:     req.ConsensusStrength,
+		ArbitrationStrategy:   req.ArbitrationStrategy,
+		EscalationReasons:     append([]string(nil), req.EscalationReasons...),
+		ApprovalReason:        req.ApprovalReason,
 		RollbackHint:          "Reverse-apply the captured worktree patch if validation fails.",
 		HumanApprovalRequired: req.HumanApprovalRequired,
 	}

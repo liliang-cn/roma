@@ -75,9 +75,12 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		BallotIDs:             collectBallotIDs(ballots),
 		WinningProposalID:     winner.proposal.ProposalID,
 		DisputeClass:          winner.dispute.Class,
+		ArbitrationStrategy:   winner.arbitrationStrategy,
 		ArbitrationConfidence: winner.confidence,
 		ConsensusStrength:     winner.consensusStrength,
 		DisputeReasons:        append([]string(nil), winner.dispute.RejectedReasons...),
+		EscalationReasons:     append([]string(nil), winner.escalationReasons...),
+		CompetingProposalIDs:  append([]string(nil), winner.competingProposalIDs...),
 		DisputeDetected:       winner.dispute.Detected,
 		CriticalVeto:          winner.dispute.CriticalVeto,
 		TopScoreGap:           winner.dispute.TopScoreGap,
@@ -95,8 +98,12 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		Proposal:              winner.proposal,
 		WinningMode:           winner.winningMode,
 		SelectedProposalIDs:   append([]string(nil), winner.selectedIDs...),
+		CompetingProposalIDs:  append([]string(nil), winner.competingProposalIDs...),
 		DecisionConfidence:    winner.confidence,
 		ConsensusStrength:     winner.consensusStrength,
+		ArbitrationStrategy:   winner.arbitrationStrategy,
+		EscalationReasons:     append([]string(nil), winner.escalationReasons...),
+		ApprovalReason:        approvalReason(winner),
 		HumanApprovalRequired: requiresHumanApproval(winner),
 	})
 	if err != nil {
@@ -108,6 +115,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		RunID:                 req.TaskID + "_decision",
 		WinningMode:           winner.winningMode,
 		DisputeClass:          winner.dispute.Class,
+		ArbitrationStrategy:   winner.arbitrationStrategy,
 		ArbitrationConfidence: winner.confidence,
 		ConsensusStrength:     winner.consensusStrength,
 		Arbitrated:            winner.arbitrated,
@@ -115,10 +123,13 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		ProducerRole:          winner.producerRole,
 		ProducerAgentID:       winner.producerAgentID,
 		SelectedProposalIDs:   append([]string(nil), winner.selectedIDs...),
+		CompetingProposalIDs:  append([]string(nil), winner.competingProposalIDs...),
 		ExecutionPlanID:       plan.ID,
 		ApprovalRequired:      requiresHumanApproval(winner),
+		ApprovalReason:        approvalReason(winner),
 		MergedRationale:       decisionRationale(winner),
 		RejectedReasons:       append([]string(nil), winner.rejectedReasons...),
+		EscalationReasons:     append([]string(nil), winner.escalationReasons...),
 		RiskFlags:             append([]string(nil), winner.riskFlags...),
 		ReviewQuestions:       append([]string(nil), winner.reviewQuestions...),
 		DissentSummary:        append([]string(nil), winner.dissentSummary...),
@@ -156,15 +167,20 @@ type winnerSelection struct {
 	ballots            []domain.ArtifactEnvelope
 	ballotEnvelopes    []ballotEnvelope
 	selectedIDs        []string
+	competingProposalIDs []string
 	winningMode        string
+	arbitrationStrategy string
 	confidence         domain.Confidence
 	consensusStrength  string
 	rejectedReasons    []string
 	dissentSummary     []string
+	escalationReasons  []string
 	riskFlags          []string
 	reviewQuestions    []string
 	candidateSummaries []artifacts.CuriaCandidateSummary
 	reviewerBreakdown  []artifacts.CuriaReviewContribution
+	approvalReason     string
+	approvalOverride   *bool
 	arbitrated         bool
 	arbitratorID       string
 	producerRole       domain.ProducerRole
@@ -181,8 +197,11 @@ type disputeResult struct {
 	TopScoreGap       int
 	WinningMode       string
 	SelectedIDs       []string
+	CompetingProposalIDs []string
+	ArbitrationStrategy string
 	RejectedReasons   []string
 	DissentSummary    []string
+	EscalationReasons []string
 	Scoreboard        []artifacts.CuriaScoreEntry
 }
 
@@ -348,11 +367,14 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 		ballots:            ballots,
 		ballotEnvelopes:    ballotResults,
 		selectedIDs:        selectedIDs,
+		competingProposalIDs: append([]string(nil), dispute.CompetingProposalIDs...),
 		winningMode:        dispute.WinningMode,
+		arbitrationStrategy: dispute.ArbitrationStrategy,
 		confidence:         dispute.Confidence,
 		consensusStrength:  dispute.ConsensusStrength,
 		rejectedReasons:    append([]string(nil), dispute.RejectedReasons...),
 		dissentSummary:     append([]string(nil), dispute.DissentSummary...),
+		escalationReasons:  append([]string(nil), dispute.EscalationReasons...),
 		riskFlags:          buildRiskFlags(selected.proposal, dispute),
 		reviewQuestions:    buildReviewQuestions(selected.proposal, dispute),
 		candidateSummaries: buildCandidateSummaries(proposals, dispute.Scoreboard),
@@ -397,19 +419,33 @@ func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposal
 	} else if winner.consensusStrength == "" {
 		winner.consensusStrength = "augustus_resolved"
 	}
+	if override.arbitrationStrategy != "" {
+		winner.arbitrationStrategy = override.arbitrationStrategy
+	}
 	if len(override.selectedIDs) > 0 {
 		winner.selectedIDs = append([]string(nil), override.selectedIDs...)
 		if proposal, ok := selectProposalByID(proposals, override.selectedIDs[0]); ok {
 			winner.proposal = proposal
 		}
 	}
+	if len(override.competingIDs) > 0 {
+		winner.competingProposalIDs = append([]string(nil), override.competingIDs...)
+	}
 	if override.rationale != "" {
 		winner.rejectedReasons = mergeUniqueStrings(winner.rejectedReasons, []string{"augustus arbitration completed"})
 		winner.riskFlags = mergeUniqueStrings(winner.riskFlags, []string{"augustus_arbitrated"})
 	}
+	winner.escalationReasons = mergeUniqueStrings(winner.escalationReasons, override.escalationReasons)
 	winner.riskFlags = mergeUniqueStrings(winner.riskFlags, override.riskFlags)
 	winner.reviewQuestions = mergeUniqueStrings(winner.reviewQuestions, override.reviewQuestions)
 	winner.dissentSummary = mergeUniqueStrings(winner.dissentSummary, override.dissentSummary)
+	if override.approvalRequired != nil {
+		value := *override.approvalRequired
+		winner.approvalOverride = &value
+	}
+	if override.approvalReason != "" {
+		winner.approvalReason = override.approvalReason
+	}
 	winner.arbitrated = true
 	winner.arbitratorID = req.Arbitrator.ID
 	winner.producerRole = domain.ProducerRoleArbitrator
@@ -437,9 +473,14 @@ func shouldRunAugustus(req ExecuteRequest) bool {
 type augustusDecision struct {
 	winningMode       string
 	selectedIDs       []string
+	competingIDs      []string
 	confidence        domain.Confidence
 	consensusStrength string
+	arbitrationStrategy string
+	approvalRequired  *bool
+	approvalReason    string
 	rationale         string
+	escalationReasons []string
 	riskFlags         []string
 	reviewQuestions   []string
 	dissentSummary    []string
@@ -451,9 +492,14 @@ func augustusPrompt(req ExecuteRequest, proposals []domain.ArtifactEnvelope, win
 	b.WriteString("Return a final arbitration decision using this exact shape:\n")
 	b.WriteString("winning_mode: accept|merge|replace\n")
 	b.WriteString("selected_proposals: prop_x[,prop_y]\n")
+	b.WriteString("competing_proposals: prop_x[,prop_y]\n")
 	b.WriteString("confidence: low|medium|high\n")
 	b.WriteString("consensus_strength: strong_consensus|moderate_consensus|disputed_consensus|augustus_resolved\n")
+	b.WriteString("arbitration_strategy: accept_highest_score|merge_top_candidates|replace_with_runner_up|augustus_tie_break\n")
+	b.WriteString("approval_required: true|false\n")
+	b.WriteString("approval_reason: one concise sentence\n")
 	b.WriteString("rationale: one concise sentence\n")
+	b.WriteString("escalation_reasons:\n- reason\n")
 	b.WriteString("risk_flags:\n- flag\n")
 	b.WriteString("review_questions:\n- question?\n\n")
 	b.WriteString("dissent_summary:\n- dissent note\n\n")
@@ -465,11 +511,31 @@ func augustusPrompt(req ExecuteRequest, proposals []domain.ArtifactEnvelope, win
 	b.WriteString(fmt.Sprintf("%d", winner.dispute.TopScoreGap))
 	b.WriteString("\nCurrent winning mode: ")
 	b.WriteString(winner.winningMode)
+	b.WriteString("\nCurrent arbitration strategy: ")
+	b.WriteString(winner.arbitrationStrategy)
 	b.WriteString("\nCurrent selected proposals: ")
 	b.WriteString(strings.Join(winner.selectedIDs, ","))
+	if len(winner.competingProposalIDs) > 0 {
+		b.WriteString("\nCurrent competing proposals: ")
+		b.WriteString(strings.Join(winner.competingProposalIDs, ","))
+	}
+	if len(winner.escalationReasons) > 0 {
+		b.WriteString("\nEscalation reasons:\n")
+		for _, reason := range winner.escalationReasons {
+			b.WriteString("- ")
+			b.WriteString(reason)
+			b.WriteString("\n")
+		}
+	}
 	b.WriteString("\n\nProposal scoreboard:\n")
 	for _, item := range winner.dispute.Scoreboard {
 		b.WriteString(fmt.Sprintf("- %s raw=%d weighted=%d veto=%d reviewers=%d\n", item.ProposalID, item.RawScore, item.WeightedScore, item.VetoCount, item.ReviewerCount))
+	}
+	if len(winner.reviewerBreakdown) > 0 {
+		b.WriteString("\nReviewer breakdown:\n")
+		for _, item := range winner.reviewerBreakdown {
+			b.WriteString(fmt.Sprintf("- %s -> %s raw=%d weighted=%d veto=%t\n", item.ReviewerID, item.TargetProposalID, item.RawScore, item.WeightedScore, item.Veto))
+		}
 	}
 	b.WriteString("\nProposal summaries:\n")
 	for _, envelope := range proposals {
@@ -487,8 +553,12 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 	lines := strings.Split(output, "\n")
 	modeRe := regexp.MustCompile(`(?i)^winning_mode:\s*(accept|merge|replace)\s*$`)
 	selectedRe := regexp.MustCompile(`(?i)^selected_proposals:\s*(.+)\s*$`)
+	competingRe := regexp.MustCompile(`(?i)^competing_proposals:\s*(.+)\s*$`)
 	confidenceRe := regexp.MustCompile(`(?i)^confidence:\s*(low|medium|high)\s*$`)
 	consensusStrengthRe := regexp.MustCompile(`(?i)^consensus_strength:\s*([a-z_]+)\s*$`)
+	arbitrationStrategyRe := regexp.MustCompile(`(?i)^arbitration_strategy:\s*([a-z_]+)\s*$`)
+	approvalRequiredRe := regexp.MustCompile(`(?i)^approval_required:\s*(true|false)\s*$`)
+	approvalReasonRe := regexp.MustCompile(`(?i)^approval_reason:\s*(.+)\s*$`)
 	rationaleRe := regexp.MustCompile(`(?i)^rationale:\s*(.+)\s*$`)
 	section := ""
 	validIDs := make(map[string]struct{}, len(proposals))
@@ -508,28 +578,39 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 			section = ""
 		case selectedRe.MatchString(line):
 			section = ""
-			chunks := strings.Split(selectedRe.FindStringSubmatch(line)[1], ",")
-			for _, chunk := range chunks {
-				id := strings.TrimSpace(chunk)
-				if _, ok := validIDs[id]; ok {
-					decision.selectedIDs = append(decision.selectedIDs, id)
-				}
-			}
+			decision.selectedIDs = parseProposalIDs(selectedRe.FindStringSubmatch(line)[1], validIDs)
+		case competingRe.MatchString(line):
+			section = ""
+			decision.competingIDs = parseProposalIDs(competingRe.FindStringSubmatch(line)[1], validIDs)
 		case confidenceRe.MatchString(line):
 			decision.confidence = domain.Confidence(strings.ToLower(confidenceRe.FindStringSubmatch(line)[1]))
 			section = ""
 		case consensusStrengthRe.MatchString(line):
 			decision.consensusStrength = strings.ToLower(consensusStrengthRe.FindStringSubmatch(line)[1])
 			section = ""
+		case arbitrationStrategyRe.MatchString(line):
+			decision.arbitrationStrategy = strings.ToLower(arbitrationStrategyRe.FindStringSubmatch(line)[1])
+			section = ""
+		case approvalRequiredRe.MatchString(line):
+			value := strings.EqualFold(approvalRequiredRe.FindStringSubmatch(line)[1], "true")
+			decision.approvalRequired = &value
+			section = ""
+		case approvalReasonRe.MatchString(line):
+			decision.approvalReason = approvalReasonRe.FindStringSubmatch(line)[1]
+			section = ""
 		case rationaleRe.MatchString(line):
 			decision.rationale = rationaleRe.FindStringSubmatch(line)[1]
 			section = ""
+		case strings.EqualFold(line, "escalation_reasons:"):
+			section = "escalation"
 		case strings.EqualFold(line, "risk_flags:"):
 			section = "risk"
 		case strings.EqualFold(line, "review_questions:"):
 			section = "review"
 		case strings.EqualFold(line, "dissent_summary:"):
 			section = "dissent"
+		case strings.HasPrefix(line, "- ") && section == "escalation":
+			decision.escalationReasons = append(decision.escalationReasons, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		case strings.HasPrefix(line, "- ") && section == "risk":
 			decision.riskFlags = append(decision.riskFlags, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		case strings.HasPrefix(line, "- ") && section == "review":
@@ -539,6 +620,18 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 		}
 	}
 	return decision
+}
+
+func parseProposalIDs(raw string, validIDs map[string]struct{}) []string {
+	chunks := strings.Split(raw, ",")
+	out := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		id := strings.TrimSpace(chunk)
+		if _, ok := validIDs[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func selectProposalByID(proposals []domain.ArtifactEnvelope, id string) (artifacts.ProposalPayload, bool) {
@@ -602,6 +695,9 @@ func buildRiskFlags(proposal artifacts.ProposalPayload, dispute disputeResult) [
 	if dispute.Class == "close_score" || dispute.Class == "close_score+critical_veto" {
 		appendFlag("close_score")
 	}
+	for _, reason := range dispute.EscalationReasons {
+		appendFlag(reason)
+	}
 	for _, risk := range proposal.DesignRisks {
 		appendFlag(risk)
 	}
@@ -618,6 +714,12 @@ func buildReviewQuestions(proposal artifacts.ProposalPayload, dispute disputeRes
 	}
 	if dispute.Class == "close_score" || dispute.Class == "close_score+critical_veto" {
 		questions = append(questions, "Which tradeoff most clearly separates the top Curia proposals?")
+	}
+	for _, reason := range dispute.EscalationReasons {
+		questions = append(questions, "How should Curia resolve this escalation trigger: "+reason+"?")
+		if len(questions) >= 4 {
+			break
+		}
 	}
 	for _, risk := range proposal.DesignRisks {
 		questions = append(questions, "How will the plan mitigate this risk: "+risk+"?")
@@ -745,10 +847,11 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 	}
 	if len(ranked) == 0 {
 		return disputeResult{
-			WinningMode:       "accept",
-			Class:             "none",
-			Confidence:        domain.ConfidenceMedium,
-			ConsensusStrength: "moderate_consensus",
+			WinningMode:         "accept",
+			Class:               "none",
+			Confidence:          domain.ConfidenceMedium,
+			ConsensusStrength:   "moderate_consensus",
+			ArbitrationStrategy: "accept_highest_score",
 		}
 	}
 	for i := 0; i < len(ranked); i++ {
@@ -759,14 +862,24 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		}
 	}
 	result := disputeResult{
-		WinningMode:       "accept",
-		Class:             "none",
-		Confidence:        domain.ConfidenceMedium,
-		ConsensusStrength: "moderate_consensus",
-		SelectedIDs:       []string{ranked[0].id},
+		WinningMode:         "accept",
+		Class:               "none",
+		Confidence:          domain.ConfidenceMedium,
+		ConsensusStrength:   "moderate_consensus",
+		SelectedIDs:         []string{ranked[0].id},
+		CompetingProposalIDs: []string{ranked[0].id},
+		ArbitrationStrategy: "accept_highest_score",
 	}
 	if len(ranked) > 1 {
 		result.TopScoreGap = ranked[0].weightedScore - ranked[1].weightedScore
+		result.CompetingProposalIDs = []string{ranked[0].id, ranked[1].id}
+		if len(ranked) > 2 && ranked[0].weightedScore-ranked[2].weightedScore <= 5 {
+			result.CompetingProposalIDs = append(result.CompetingProposalIDs, ranked[2].id)
+			result.EscalationReasons = append(result.EscalationReasons, "crowded_scoreboard")
+		}
+		if abs(ranked[0].reviewerCount-ranked[1].reviewerCount) <= 1 && result.TopScoreGap <= 5 {
+			result.EscalationReasons = append(result.EscalationReasons, "split_reviewer_support")
+		}
 		switch {
 		case result.TopScoreGap >= 8:
 			result.Confidence = domain.ConfidenceHigh
@@ -781,7 +894,9 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 			result.Confidence = domain.ConfidenceLow
 			result.ConsensusStrength = "disputed_consensus"
 			result.SelectedIDs = []string{ranked[0].id, ranked[1].id}
+			result.ArbitrationStrategy = "merge_top_candidates"
 			result.RejectedReasons = append(result.RejectedReasons, "top proposals are too close to accept one without merge review")
+			result.EscalationReasons = append(result.EscalationReasons, "close_score")
 		}
 	} else {
 		result.Confidence = domain.ConfidenceHigh
@@ -791,6 +906,7 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		result.Detected = true
 		result.CriticalVeto = true
 		result.Confidence = domain.ConfidenceLow
+		result.EscalationReasons = append(result.EscalationReasons, "critical_veto")
 		if result.Class == "close_score" {
 			result.Class = "close_score+critical_veto"
 		} else {
@@ -798,17 +914,31 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		}
 		if len(ranked) > 1 {
 			result.WinningMode = "replace"
+			result.ArbitrationStrategy = "replace_with_runner_up"
 			result.ConsensusStrength = "veto_replacement"
 			result.SelectedIDs = []string{ranked[1].id}
 			result.RejectedReasons = append(result.RejectedReasons, fmt.Sprintf("%s received a critical veto and was replaced by %s", ranked[0].id, ranked[1].id))
 		} else {
 			result.WinningMode = "merge"
+			result.ArbitrationStrategy = "augustus_tie_break"
 			result.ConsensusStrength = "blocked_by_veto"
 			if len(result.SelectedIDs) == 0 {
 				result.SelectedIDs = []string{ranked[0].id}
 			}
 		}
 	}
+	if totalVetoes(ranked) >= 2 {
+		result.Detected = true
+		result.Confidence = domain.ConfidenceLow
+		result.EscalationReasons = append(result.EscalationReasons, "multi_veto")
+		if result.ArbitrationStrategy == "accept_highest_score" {
+			result.ArbitrationStrategy = "augustus_tie_break"
+		}
+		if result.Class == "none" {
+			result.Class = "multi_veto"
+		}
+	}
+	result.EscalationReasons = mergeUniqueStrings(nil, result.EscalationReasons)
 	result.Scoreboard = make([]artifacts.CuriaScoreEntry, 0, len(ranked))
 	for _, proposal := range ranked {
 		result.Scoreboard = append(result.Scoreboard, artifacts.CuriaScoreEntry{
@@ -843,22 +973,65 @@ func buildDissentSummary(ranked []rankedProposal, selectedIDs []string) []string
 func decisionRationale(winner winnerSelection) string {
 	switch winner.winningMode {
 	case "merge":
-		return "Curia detected a close or veto-affected outcome and selected a merge decision for human review."
+		return "Curia selected a merge path after detecting a tightly clustered scoreboard that benefits from combined execution."
 	case "replace":
-		return "Curia selected a replacement decision after dispute handling."
+		return "Curia selected a replacement path after dispute handling rejected the prior leader."
 	default:
-		return "Curia selected the highest-scoring proposal."
+		return "Curia selected the highest-scoring proposal without requiring a merge or replacement path."
 	}
 }
 
 func requiresHumanApproval(winner winnerSelection) bool {
+	if winner.approvalOverride != nil {
+		return *winner.approvalOverride
+	}
 	if !winner.arbitrated {
 		return true
 	}
 	if winner.confidence != domain.ConfidenceHigh {
 		return true
 	}
-	return winner.winningMode == "merge"
+	if len(winner.escalationReasons) > 1 {
+		return true
+	}
+	if winner.winningMode == "merge" && winner.consensusStrength != "augustus_resolved" && winner.consensusStrength != "strong_consensus" {
+		return true
+	}
+	return false
+}
+
+func approvalReason(winner winnerSelection) string {
+	if winner.approvalReason != "" {
+		return winner.approvalReason
+	}
+	if !winner.arbitrated {
+		return "human arbitration remains required because Curia did not run an automated arbitrator"
+	}
+	if winner.confidence != domain.ConfidenceHigh {
+		return "automated arbitration confidence is below high"
+	}
+	if len(winner.escalationReasons) > 1 {
+		return "multiple unresolved escalation factors still require human approval"
+	}
+	if winner.winningMode == "merge" && winner.consensusStrength != "augustus_resolved" && winner.consensusStrength != "strong_consensus" {
+		return "merge-mode execution still needs a human approval gate"
+	}
+	return "high-confidence automated arbitration cleared the execution plan"
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func totalVetoes(items []rankedProposal) int {
+	total := 0
+	for _, item := range items {
+		total += item.vetoCount
+	}
+	return total
 }
 
 func containsString(items []string, target string) bool {

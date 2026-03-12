@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/liliang-cn/roma/internal/domain"
@@ -64,6 +65,7 @@ type Manager struct {
 	events  store.EventStore
 	now     func() time.Time
 	runGit  func(ctx context.Context, dir string, args ...string) error
+	gitMu   sync.Mutex
 }
 
 // NewManager constructs a workspace manager rooted in the repository workdir.
@@ -387,9 +389,12 @@ func (m *Manager) ReclaimStaleExcept(ctx context.Context, activeSessions map[str
 		if (prepared.Status != "released" && prepared.Status != "prepared") || prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
 			continue
 		}
+		m.gitMu.Lock()
 		if err := m.runGitWithRetry(ctx, prepared.BaseDir, "worktree", "remove", "--force", prepared.EffectiveDir); err != nil {
+			m.gitMu.Unlock()
 			return err
 		}
+		m.gitMu.Unlock()
 		prepared.Status = "reclaimed"
 		prepared.ReclaimedAt = m.now()
 		if err := writePrepared(m.metaPath(rootDir, prepared.SessionID, prepared.TaskID), prepared); err != nil {
@@ -427,12 +432,15 @@ func (m *Manager) prepareIsolated(ctx context.Context, prepared Prepared, rootDi
 			prepared.Fallback = "workspace_metadata_dir_failed"
 			return prepared
 		}
+		m.gitMu.Lock()
 		if err := m.runGitWithRetry(ctx, prepared.BaseDir, "worktree", "add", "--detach", worktreeRoot); err == nil {
+			m.gitMu.Unlock()
 			prepared.Effective = ModeIsolatedWrite
 			prepared.Provider = "git_worktree"
 			prepared.EffectiveDir = worktreeRoot
 			return prepared
 		} else {
+			m.gitMu.Unlock()
 			prepared.Fallback = sanitizeFallback(err)
 			return prepared
 		}

@@ -11,14 +11,17 @@ func TestAnalyzeOutputChunkBuildsTransportPatternAndSemanticLayers(t *testing.T)
 
 	chunk := "$ rm -rf /\n" +
 		"approval required before applying patch\n" +
+		"breaking change touching .github/workflows/build.yml\n" +
+		"ROMA_DELEGATE: my-gemini\n" +
+		"ROMA_DONE: finished\n" +
 		"json parse error in report\n" +
 		"{\"kind\":\"report\",\"schema_version\":\"v1\"}\n" +
 		"diff --git a/README.md b/README.md\n" +
 		"mcp: playwright ready\n"
 
 	classification := AnalyzeOutputChunk(chunk)
-	if len(classification.Transport.Lines) != 6 {
-		t.Fatalf("transport lines = %d, want 6", len(classification.Transport.Lines))
+	if len(classification.Transport.Lines) != 9 {
+		t.Fatalf("transport lines = %d, want 9", len(classification.Transport.Lines))
 	}
 	if classification.Transport.Timestamp.IsZero() {
 		t.Fatal("transport timestamp is zero")
@@ -26,6 +29,9 @@ func TestAnalyzeOutputChunkBuildsTransportPatternAndSemanticLayers(t *testing.T)
 
 	assertHasPattern(t, classification.Patterns, PatternDangerousCommand, "dangerous_shell_rm_root", domain.ConfidenceHigh)
 	assertHasPattern(t, classification.Patterns, PatternApprovalPhrase, "runtime_approval_requested", domain.ConfidenceHigh)
+	assertHasPattern(t, classification.Patterns, PatternHighRiskChange, "protected_path_scope", domain.ConfidenceHigh)
+	assertHasPattern(t, classification.Patterns, PatternDelegationHint, "runtime_delegation_requested", domain.ConfidenceMedium)
+	assertHasPattern(t, classification.Patterns, PatternCompletionHint, "runtime_execution_completed", domain.ConfidenceMedium)
 	assertHasPattern(t, classification.Patterns, PatternParseWarning, "runtime_parse_warning", domain.ConfidenceMedium)
 	assertHasPattern(t, classification.Patterns, PatternJSONEnvelope, "json_envelope_detected", domain.ConfidenceMedium)
 	assertHasPattern(t, classification.Patterns, PatternDiffHeader, "diff_header_detected", domain.ConfidenceMedium)
@@ -33,6 +39,9 @@ func TestAnalyzeOutputChunkBuildsTransportPatternAndSemanticLayers(t *testing.T)
 
 	assertHasSignal(t, classification.Signals, SignalDangerousCommandDetected, "dangerous_shell_rm_root", domain.ConfidenceHigh)
 	assertHasSignal(t, classification.Signals, SignalApprovalRequested, "runtime_approval_requested", domain.ConfidenceHigh)
+	assertHasSignal(t, classification.Signals, SignalHighRiskChangeDetected, "protected_path_scope", domain.ConfidenceHigh)
+	assertHasSignal(t, classification.Signals, SignalDelegationRequested, "runtime_delegation_requested", domain.ConfidenceMedium)
+	assertHasSignal(t, classification.Signals, SignalExecutionCompleted, "runtime_execution_completed", domain.ConfidenceMedium)
 	assertHasSignal(t, classification.Signals, SignalParseWarning, "runtime_parse_warning", domain.ConfidenceMedium)
 }
 

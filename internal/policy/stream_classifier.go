@@ -24,6 +24,9 @@ const (
 	PatternDangerousCommand PatternKind = "dangerous_command"
 	PatternApprovalPhrase   PatternKind = "approval_phrase"
 	PatternParseWarning     PatternKind = "parse_warning"
+	PatternHighRiskChange   PatternKind = "high_risk_change"
+	PatternDelegationHint   PatternKind = "delegation_hint"
+	PatternCompletionHint   PatternKind = "completion_hint"
 	PatternJSONEnvelope     PatternKind = "json_envelope"
 	PatternDiffHeader       PatternKind = "diff_header"
 	PatternToolCall         PatternKind = "tool_call"
@@ -100,6 +103,30 @@ func matchChunkPatterns(chunk TransportChunk) []PatternMatch {
 				Line:       line,
 			})
 		}
+		if signal, ok := classifyHighRiskChange(line.Text); ok {
+			out = append(out, PatternMatch{
+				Kind:       PatternHighRiskChange,
+				Reason:     signal.Reason,
+				Confidence: signal.Confidence,
+				Line:       line,
+			})
+		}
+		if signal, ok := classifyDelegationOutput(line.Text); ok {
+			out = append(out, PatternMatch{
+				Kind:       PatternDelegationHint,
+				Reason:     signal.Reason,
+				Confidence: signal.Confidence,
+				Line:       line,
+			})
+		}
+		if signal, ok := classifyCompletionOutput(line.Text); ok {
+			out = append(out, PatternMatch{
+				Kind:       PatternCompletionHint,
+				Reason:     signal.Reason,
+				Confidence: signal.Confidence,
+				Line:       line,
+			})
+		}
 		if looksLikeJSONEnvelope(line.Text) {
 			out = append(out, PatternMatch{
 				Kind:       PatternJSONEnvelope,
@@ -151,6 +178,27 @@ func elevateChunkPatterns(patterns []PatternMatch) []StreamSignal {
 		case PatternParseWarning:
 			signal = StreamSignal{
 				Kind:       SignalParseWarning,
+				Reason:     pattern.Reason,
+				Confidence: pattern.Confidence,
+				Text:       pattern.Line.Text,
+			}
+		case PatternHighRiskChange:
+			signal = StreamSignal{
+				Kind:       SignalHighRiskChangeDetected,
+				Reason:     pattern.Reason,
+				Confidence: pattern.Confidence,
+				Text:       pattern.Line.Text,
+			}
+		case PatternDelegationHint:
+			signal = StreamSignal{
+				Kind:       SignalDelegationRequested,
+				Reason:     pattern.Reason,
+				Confidence: pattern.Confidence,
+				Text:       pattern.Line.Text,
+			}
+		case PatternCompletionHint:
+			signal = StreamSignal{
+				Kind:       SignalExecutionCompleted,
 				Reason:     pattern.Reason,
 				Confidence: pattern.Confidence,
 				Text:       pattern.Line.Text,

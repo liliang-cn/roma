@@ -191,6 +191,9 @@ needs_approval: <true|false>
 recommend_curia: <true|false>
 summary: <one short sentence>
 
+Treat protected paths (.github/, infra/, migrations/, auth/, billing/), breaking changes,
+schema changes, and destructive operations as strong signals for high risk and Curia escalation.
+
 Signal kind: %s
 Signal reason: %s
 Signal confidence: %s

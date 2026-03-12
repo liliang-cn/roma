@@ -180,6 +180,9 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	if result.ConflictDetail == "" {
 		t.Fatalf("result = %#v, want conflict detail", result)
 	}
+	if result.ConflictKind == "" {
+		t.Fatalf("result = %#v, want conflict kind", result)
+	}
 	if len(result.ConflictPaths) != 1 || result.ConflictPaths[0] != "README.md" {
 		t.Fatalf("result = %#v, want README conflict path", result)
 	}
@@ -197,6 +200,9 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	}
 	if len(result.ResolutionOptions) == 0 {
 		t.Fatalf("result = %#v, want resolution options", result)
+	}
+	if len(result.ResolutionSteps) == 0 {
+		t.Fatalf("result = %#v, want structured resolution steps", result)
 	}
 }
 

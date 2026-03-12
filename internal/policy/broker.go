@@ -32,6 +32,9 @@ const (
 
 	SignalApprovalRequested        StreamSignalKind = "approval_requested"
 	SignalDangerousCommandDetected StreamSignalKind = "dangerous_command_detected"
+	SignalHighRiskChangeDetected   StreamSignalKind = "high_risk_change_detected"
+	SignalDelegationRequested      StreamSignalKind = "delegation_requested"
+	SignalExecutionCompleted       StreamSignalKind = "execution_completed"
 	SignalParseWarning             StreamSignalKind = "parse_warning"
 )
 
@@ -383,6 +386,23 @@ var (
 		regexp.MustCompile(`(?i)\bschema invalid\b`),
 		regexp.MustCompile(`(?i)\bfailed to parse\b`),
 	}
+	highRiskChangePatterns = []struct {
+		re     *regexp.Regexp
+		reason string
+	}{
+		{regexp.MustCompile(`(?i)(\.github/|infra/|migrations/|auth/|billing/)`), "protected_path_scope"},
+		{regexp.MustCompile(`(?i)\b(schema change|database migration|migration|breaking change|public api)\b`), "high_risk_change"},
+	}
+	delegationPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)roma_delegate:`),
+		regexp.MustCompile(`(?i)\bdelegate to\b`),
+		regexp.MustCompile(`(?i)\bask (codex|gemini|copilot|claude)\b`),
+	}
+	completionPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)roma_done:`),
+		regexp.MustCompile(`(?i)\btask complete\b`),
+		regexp.MustCompile(`(?i)\bfinished successfully\b`),
+	}
 )
 
 func ClassifyOutputChunk(chunk string) []StreamSignal {
@@ -427,6 +447,54 @@ func classifyParseWarning(line string) (StreamSignal, bool) {
 			return StreamSignal{
 				Kind:       SignalParseWarning,
 				Reason:     "runtime_parse_warning",
+				Confidence: domain.ConfidenceMedium,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func classifyHighRiskChange(line string) (StreamSignal, bool) {
+	for _, item := range highRiskChangePatterns {
+		if item.re.MatchString(line) {
+			confidence := domain.ConfidenceMedium
+			if strings.Contains(strings.ToLower(line), ".github/") ||
+				strings.Contains(strings.ToLower(line), "migration") ||
+				strings.Contains(strings.ToLower(line), "breaking change") {
+				confidence = domain.ConfidenceHigh
+			}
+			return StreamSignal{
+				Kind:       SignalHighRiskChangeDetected,
+				Reason:     item.reason,
+				Confidence: confidence,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func classifyDelegationOutput(line string) (StreamSignal, bool) {
+	for _, re := range delegationPatterns {
+		if re.MatchString(line) {
+			return StreamSignal{
+				Kind:       SignalDelegationRequested,
+				Reason:     "runtime_delegation_requested",
+				Confidence: domain.ConfidenceMedium,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func classifyCompletionOutput(line string) (StreamSignal, bool) {
+	for _, re := range completionPatterns {
+		if re.MatchString(line) {
+			return StreamSignal{
+				Kind:       SignalExecutionCompleted,
+				Reason:     "runtime_execution_completed",
 				Confidence: domain.ConfidenceMedium,
 				Text:       line,
 			}, true

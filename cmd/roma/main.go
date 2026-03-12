@@ -955,7 +955,7 @@ func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw 
 			}
 		case events.TypeRuntimeExited:
 			lines = append(lines, fmt.Sprintf("%s exec=%s state=%s", prefix, payloadString(record.Payload, "execution_id"), record.ReasonCode))
-		case events.TypeApprovalRequested, events.TypeDangerousCommandDetected, events.TypeParseWarning:
+		case events.TypeApprovalRequested, events.TypeDangerousCommandDetected, events.TypeHighRiskChangeDetected, events.TypeDelegationRequested, events.TypeExecutionCompletedDetected, events.TypeParseWarning:
 			line := fmt.Sprintf("%s confidence=%s reason=%s", prefix, payloadString(record.Payload, "confidence"), record.ReasonCode)
 			if text := strings.TrimSpace(payloadString(record.Payload, "text")); text != "" {
 				line += " text=" + strconv.Quote(text)
@@ -1733,6 +1733,9 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		if latestDebate.DisputeClass != "" {
 			fmt.Printf("curia_dispute_class=%s\n", latestDebate.DisputeClass)
 		}
+		if latestDebate.ArbitrationStrategy != "" {
+			fmt.Printf("curia_arbitration_strategy=%s\n", latestDebate.ArbitrationStrategy)
+		}
 		if latestDebate.ArbitrationConfidence != "" {
 			fmt.Printf("curia_arbitration_confidence=%s\n", latestDebate.ArbitrationConfidence)
 		}
@@ -1744,12 +1747,21 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		if len(latestDebate.DisputeReasons) > 0 {
 			fmt.Printf("curia_dispute_reasons=%s\n", strings.Join(latestDebate.DisputeReasons, " | "))
 		}
+		if len(latestDebate.EscalationReasons) > 0 {
+			fmt.Printf("curia_escalation_reasons=%s\n", strings.Join(latestDebate.EscalationReasons, " | "))
+		}
+		if len(latestDebate.CompetingProposalIDs) > 0 {
+			fmt.Printf("curia_competing=%s\n", strings.Join(latestDebate.CompetingProposalIDs, ","))
+		}
 		for _, item := range latestDebate.Scoreboard {
 			fmt.Printf("scoreboard[%s]=raw:%d weighted:%d veto:%d reviewers:%d\n", item.ProposalID, item.RawScore, item.WeightedScore, item.VetoCount, item.ReviewerCount)
 		}
 	}
 	if latestDecision != nil {
 		fmt.Printf("curia_winning_mode=%s\n", latestDecision.WinningMode)
+		if latestDecision.ArbitrationStrategy != "" {
+			fmt.Printf("curia_arbitration_strategy=%s\n", latestDecision.ArbitrationStrategy)
+		}
 		if latestDecision.ArbitrationConfidence != "" {
 			fmt.Printf("curia_arbitration_confidence=%s\n", latestDecision.ArbitrationConfidence)
 		}
@@ -1764,6 +1776,15 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		}
 		if len(latestDecision.SelectedProposalIDs) > 0 {
 			fmt.Printf("curia_selected=%s\n", strings.Join(latestDecision.SelectedProposalIDs, ","))
+		}
+		if len(latestDecision.CompetingProposalIDs) > 0 {
+			fmt.Printf("curia_competing=%s\n", strings.Join(latestDecision.CompetingProposalIDs, ","))
+		}
+		if latestDecision.ApprovalReason != "" {
+			fmt.Printf("curia_approval_reason=%s\n", latestDecision.ApprovalReason)
+		}
+		if len(latestDecision.EscalationReasons) > 0 {
+			fmt.Printf("curia_escalation_reasons=%s\n", strings.Join(latestDecision.EscalationReasons, " | "))
 		}
 		if len(latestDecision.RiskFlags) > 0 {
 			fmt.Printf("curia_risk_flags=%s\n", strings.Join(latestDecision.RiskFlags, " | "))
@@ -1814,11 +1835,14 @@ func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope)
 	if latestDebate != nil {
 		out.Dispute = latestDebate.DisputeDetected
 		out.DisputeClass = latestDebate.DisputeClass
+		out.ArbitrationStrategy = latestDebate.ArbitrationStrategy
 		out.ArbitrationConfidence = latestDebate.ArbitrationConfidence
 		out.ConsensusStrength = latestDebate.ConsensusStrength
 		out.CriticalVeto = latestDebate.CriticalVeto
 		out.TopScoreGap = latestDebate.TopScoreGap
 		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
+		out.EscalationReasons = append([]string(nil), latestDebate.EscalationReasons...)
+		out.CompetingProposalIDs = append([]string(nil), latestDebate.CompetingProposalIDs...)
 		for _, item := range latestDebate.Scoreboard {
 			out.Scoreboard = append(out.Scoreboard, api.CuriaScoreSummary{
 				ProposalID:    item.ProposalID,
@@ -1831,11 +1855,17 @@ func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope)
 	}
 	if latestDecision != nil {
 		out.WinningMode = latestDecision.WinningMode
+		out.ArbitrationStrategy = latestDecision.ArbitrationStrategy
 		out.ArbitrationConfidence = latestDecision.ArbitrationConfidence
 		out.ConsensusStrength = latestDecision.ConsensusStrength
 		out.Arbitrated = latestDecision.Arbitrated
 		out.ArbitratorID = latestDecision.ArbitratorID
 		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
+		out.CompetingProposalIDs = append([]string(nil), latestDecision.CompetingProposalIDs...)
+		out.ApprovalReason = latestDecision.ApprovalReason
+		if len(out.EscalationReasons) == 0 {
+			out.EscalationReasons = append([]string(nil), latestDecision.EscalationReasons...)
+		}
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
 		out.DissentSummary = append([]string(nil), latestDecision.DissentSummary...)
@@ -2039,6 +2069,9 @@ func printPlanInbox(items []api.PlanInboxEntry) error {
 			detail = item.RemediationHint
 		} else if len(item.Violations) > 0 {
 			detail = item.Violations[0]
+		}
+		if item.ConflictKind != "" {
+			detail = item.ConflictKind + ": " + detail
 		}
 		fmt.Printf(
 			"%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
@@ -2372,8 +2405,14 @@ func runPlans(ctx context.Context, args []string) error {
 				LastOccurredAt:        item.LastOccurredAt,
 				Violations:            item.Violations,
 				Conflict:              item.Conflict,
+				ConflictKind:          item.ConflictKind,
 				ConflictDetail:        item.ConflictDetail,
+				ConflictSummary:       item.ConflictSummary,
+				ConflictPaths:         item.ConflictPaths,
+				ConflictContext:       item.ConflictContext,
 				RemediationHint:       item.RemediationHint,
+				ResolutionOptions:     item.ResolutionOptions,
+				ResolutionSteps:       item.ResolutionSteps,
 			})
 		}
 		return printPlanInbox(apiItems)
@@ -3411,6 +3450,12 @@ func queueTailEventLabel(typ events.Type) string {
 		return "approval"
 	case events.TypeDangerousCommandDetected:
 		return "dangerous"
+	case events.TypeHighRiskChangeDetected:
+		return "high-risk"
+	case events.TypeDelegationRequested:
+		return "delegate"
+	case events.TypeExecutionCompletedDetected:
+		return "done"
 	case events.TypeParseWarning:
 		return "parse-warning"
 	case events.TypeSemanticReportProduced:

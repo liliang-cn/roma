@@ -24,9 +24,15 @@ prompt = sys.argv[2]
 if "Augustus arbitration phase" in prompt:
     print("winning_mode: replace")
     print("selected_proposals: prop_task_augustus_gemini-cli")
+    print("competing_proposals: prop_task_augustus_codex-cli,prop_task_augustus_gemini-cli")
     print("confidence: high")
     print("consensus_strength: augustus_resolved")
+    print("arbitration_strategy: replace_with_runner_up")
+    print("approval_required: false")
+    print("approval_reason: Augustus resolved the dispute with high confidence.")
     print("rationale: Augustus selected the safer fallback proposal.")
+    print("escalation_reasons:")
+    print("- critical_veto")
     print("risk_flags:")
     print("- augustus_override")
     print("review_questions:")
@@ -112,6 +118,15 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 	if got.ConsensusStrength != "veto_replacement" {
 		t.Fatalf("ConsensusStrength = %q, want veto_replacement", got.ConsensusStrength)
 	}
+	if got.ArbitrationStrategy != "replace_with_runner_up" {
+		t.Fatalf("ArbitrationStrategy = %q, want replace_with_runner_up", got.ArbitrationStrategy)
+	}
+	if len(got.CompetingProposalIDs) < 2 {
+		t.Fatalf("CompetingProposalIDs = %#v, want top competing proposals", got.CompetingProposalIDs)
+	}
+	if len(got.EscalationReasons) == 0 {
+		t.Fatal("EscalationReasons = empty, want escalation metadata")
+	}
 	if len(got.DissentSummary) == 0 {
 		t.Fatal("DissentSummary = empty, want dissent entries")
 	}
@@ -179,8 +194,14 @@ func TestExecutorUsesAugustusArbitration(t *testing.T) {
 	if plan.ConsensusStrength != "augustus_resolved" {
 		t.Fatalf("consensus strength = %q, want augustus_resolved", plan.ConsensusStrength)
 	}
+	if plan.ArbitrationStrategy != "replace_with_runner_up" {
+		t.Fatalf("arbitration strategy = %q, want replace_with_runner_up", plan.ArbitrationStrategy)
+	}
 	if plan.HumanApprovalRequired {
 		t.Fatalf("human approval required = true, want false")
+	}
+	if plan.ApprovalReason != "Augustus resolved the dispute with high confidence." {
+		t.Fatalf("approval reason = %q, want augustus override reason", plan.ApprovalReason)
 	}
 	var decision artifacts.DecisionPackPayload
 	found := false
@@ -204,6 +225,12 @@ func TestExecutorUsesAugustusArbitration(t *testing.T) {
 	}
 	if decision.ConsensusStrength != "augustus_resolved" {
 		t.Fatalf("consensus strength = %q, want augustus_resolved", decision.ConsensusStrength)
+	}
+	if decision.ArbitrationStrategy != "replace_with_runner_up" {
+		t.Fatalf("arbitration strategy = %q, want replace_with_runner_up", decision.ArbitrationStrategy)
+	}
+	if decision.ApprovalReason != "Augustus resolved the dispute with high confidence." {
+		t.Fatalf("approval reason = %q, want augustus override reason", decision.ApprovalReason)
 	}
 	if len(decision.DissentSummary) == 0 {
 		t.Fatal("dissent summary = empty, want arbitration dissent notes")

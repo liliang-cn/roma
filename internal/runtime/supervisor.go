@@ -482,6 +482,12 @@ func semanticEventType(kind policy.StreamSignalKind) events.Type {
 		return events.TypeApprovalRequested
 	case policy.SignalDangerousCommandDetected:
 		return events.TypeDangerousCommandDetected
+	case policy.SignalHighRiskChangeDetected:
+		return events.TypeHighRiskChangeDetected
+	case policy.SignalDelegationRequested:
+		return events.TypeDelegationRequested
+	case policy.SignalExecutionCompleted:
+		return events.TypeExecutionCompletedDetected
 	case policy.SignalParseWarning:
 		return events.TypeParseWarning
 	default:

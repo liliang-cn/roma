@@ -238,6 +238,24 @@
   - promotion reasons are persisted in scheduler eventing as `auto_curia_upgrade`
 - Added tests for:
   - policy-based Curia recommendation
+- Deepened Curia automatic arbitration:
+  - debate logs, decision packs, and execution plans now persist `arbitration_strategy`, `competing_proposal_ids`, `escalation_reasons`, and `approval_reason`
+  - disputed Curia nodes now default to `Augustus` arbitration whenever an arbitrator is present, unless explicitly forced to human mode
+  - Curia inspect summaries now surface those arbitration details directly
+- Strengthened stream classification coverage:
+  - added protected-path high-risk-change detection
+  - added delegation-hint detection
+  - added completion-hint detection
+  - queue tail/attach now shows semantic recommendation events for approval and Curia escalation
+- Productized plan conflict handling:
+  - plan preview/apply/inbox now return `conflict_kind`
+  - plan preview/apply/inbox now return structured `resolution_steps`
+  - conflict handling no longer depends on reading raw git output alone
+- Hardened concurrent workspace reclaim:
+  - git worktree add/remove operations are now serialized inside the workspace manager to avoid flaky parallel soak failures
+- Verified again:
+  - `go test -count=1 ./...`
+  - `go build ./...`
   - runtime dangerous-command semantic detection/termination
   - auto-Curia assignment generation for orchestrated and graph runs
   - queue tail semantic event rendering

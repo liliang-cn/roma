@@ -144,6 +144,7 @@ type SemanticSummary struct {
 type CuriaSummary struct {
 	Dispute               bool                                `json:"dispute"`
 	DisputeClass          string                              `json:"dispute_class,omitempty"`
+	ArbitrationStrategy   string                              `json:"arbitration_strategy,omitempty"`
 	ArbitrationConfidence domain.Confidence                   `json:"arbitration_confidence,omitempty"`
 	ConsensusStrength     string                              `json:"consensus_strength,omitempty"`
 	Arbitrated            bool                                `json:"arbitrated,omitempty"`
@@ -151,8 +152,11 @@ type CuriaSummary struct {
 	CriticalVeto          bool                                `json:"critical_veto"`
 	TopScoreGap           int                                 `json:"top_score_gap"`
 	DisputeReasons        []string                            `json:"dispute_reasons,omitempty"`
+	EscalationReasons     []string                            `json:"escalation_reasons,omitempty"`
 	WinningMode           string                              `json:"winning_mode,omitempty"`
 	SelectedProposalIDs   []string                            `json:"selected_proposal_ids,omitempty"`
+	CompetingProposalIDs  []string                            `json:"competing_proposal_ids,omitempty"`
+	ApprovalReason        string                              `json:"approval_reason,omitempty"`
 	RiskFlags             []string                            `json:"risk_flags,omitempty"`
 	ReviewQuestions       []string                            `json:"review_questions,omitempty"`
 	DissentSummary        []string                            `json:"dissent_summary,omitempty"`
@@ -237,12 +241,14 @@ type PlanInboxEntry struct {
 	LastOccurredAt        string                      `json:"last_occurred_at,omitempty"`
 	Violations            []string                    `json:"violations,omitempty"`
 	Conflict              bool                        `json:"conflict,omitempty"`
+	ConflictKind          string                      `json:"conflict_kind,omitempty"`
 	ConflictDetail        string                      `json:"conflict_detail,omitempty"`
 	ConflictSummary       string                      `json:"conflict_summary,omitempty"`
 	ConflictPaths         []string                    `json:"conflict_paths,omitempty"`
 	ConflictContext       []workspace.ConflictSnippet `json:"conflict_context,omitempty"`
 	RemediationHint       string                      `json:"remediation_hint,omitempty"`
 	ResolutionOptions     []string                    `json:"resolution_options,omitempty"`
+	ResolutionSteps       []plans.ResolutionStep      `json:"resolution_steps,omitempty"`
 }
 
 type PlanInboxResponse struct {

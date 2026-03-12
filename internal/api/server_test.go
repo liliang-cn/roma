@@ -1556,6 +1556,9 @@ func TestServerPlanApplyDryRunAndApprovalGate(t *testing.T) {
 	if len(preview.ResolutionOptions) == 0 {
 		t.Fatalf("preview = %#v, want resolution options", preview)
 	}
+	if len(preview.ResolutionSteps) == 0 {
+		t.Fatalf("preview = %#v, want structured resolution steps", preview)
+	}
 	if preview.Conflict && preview.ConflictSummary == "" {
 		t.Fatalf("preview = %#v, want conflict summary when conflict=true", preview)
 	}
@@ -1687,6 +1690,9 @@ func TestServerPlanInbox(t *testing.T) {
 	}
 	if len(items[0].ResolutionOptions) == 0 {
 		t.Fatalf("plan inbox item = %#v, want resolution options", items[0])
+	}
+	if len(items[0].ResolutionSteps) == 0 {
+		t.Fatalf("plan inbox item = %#v, want structured resolution steps", items[0])
 	}
 
 	if err := client.PlanApprove(context.Background(), envelope.ID, "local_owner"); err != nil {
@@ -1835,6 +1841,12 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	}
 	if sessionResp.Curia.ArbitrationConfidence == "" || sessionResp.Curia.ConsensusStrength == "" {
 		t.Fatalf("curia summary = %#v, want arbitration confidence and consensus strength", sessionResp.Curia)
+	}
+	if sessionResp.Curia.ArbitrationStrategy == "" {
+		t.Fatalf("curia summary = %#v, want arbitration strategy", sessionResp.Curia)
+	}
+	if len(sessionResp.Curia.CompetingProposalIDs) == 0 {
+		t.Fatalf("curia summary = %#v, want competing proposal ids", sessionResp.Curia)
 	}
 	if len(sessionResp.Curia.CandidateSummaries) == 0 || len(sessionResp.Curia.ReviewQuestions) == 0 {
 		t.Fatalf("curia summary = %#v, want decision refinement details", sessionResp.Curia)

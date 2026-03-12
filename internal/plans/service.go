@@ -24,6 +24,14 @@ type ApplyOptions struct {
 	PolicyOverrideActor string
 }
 
+type ResolutionStep struct {
+	Kind    string `json:"kind"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail,omitempty"`
+	Command string `json:"command,omitempty"`
+	Path    string `json:"path,omitempty"`
+}
+
 type ApplyResult struct {
 	ArtifactID        string                         `json:"artifact_id"`
 	SessionID         string                         `json:"session_id"`
@@ -39,12 +47,14 @@ type ApplyResult struct {
 	RequiredChecks    []string                       `json:"required_checks,omitempty"`
 	Violations        []string                       `json:"violations,omitempty"`
 	Conflict          bool                           `json:"conflict"`
+	ConflictKind      string                         `json:"conflict_kind,omitempty"`
 	ConflictDetail    string                         `json:"conflict_detail,omitempty"`
 	ConflictSummary   string                         `json:"conflict_summary,omitempty"`
 	ConflictPaths     []string                       `json:"conflict_paths,omitempty"`
 	ConflictContext   []workspacepkg.ConflictSnippet `json:"conflict_context,omitempty"`
 	RemediationHint   string                         `json:"remediation_hint,omitempty"`
 	ResolutionOptions []string                       `json:"resolution_options,omitempty"`
+	ResolutionSteps   []ResolutionStep               `json:"resolution_steps,omitempty"`
 }
 
 type Service struct {
@@ -69,12 +79,14 @@ type InboxEntry struct {
 	LastApprovalAt        string                         `json:"last_approval_at,omitempty"`
 	Violations            []string                       `json:"violations,omitempty"`
 	Conflict              bool                           `json:"conflict,omitempty"`
+	ConflictKind          string                         `json:"conflict_kind,omitempty"`
 	ConflictDetail        string                         `json:"conflict_detail,omitempty"`
 	ConflictSummary       string                         `json:"conflict_summary,omitempty"`
 	ConflictPaths         []string                       `json:"conflict_paths,omitempty"`
 	ConflictContext       []workspacepkg.ConflictSnippet `json:"conflict_context,omitempty"`
 	RemediationHint       string                         `json:"remediation_hint,omitempty"`
 	ResolutionOptions     []string                       `json:"resolution_options,omitempty"`
+	ResolutionSteps       []ResolutionStep               `json:"resolution_steps,omitempty"`
 }
 
 type ErrorKind string
@@ -161,6 +173,9 @@ func (s *Service) Inbox(ctx context.Context, sessionID string) ([]InboxEntry, er
 			if value, ok := latest.Payload["conflict_detail"].(string); ok {
 				entry.ConflictDetail = value
 			}
+			if value, ok := latest.Payload["conflict_kind"].(string); ok {
+				entry.ConflictKind = value
+			}
 			if value, ok := latest.Payload["conflict_summary"].(string); ok {
 				entry.ConflictSummary = value
 			}
@@ -175,6 +190,9 @@ func (s *Service) Inbox(ctx context.Context, sessionID string) ([]InboxEntry, er
 			}
 			if values, ok := payloadStrings(latest.Payload, "resolution_options"); ok {
 				entry.ResolutionOptions = values
+			}
+			if steps, ok := payloadResolutionSteps(latest.Payload, "resolution_steps"); ok {
+				entry.ResolutionSteps = steps
 			}
 			entry.Status = inboxStatus(payload, latest)
 		}
@@ -325,20 +343,30 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	if opts.DryRun {
 		if preview.Conflict {
 			result.Conflict = true
+			result.ConflictKind = classifyConflictKind(preview)
 			result.ConflictDetail = preview.ConflictDetail
 			result.ConflictSummary = summarizeConflict(preview)
 			result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 			result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 			result.RemediationHint = "Rebase or refresh the isolated workspace, then rerun plan preview before applying."
 			result.ResolutionOptions = resolutionOptionsConflict(artifactID, sessionID, taskID)
+			result.ResolutionSteps = resolutionStepsConflict(artifactID, sessionID, taskID, result.ConflictKind, preview)
 		} else if len(result.ChangedPaths) == 0 {
 			result.RemediationHint = "No diff detected in the workspace; confirm the task actually produced changes."
 			result.ResolutionOptions = []string{"Regenerate the workspace diff or rerun the task before applying the plan."}
+			result.ResolutionSteps = []ResolutionStep{
+				{Kind: "validate", Title: "Confirm the task produced a diff", Detail: "No changed files were detected in the isolated workspace."},
+				{Kind: "rerun", Title: "Rerun the task", Detail: "Regenerate the patch in the worktree before applying the plan."},
+			}
 		} else {
 			result.RemediationHint = "Preview passed. Approve and apply the execution plan when ready."
 			result.ResolutionOptions = []string{
 				fmt.Sprintf("roma plan approve %s", artifactID),
 				fmt.Sprintf("roma plan apply %s %s %s", sessionID, taskID, artifactID),
+			}
+			result.ResolutionSteps = []ResolutionStep{
+				{Kind: "approve", Title: "Approve the execution plan", Command: fmt.Sprintf("roma plan approve %s", artifactID)},
+				{Kind: "apply", Title: "Apply the approved plan", Command: fmt.Sprintf("roma plan apply %s %s %s", sessionID, taskID, artifactID)},
 			}
 		}
 		if recordEvents {
@@ -348,12 +376,14 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	}
 	if preview.Conflict {
 		result.Conflict = true
+		result.ConflictKind = classifyConflictKind(preview)
 		result.ConflictDetail = preview.ConflictDetail
 		result.ConflictSummary = summarizeConflict(preview)
 		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 		result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 		result.RemediationHint = "Resolve the merge conflict in the worktree or regenerate the plan against the latest base."
 		result.ResolutionOptions = resolutionOptionsConflict(artifactID, sessionID, taskID)
+		result.ResolutionSteps = resolutionStepsConflict(artifactID, sessionID, taskID, result.ConflictKind, preview)
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: preview.ConflictDetail}
 		if recordEvents {
 			s.appendRejectedEvent(ctx, result, plan, applyErr)
@@ -362,12 +392,14 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	}
 	if err := s.workspaces.MergeBack(ctx, prepared); err != nil {
 		result.Conflict = true
+		result.ConflictKind = classifyConflictKind(preview)
 		result.ConflictDetail = err.Error()
 		result.ConflictSummary = summarizeConflict(preview)
 		result.ConflictPaths = append([]string(nil), preview.ConflictPaths...)
 		result.ConflictContext = append([]workspacepkg.ConflictSnippet(nil), preview.ConflictContext...)
 		result.RemediationHint = "Inspect the worktree patch, update the base branch, and retry plan preview."
 		result.ResolutionOptions = resolutionOptionsConflict(artifactID, sessionID, taskID)
+		result.ResolutionSteps = resolutionStepsConflict(artifactID, sessionID, taskID, result.ConflictKind, preview)
 		applyErr := &ApplyError{Kind: ErrorKindConflict, Message: err.Error()}
 		if recordEvents {
 			s.appendRejectedEvent(ctx, result, plan, applyErr)
@@ -379,6 +411,11 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 		result.RolledBack = true
 		result.RemediationHint = "Fix the failing required checks in the isolated workspace and rerun preview/apply."
 		result.ResolutionOptions = resolutionOptionsChecks(artifactID, sessionID, taskID)
+		result.ResolutionSteps = []ResolutionStep{
+			{Kind: "inspect", Title: "Review failing checks", Detail: err.Error()},
+			{Kind: "preview", Title: "Re-run plan preview", Command: fmt.Sprintf("roma plan preview %s %s %s", sessionID, taskID, artifactID)},
+			{Kind: "apply", Title: "Apply again after fixes", Command: fmt.Sprintf("roma plan apply %s %s %s", sessionID, taskID, artifactID)},
+		}
 		applyErr := &ApplyError{Kind: ErrorKindCheckFailed, Message: err.Error()}
 		if recordEvents {
 			s.appendRejectedEvent(ctx, result, plan, applyErr)
@@ -390,6 +427,10 @@ func (s *Service) apply(ctx context.Context, sessionID, taskID, artifactID strin
 	result.ResolutionOptions = []string{
 		fmt.Sprintf("roma result show %s", sessionID),
 		fmt.Sprintf("roma plan rollback %s %s %s", sessionID, taskID, artifactID),
+	}
+	result.ResolutionSteps = []ResolutionStep{
+		{Kind: "review", Title: "Review the final result", Command: fmt.Sprintf("roma result show %s", sessionID)},
+		{Kind: "rollback", Title: "Rollback if validation later fails", Command: fmt.Sprintf("roma plan rollback %s %s %s", sessionID, taskID, artifactID)},
 	}
 	if recordEvents {
 		s.appendAppliedEvent(ctx, result, plan, "applied")
@@ -428,6 +469,10 @@ func (s *Service) Rollback(ctx context.Context, sessionID, taskID, artifactID st
 		ResolutionOptions: []string{
 			fmt.Sprintf("roma plan preview %s %s %s", sessionID, taskID, artifactID),
 			fmt.Sprintf("roma plan apply %s %s %s", sessionID, taskID, artifactID),
+		},
+		ResolutionSteps: []ResolutionStep{
+			{Kind: "preview", Title: "Preview the refreshed plan", Command: fmt.Sprintf("roma plan preview %s %s %s", sessionID, taskID, artifactID)},
+			{Kind: "apply", Title: "Apply again when ready", Command: fmt.Sprintf("roma plan apply %s %s %s", sessionID, taskID, artifactID)},
 		},
 	}
 	if err := s.workspaces.RollbackMerge(ctx, prepared); err != nil {
@@ -540,6 +585,7 @@ func (s *Service) appendEvent(ctx context.Context, eventType events.Type, result
 	}
 	if result.Conflict {
 		payload["conflict"] = true
+		payload["conflict_kind"] = result.ConflictKind
 		payload["conflict_detail"] = result.ConflictDetail
 		payload["conflict_summary"] = result.ConflictSummary
 		payload["conflict_paths"] = result.ConflictPaths
@@ -552,6 +598,9 @@ func (s *Service) appendEvent(ctx context.Context, eventType events.Type, result
 	}
 	if len(result.ResolutionOptions) > 0 {
 		payload["resolution_options"] = result.ResolutionOptions
+	}
+	if len(result.ResolutionSteps) > 0 {
+		payload["resolution_steps"] = result.ResolutionSteps
 	}
 	for key, value := range extra {
 		payload[key] = value
@@ -688,12 +737,25 @@ func applyInboxGuidance(entry InboxEntry) InboxEntry {
 		if len(entry.ResolutionOptions) == 0 {
 			entry.ResolutionOptions = resolutionOptionsApproval(entry.ArtifactID, entry.SessionID, entry.TaskID)
 		}
+		if len(entry.ResolutionSteps) == 0 {
+			entry.ResolutionSteps = []ResolutionStep{
+				{Kind: "inbox", Title: "Review the approval inbox", Command: fmt.Sprintf("roma plan inbox --session %s", entry.SessionID)},
+				{Kind: "approve", Title: "Approve the execution plan", Command: fmt.Sprintf("roma plan approve %s", entry.ArtifactID)},
+				{Kind: "apply", Title: "Apply after approval", Command: fmt.Sprintf("roma plan apply %s %s %s", entry.SessionID, entry.TaskID, entry.ArtifactID)},
+			}
+		}
 	case "rejected":
 		if entry.RemediationHint == "" {
 			entry.RemediationHint = "Inspect the rejected execution plan and revise it before requesting approval again."
 		}
 		if len(entry.ResolutionOptions) == 0 {
 			entry.ResolutionOptions = resolutionOptionsRejected(entry.ArtifactID, entry.SessionID)
+		}
+		if len(entry.ResolutionSteps) == 0 {
+			entry.ResolutionSteps = []ResolutionStep{
+				{Kind: "inspect", Title: "Inspect the rejected plan", Command: fmt.Sprintf("roma plan inspect %s", entry.ArtifactID)},
+				{Kind: "revise", Title: "Revise or regenerate the task output", Detail: "Update the plan scope before requesting approval again."},
+			}
 		}
 	case "attention_required":
 		if entry.RemediationHint == "" {
@@ -702,13 +764,26 @@ func applyInboxGuidance(entry InboxEntry) InboxEntry {
 		if len(entry.ResolutionOptions) == 0 {
 			entry.ResolutionOptions = resolutionOptionsConflict(entry.ArtifactID, entry.SessionID, entry.TaskID)
 		}
+		if len(entry.ResolutionSteps) == 0 {
+			entry.ResolutionSteps = resolutionStepsConflict(entry.ArtifactID, entry.SessionID, entry.TaskID, entry.ConflictKind, workspacepkg.MergePreview{
+				ConflictPaths:   entry.ConflictPaths,
+				ConflictContext: entry.ConflictContext,
+				ConflictDetail:  entry.ConflictDetail,
+			})
+		}
 	case "approved":
 		if len(entry.ResolutionOptions) == 0 {
 			entry.ResolutionOptions = []string{fmt.Sprintf("roma plan apply %s %s %s", entry.SessionID, entry.TaskID, entry.ArtifactID)}
 		}
+		if len(entry.ResolutionSteps) == 0 {
+			entry.ResolutionSteps = []ResolutionStep{{Kind: "apply", Title: "Apply the approved plan", Command: fmt.Sprintf("roma plan apply %s %s %s", entry.SessionID, entry.TaskID, entry.ArtifactID)}}
+		}
 	case "previewed", "ready":
 		if len(entry.ResolutionOptions) == 0 {
 			entry.ResolutionOptions = []string{fmt.Sprintf("roma plan preview %s %s %s", entry.SessionID, entry.TaskID, entry.ArtifactID)}
+		}
+		if len(entry.ResolutionSteps) == 0 {
+			entry.ResolutionSteps = []ResolutionStep{{Kind: "preview", Title: "Preview the execution plan", Command: fmt.Sprintf("roma plan preview %s %s %s", entry.SessionID, entry.TaskID, entry.ArtifactID)}}
 		}
 	}
 	return entry
@@ -770,6 +845,47 @@ func payloadConflictContext(payload map[string]any, key string) ([]workspacepkg.
 	}
 }
 
+func payloadResolutionSteps(payload map[string]any, key string) ([]ResolutionStep, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []ResolutionStep:
+		return append([]ResolutionStep(nil), typed...), len(typed) > 0
+	case []any:
+		out := make([]ResolutionStep, 0, len(typed))
+		for _, item := range typed {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			step := ResolutionStep{
+				Kind:    stringValue(entry["kind"]),
+				Title:   stringValue(entry["title"]),
+				Detail:  stringValue(entry["detail"]),
+				Command: stringValue(entry["command"]),
+				Path:    stringValue(entry["path"]),
+			}
+			if step.Kind == "" && step.Title == "" && step.Command == "" && step.Path == "" {
+				continue
+			}
+			out = append(out, step)
+		}
+		return out, len(out) > 0
+	default:
+		return nil, false
+	}
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
 func summarizeConflict(preview workspacepkg.MergePreview) string {
 	if len(preview.ConflictPaths) == 0 {
 		if preview.ConflictDetail != "" {
@@ -781,6 +897,24 @@ func summarizeConflict(preview workspacepkg.MergePreview) string {
 		return fmt.Sprintf("merge conflict detected in %s", preview.ConflictPaths[0])
 	}
 	return fmt.Sprintf("merge conflicts detected in %d files", len(preview.ConflictPaths))
+}
+
+func classifyConflictKind(preview workspacepkg.MergePreview) string {
+	detail := strings.ToLower(preview.ConflictDetail)
+	switch {
+	case len(preview.ConflictPaths) > 1:
+		return "multi_file_conflict"
+	case strings.Contains(detail, "already exists in working directory"):
+		return "add_add_conflict"
+	case strings.Contains(detail, "does not exist in index"), strings.Contains(detail, "removal patch"):
+		return "delete_modify_conflict"
+	case strings.Contains(detail, "patch failed"), strings.Contains(detail, "does not apply"), strings.Contains(detail, "content conflict"):
+		return "content_conflict"
+	case preview.Conflict:
+		return "merge_conflict"
+	default:
+		return ""
+	}
 }
 
 func resolutionOptionsApproval(artifactID, sessionID, taskID string) []string {
@@ -813,6 +947,23 @@ func resolutionOptionsConflict(artifactID, sessionID, taskID string) []string {
 		fmt.Sprintf("roma workspace show %s %s", sessionID, taskID),
 		"Refresh the base branch or regenerate the plan against the latest code before applying.",
 	}
+}
+
+func resolutionStepsConflict(artifactID, sessionID, taskID, conflictKind string, preview workspacepkg.MergePreview) []ResolutionStep {
+	steps := []ResolutionStep{
+		{Kind: "workspace", Title: "Inspect the isolated workspace", Command: fmt.Sprintf("roma workspace show %s %s", sessionID, taskID)},
+		{Kind: "preview", Title: "Re-run plan preview after refreshing the base", Command: fmt.Sprintf("roma plan preview %s %s %s", sessionID, taskID, artifactID)},
+		{Kind: "regenerate", Title: "Regenerate the plan against the latest code", Detail: "If the conflict persists, rerun the task so the worktree patch is rebuilt against the current base."},
+	}
+	if len(preview.ConflictPaths) > 0 {
+		steps = append([]ResolutionStep{{
+			Kind:   "inspect-conflict",
+			Title:  "Inspect the primary conflicted file",
+			Detail: conflictKind,
+			Path:   preview.ConflictPaths[0],
+		}}, steps...)
+	}
+	return steps
 }
 
 func resolutionOptionsChecks(artifactID, sessionID, taskID string) []string {
