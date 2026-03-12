@@ -954,6 +954,15 @@ func formatQueueTailLine(resp api.QueueInspectResponse) string {
 		fmt.Sprintf("status=%s", resp.Job.Status),
 	}
 	if resp.Live != nil {
+		if resp.Live.Phase != "" {
+			parts = append(parts, "phase="+resp.Live.Phase)
+		}
+		if resp.Live.CurrentRound > 0 {
+			parts = append(parts, "round="+strconv.Itoa(resp.Live.CurrentRound))
+		}
+		if resp.Live.ParticipantCount > 1 {
+			parts = append(parts, "agents="+strconv.Itoa(resp.Live.ParticipantCount))
+		}
 		if resp.Live.CurrentTaskID != "" {
 			parts = append(parts, "task="+resp.Live.CurrentTaskID)
 		}
@@ -968,6 +977,9 @@ func formatQueueTailLine(resp api.QueueInspectResponse) string {
 		}
 		if resp.Live.WorkspacePath != "" {
 			parts = append(parts, "workspace="+resp.Live.WorkspacePath)
+		}
+		if resp.Live.WorkspaceMode != "" {
+			parts = append(parts, "workspace_mode="+resp.Live.WorkspaceMode)
 		}
 		if resp.Live.LastOutputAt != nil {
 			parts = append(parts, "last_output="+resp.Live.LastOutputAt.Format(time.RFC3339))
@@ -1056,7 +1068,7 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectR
 	if resp.Session != nil && resp.Session.Status != "" {
 		sessionStatus = resp.Session.Status
 	}
-	resp.Live = api.SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, req.UpdatedAt)
+	resp.Live = api.EnrichRuntimeLive(api.SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, req.UpdatedAt), req.StarterAgent, req.Delegates)
 	return resp, nil
 }
 
@@ -1560,7 +1572,7 @@ func runSessions(ctx context.Context, args []string) error {
 				}
 			}
 		}
-		resp.Live = api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
+		resp.Live = api.EnrichRuntimeLive(api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt), resp.Session.Starter, resp.Session.Delegates)
 		raw, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal session inspect: %w", err)
@@ -1611,7 +1623,7 @@ func runSessions(ctx context.Context, args []string) error {
 				}
 			}
 		}
-		resp.Live = api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
+		resp.Live = api.EnrichRuntimeLive(api.SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt), resp.Session.Starter, resp.Session.Delegates)
 		printCuriaSummary(resp)
 		return nil
 	}
@@ -3150,7 +3162,7 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 			lease = &item
 		}
 	}
-	if live := api.SummarizeRuntimeLive(string(req.Status), items, eventItems, workspaceItems, lease, req.UpdatedAt); live != nil && req.Status == queue.StatusRunning {
+	if live := api.EnrichRuntimeLive(api.SummarizeRuntimeLive(string(req.Status), items, eventItems, workspaceItems, lease, req.UpdatedAt), req.StarterAgent, req.Delegates); live != nil && req.Status == queue.StatusRunning {
 		if live.CurrentTaskID != "" {
 			summary += " current=" + live.CurrentTaskID
 		}
@@ -3160,12 +3172,15 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		if live.ProcessPID > 0 {
 			summary += " pid=" + strconv.Itoa(live.ProcessPID)
 		}
-		if phase := queueExecutionPhase(req, live.CurrentTaskID); phase != "" {
-			summary += " phase=" + phase
+		if live.Phase != "" {
+			summary += " phase=" + live.Phase
 		}
-	}
-	if participantCount := 1 + len(req.Delegates); participantCount > 1 {
-		summary += " agents=" + strconv.Itoa(participantCount)
+		if live.CurrentRound > 0 {
+			summary += " round=" + strconv.Itoa(live.CurrentRound)
+		}
+		if live.ParticipantCount > 1 {
+			summary += " agents=" + strconv.Itoa(live.ParticipantCount)
+		}
 	}
 	artifactStore := preferredArtifactStore(controlDir)
 	artifactsForSession, err := artifactStore.List(ctx, req.SessionID)
@@ -3176,22 +3191,6 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		return summary + " " + curia
 	}
 	return summary
-}
-
-func queueExecutionPhase(req queue.Request, currentTaskID string) string {
-	if len(req.Delegates) == 0 {
-		return ""
-	}
-	switch {
-	case strings.Contains(currentTaskID, "_starter_bootstrap"):
-		return "bootstrap"
-	case strings.Contains(currentTaskID, "_starter"), strings.Contains(currentTaskID, "_delegate_"):
-		return "fanout"
-	case currentTaskID == "":
-		return "scheduled"
-	default:
-		return "fanout"
-	}
 }
 
 func queueCuriaSuffix(items []domain.ArtifactEnvelope) string {

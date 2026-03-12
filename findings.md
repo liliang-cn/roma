@@ -216,6 +216,10 @@
     - participant count
     - `bootstrap` versus `fanout` phase
     - current process pid when available
+- Runtime visibility now also exposes progress shape instead of only liveness:
+  - `queue inspect` / `session inspect` include `live.phase`, `live.current_round`, and `live.participant_count`
+  - live workspace metadata now carries `workspace_base_dir`, `workspace_mode`, and `workspace_requested_mode`
+  - `queue tail` summaries include `phase`, `round`, `agents`, and `workspace_mode`
 - There was still no stable user-facing endpoint for "what is the answer?":
   - ROMA had strong internal truth (`session`, `task`, `artifact`, `plan`) but no single human-facing outcome object
   - `report` was too executor-centric and overloaded to serve as the final answer for code changes, Curia, and pure architecture/advice runs

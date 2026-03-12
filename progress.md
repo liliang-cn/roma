@@ -327,6 +327,12 @@
   - `roma queue tail --raw <job_id>` preserves raw stdout chunks for debugging
   - live queue/session inspection now reads execution truth from the job/session working directory instead of the daemon home
   - `roma queue attach <job_id>` now aliases the same live structured stream
+- Added richer structured live progress metadata:
+  - `live.phase` now distinguishes bootstrap from fan-out for multi-agent runs
+  - `live.current_round` is derived from continuous execution ids
+  - `live.participant_count` reflects the starter plus concurrent agents
+  - `live.workspace_base_dir`, `live.workspace_mode`, and `live.workspace_requested_mode` expose workspace context directly
+  - `queue list` and `queue tail` now surface those fields without requiring full JSON inspection
 - Added a user-facing result layer:
   - runs and graphs now persist a `final_answer` artifact at session closeout
   - session history now records `final_artifact_id`

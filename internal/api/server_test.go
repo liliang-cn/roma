@@ -428,6 +428,7 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 		ID:           "job_live",
 		Prompt:       "build a feature",
 		StarterAgent: "my-codex",
+		Delegates:    []string{"my-gemini", "my-copilot"},
 		WorkingDir:   workDir,
 		SessionID:    "sess_live",
 		TaskID:       "task_live",
@@ -494,7 +495,7 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 		ActorType:  events.ActorTypeSystem,
 		OccurredAt: startedAt,
 		Payload: map[string]any{
-			"execution_id": "exec_task_live",
+			"execution_id": "exec_task_live_r2",
 			"agent":        "my-codex",
 			"pid":          4242,
 		},
@@ -532,14 +533,29 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 	if resp.Live.CurrentAgentID != "my-codex" {
 		t.Fatalf("live agent = %q, want my-codex", resp.Live.CurrentAgentID)
 	}
-	if resp.Live.ExecutionID != "exec_task_live" {
-		t.Fatalf("live execution id = %q, want exec_task_live", resp.Live.ExecutionID)
+	if resp.Live.ExecutionID != "exec_task_live_r2" {
+		t.Fatalf("live execution id = %q, want exec_task_live_r2", resp.Live.ExecutionID)
 	}
 	if resp.Live.ProcessPID != 4242 {
 		t.Fatalf("live pid = %d, want 4242", resp.Live.ProcessPID)
 	}
+	if resp.Live.Phase != "fanout" {
+		t.Fatalf("live phase = %q, want fanout", resp.Live.Phase)
+	}
+	if resp.Live.ParticipantCount != 3 {
+		t.Fatalf("live participant count = %d, want 3", resp.Live.ParticipantCount)
+	}
+	if resp.Live.CurrentRound != 2 {
+		t.Fatalf("live round = %d, want 2", resp.Live.CurrentRound)
+	}
 	if resp.Live.WorkspacePath != prepared.EffectiveDir {
 		t.Fatalf("live workspace = %q, want %q", resp.Live.WorkspacePath, prepared.EffectiveDir)
+	}
+	if resp.Live.WorkspaceMode != string(prepared.Effective) {
+		t.Fatalf("live workspace mode = %q, want %q", resp.Live.WorkspaceMode, prepared.Effective)
+	}
+	if resp.Live.WorkspaceBaseDir != workDir {
+		t.Fatalf("live workspace base dir = %q, want %q", resp.Live.WorkspaceBaseDir, workDir)
 	}
 	if resp.Live.LastOutputPreview != "still working" {
 		t.Fatalf("live output preview = %q, want still working", resp.Live.LastOutputPreview)

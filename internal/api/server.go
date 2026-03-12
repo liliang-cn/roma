@@ -1176,7 +1176,7 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		if resp.Session != nil && resp.Session.Status != "" {
 			sessionStatus = resp.Session.Status
 		}
-		resp.Live = SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, job.UpdatedAt)
+		resp.Live = EnrichRuntimeLive(SummarizeRuntimeLive(sessionStatus, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, job.UpdatedAt), job.StarterAgent, job.Delegates)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1269,7 +1269,7 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	resp.Live = SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt)
+	resp.Live = EnrichRuntimeLive(SummarizeRuntimeLive(resp.Session.Status, resp.Tasks, resp.Events, resp.Workspaces, resp.Lease, resp.Session.UpdatedAt), resp.Session.Starter, resp.Session.Delegates)
 	writeJSON(w, http.StatusOK, resp)
 }
 

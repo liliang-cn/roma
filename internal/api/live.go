@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,23 +16,31 @@ import (
 
 // RuntimeLiveSummary captures best-effort live execution state for a running session.
 type RuntimeLiveSummary struct {
-	State             string     `json:"state,omitempty"`
-	CurrentTaskID     string     `json:"current_task_id,omitempty"`
-	CurrentTaskTitle  string     `json:"current_task_title,omitempty"`
-	CurrentTaskState  string     `json:"current_task_state,omitempty"`
-	CurrentAgentID    string     `json:"current_agent_id,omitempty"`
-	ExecutionID       string     `json:"execution_id,omitempty"`
-	ProcessPID        int        `json:"process_pid,omitempty"`
-	WorkspacePath     string     `json:"workspace_path,omitempty"`
-	WorkspaceProvider string     `json:"workspace_provider,omitempty"`
-	WorkspaceStatus   string     `json:"workspace_status,omitempty"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	LastOutputAt      *time.Time `json:"last_output_at,omitempty"`
-	LastEventAt       *time.Time `json:"last_event_at,omitempty"`
-	LastHeartbeatAt   *time.Time `json:"last_heartbeat_at,omitempty"`
-	LastEventType     string     `json:"last_event_type,omitempty"`
-	LastOutputPreview string     `json:"last_output_preview,omitempty"`
+	State              string     `json:"state,omitempty"`
+	Phase              string     `json:"phase,omitempty"`
+	ParticipantCount   int        `json:"participant_count,omitempty"`
+	CurrentRound       int        `json:"current_round,omitempty"`
+	CurrentTaskID      string     `json:"current_task_id,omitempty"`
+	CurrentTaskTitle   string     `json:"current_task_title,omitempty"`
+	CurrentTaskState   string     `json:"current_task_state,omitempty"`
+	CurrentAgentID     string     `json:"current_agent_id,omitempty"`
+	ExecutionID        string     `json:"execution_id,omitempty"`
+	ProcessPID         int        `json:"process_pid,omitempty"`
+	WorkspaceBaseDir   string     `json:"workspace_base_dir,omitempty"`
+	WorkspacePath      string     `json:"workspace_path,omitempty"`
+	WorkspaceMode      string     `json:"workspace_mode,omitempty"`
+	WorkspaceRequested string     `json:"workspace_requested_mode,omitempty"`
+	WorkspaceProvider  string     `json:"workspace_provider,omitempty"`
+	WorkspaceStatus    string     `json:"workspace_status,omitempty"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	LastOutputAt       *time.Time `json:"last_output_at,omitempty"`
+	LastEventAt        *time.Time `json:"last_event_at,omitempty"`
+	LastHeartbeatAt    *time.Time `json:"last_heartbeat_at,omitempty"`
+	LastEventType      string     `json:"last_event_type,omitempty"`
+	LastOutputPreview  string     `json:"last_output_preview,omitempty"`
 }
+
+var executionRoundPattern = regexp.MustCompile(`_r(\d+)$`)
 
 // SummarizeRuntimeLive derives a best-effort running summary from persisted session data.
 func SummarizeRuntimeLive(sessionStatus string, tasks []domain.TaskRecord, records []events.Record, workspaces []workspace.Prepared, lease *scheduler.LeaseRecord, heartbeatAt time.Time) *RuntimeLiveSummary {
@@ -51,6 +61,7 @@ func SummarizeRuntimeLive(sessionStatus string, tasks []domain.TaskRecord, recor
 	if runtimeStarted != nil {
 		summary.ExecutionID = payloadString(runtimeStarted.Payload, "execution_id")
 		summary.ProcessPID = payloadInt(runtimeStarted.Payload, "pid")
+		summary.CurrentRound = parseExecutionRound(summary.ExecutionID)
 		if agent := payloadString(runtimeStarted.Payload, "agent"); agent != "" {
 			summary.CurrentAgentID = agent
 		}
@@ -80,7 +91,10 @@ func SummarizeRuntimeLive(sessionStatus string, tasks []domain.TaskRecord, recor
 	}
 
 	if prepared := selectWorkspace(summary.CurrentTaskID, workspaces, lease); prepared != nil {
+		summary.WorkspaceBaseDir = prepared.BaseDir
 		summary.WorkspacePath = prepared.EffectiveDir
+		summary.WorkspaceMode = string(prepared.Effective)
+		summary.WorkspaceRequested = string(prepared.Requested)
 		summary.WorkspaceProvider = prepared.Provider
 		summary.WorkspaceStatus = prepared.Status
 	}
@@ -98,6 +112,29 @@ func SummarizeRuntimeLive(sessionStatus string, tasks []domain.TaskRecord, recor
 
 	if summary.CurrentTaskID == "" && summary.ExecutionID == "" && summary.LastEventAt == nil && summary.WorkspacePath == "" && summary.LastHeartbeatAt == nil {
 		return nil
+	}
+	return summary
+}
+
+// EnrichRuntimeLive attaches session/job-level orchestration metadata to a live runtime summary.
+func EnrichRuntimeLive(summary *RuntimeLiveSummary, starter string, delegates []string) *RuntimeLiveSummary {
+	if summary == nil {
+		return nil
+	}
+	participantCount := 0
+	if strings.TrimSpace(starter) != "" {
+		participantCount = 1
+	}
+	participantCount += len(delegates)
+	if participantCount > 1 {
+		summary.ParticipantCount = participantCount
+		summary.Phase = executionPhase(summary.CurrentTaskID)
+	}
+	if summary.CurrentRound == 0 {
+		summary.CurrentRound = parseExecutionRound(summary.ExecutionID)
+	}
+	if summary.WorkspaceBaseDir == "" && summary.WorkspacePath != "" {
+		summary.WorkspaceBaseDir = inferWorkspaceBaseDir(summary.WorkspacePath)
 	}
 	return summary
 }
@@ -213,7 +250,9 @@ func selectWorkspace(taskID string, workspaces []workspace.Prepared, lease *sche
 			if taskID != "" && ref.TaskID == taskID {
 				return &workspace.Prepared{
 					TaskID:       ref.TaskID,
+					BaseDir:      inferWorkspaceBaseDir(ref.EffectiveDir),
 					EffectiveDir: ref.EffectiveDir,
+					Effective:    workspace.ModeIsolatedWrite,
 					Provider:     ref.Provider,
 					Status:       "prepared",
 				}
@@ -258,6 +297,43 @@ func hasAwaitingApproval(tasks []domain.TaskRecord, lease *scheduler.LeaseRecord
 		}
 	}
 	return false
+}
+
+func executionPhase(currentTaskID string) string {
+	switch {
+	case strings.Contains(currentTaskID, "_starter_bootstrap"):
+		return "bootstrap"
+	case strings.Contains(currentTaskID, "_starter"), strings.Contains(currentTaskID, "_delegate_"):
+		return "fanout"
+	case currentTaskID == "":
+		return ""
+	default:
+		return "fanout"
+	}
+}
+
+func parseExecutionRound(executionID string) int {
+	matches := executionRoundPattern.FindStringSubmatch(strings.TrimSpace(executionID))
+	if len(matches) != 2 {
+		return 0
+	}
+	value, err := strconv.Atoi(matches[1])
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+func inferWorkspaceBaseDir(path string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" {
+		return ""
+	}
+	marker := string(filepath.Separator) + ".roma" + string(filepath.Separator) + "workspaces" + string(filepath.Separator)
+	if idx := strings.Index(cleaned, marker); idx > 0 {
+		return cleaned[:idx]
+	}
+	return ""
 }
 
 func payloadString(payload map[string]any, key string) string {

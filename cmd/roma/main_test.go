@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/liliang-cn/roma/internal/api"
 	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
@@ -72,21 +74,6 @@ func TestParseQueueArgsAttach(t *testing.T) {
 	}
 }
 
-func TestQueueExecutionPhase(t *testing.T) {
-	t.Parallel()
-
-	req := queue.Request{Delegates: []string{"my-gemini", "my-copilot"}}
-	if got := queueExecutionPhase(req, "task_1_starter_bootstrap"); got != "bootstrap" {
-		t.Fatalf("bootstrap phase = %q, want bootstrap", got)
-	}
-	if got := queueExecutionPhase(req, "task_1_delegate_1"); got != "fanout" {
-		t.Fatalf("fanout phase = %q, want fanout", got)
-	}
-	if got := queueExecutionPhase(queue.Request{}, "task_1"); got != "" {
-		t.Fatalf("single-agent phase = %q, want empty", got)
-	}
-}
-
 func TestQueueTailEventLinesStructured(t *testing.T) {
 	t.Parallel()
 
@@ -110,6 +97,42 @@ func TestQueueTailEventLinesStructured(t *testing.T) {
 	want := `[runtime-start] time=2026-03-11T15:00:00Z task=task_1 exec=exec_1 agent=my-codex pid=4242`
 	if lines[0] != want {
 		t.Fatalf("structured line = %q, want %q", lines[0], want)
+	}
+}
+
+func TestFormatQueueTailLineIncludesStructuredLiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC)
+	line := formatQueueTailLine(api.QueueInspectResponse{
+		Job: queue.Request{
+			ID:     "job_1",
+			Status: queue.StatusRunning,
+		},
+		Live: &api.RuntimeLiveSummary{
+			Phase:            "fanout",
+			CurrentRound:     2,
+			ParticipantCount: 3,
+			CurrentTaskID:    "task_delegate",
+			CurrentAgentID:   "my-codex",
+			ProcessPID:       4242,
+			WorkspacePath:    "/tmp/repo/.roma/workspaces/sess/task/root",
+			WorkspaceMode:    "isolated_write",
+			LastOutputAt:     &now,
+		},
+	})
+	for _, want := range []string{
+		"phase=fanout",
+		"round=2",
+		"agents=3",
+		"task=task_delegate",
+		"agent=my-codex",
+		"pid=4242",
+		"workspace_mode=isolated_write",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("formatQueueTailLine() = %q, missing %q", line, want)
+		}
 	}
 }
 

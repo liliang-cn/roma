@@ -205,6 +205,7 @@ Status: in_progress
 - [x] Add an attach mode beyond polling tail so users can watch one running session without re-printing full inspect payloads
 - [x] Make `queue tail` default to structured runtime events, with `--raw` preserving raw stdout chunks
 - [x] Add a first-class user-facing session outcome artifact and expose it via `roma result show <session_id>`
+- [x] Surface `current_round`, `participant_count`, `phase`, and richer workspace metadata through live queue/session inspection
 
 ## Risks
 
@@ -222,7 +223,7 @@ Status: in_progress
 
 ## Next Immediate Steps
 
-1. Expose the new starter-bootstrap / parallel fan-out semantics more clearly in queue/session summaries so users can see when fan-out begins.
+1. Keep exposing starter-bootstrap / parallel fan-out more clearly in queue/session summaries and structured tail output.
 2. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
 3. Keep improving the user-facing outcome layer so `result show` can remain the main exit, not just a thin artifact wrapper.
-4. Make live progress more actionable by surfacing current round, participant count, and richer workspace metadata while a job is running.
+4. Make live progress more actionable with richer event semantics beyond current round, participant count, and workspace metadata.
