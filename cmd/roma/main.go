@@ -40,8 +40,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		printUsage()
-		return nil
+		return runTUI(ctx, nil)
 	}
 
 	registry, err := agents.DefaultRegistry()
@@ -99,6 +98,8 @@ func run(ctx context.Context, args []string) error {
 		return runStatus(ctx)
 	case "submit":
 		return runSubmit(ctx, args[1:])
+	case "tui":
+		return runTUI(ctx, args[1:])
 	case "session", "sessions":
 		return runSessions(ctx, args[1:])
 	case "task", "tasks":
@@ -3079,6 +3080,8 @@ func printUsage() {
 	fmt.Println("  roma <command> [subcommand] [flags]")
 	fmt.Println("")
 	fmt.Println("Core:")
+	fmt.Println("  roma")
+	fmt.Println("  roma tui [--cwd <dir>]")
 	fmt.Println(`  roma run --agent codex --with gemini,copilot "build a feature"`)
 	fmt.Println(`  roma submit --agent codex --with gemini,copilot "build a feature"`)
 	fmt.Println("  roma status")
@@ -3097,9 +3100,11 @@ func printUsage() {
 	fmt.Println("  roma cancel <job_id>")
 	fmt.Println("")
 	fmt.Println("Examples:")
+	fmt.Println("  roma")
 	fmt.Println("  roma help queue")
 	fmt.Println("  roma help agent")
 	fmt.Println("  roma help debug")
+	fmt.Println("  roma tui")
 	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
 	fmt.Println(`  roma run --agent my-codex --with my-gemini,my-copilot "build a feature"`)
 }
@@ -3144,6 +3149,11 @@ func printTopicUsage(topic string) {
 	case "result", "results":
 		fmt.Println("roma result usage:")
 		fmt.Println("  roma result show <session_id>")
+	case "tui":
+		fmt.Println("roma tui usage:")
+		fmt.Println("  roma tui [--cwd <dir>]")
+		fmt.Println("")
+		fmt.Println("The TUI starts an embedded romad for the selected working directory and stops it when the TUI exits.")
 	case "debug":
 		fmt.Println("roma debug usage:")
 		fmt.Println("  roma debug session <subcommand>")

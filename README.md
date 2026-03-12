@@ -34,6 +34,28 @@ The intended user flow is:
 4. approve or reject when policy or plan gates require it
 5. preview, apply, or roll back the resulting execution plan
 
+## TUI Mode
+
+ROMA also supports a Bubble Tea TUI for the "single terminal, full control" workflow.
+
+- `roma`
+- `roma tui`
+- `romatui`
+
+`roma` now defaults to the TUI. In TUI mode, ROMA starts an embedded `romad` when the TUI launches and stops it when the TUI exits. The TUI stays daemon-first and talks to the same local API; it does not bypass the control plane.
+
+Current slash commands:
+
+- `/help`
+- `/status`
+- `/agent <id>`
+- `/with <a,b>`
+- `/run <prompt>`
+- `/submit <prompt>`
+- `/open <job_id>`
+- `/cancel [job_id]`
+- `/result [session_id]`
+
 ## Build
 
 Build the binaries:

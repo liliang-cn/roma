@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,10 +46,23 @@ type Daemon struct {
 
 // NewDaemon constructs the bootstrap daemon.
 func NewDaemon() (*Daemon, error) {
-	mem := store.NewMemoryStore()
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
+	}
+	return NewDaemonForWorkingDir(wd)
+}
+
+// NewDaemonForWorkingDir constructs the bootstrap daemon for one target working directory.
+func NewDaemonForWorkingDir(workingDir string) (*Daemon, error) {
+	mem := store.NewMemoryStore()
+	wd := strings.TrimSpace(workingDir)
+	if wd == "" {
+		var err error
+		wd, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("get working directory: %w", err)
+		}
 	}
 	controlDir := romapath.HomeDir()
 	registry, err := agents.DefaultRegistry()

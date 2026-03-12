@@ -226,6 +226,11 @@
   - `queue list` summaries now also expose multi-agent execution shape for active jobs:
     - participant count
     - `bootstrap` versus `fanout` phase
+- A first TUI surface now exists on top of the daemon API instead of bypassing it:
+  - `roma tui`
+  - `romatui`
+  - the TUI owns the lifetime of an embedded `romad`
+  - the TUI stays slash-command-driven instead of inventing a second orchestration model
     - current process pid when available
 - Runtime visibility now also exposes progress shape instead of only liveness:
   - `queue inspect` / `session inspect` include `live.phase`, `live.current_round`, and `live.participant_count`

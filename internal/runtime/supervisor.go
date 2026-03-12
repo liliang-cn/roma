@@ -616,7 +616,7 @@ func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *ex
 
 func (s *Supervisor) streamOutput(req StartRequest, execID string, reader io.Reader, dst *bytes.Buffer, stream string) error {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		chunk := line + "\n"

@@ -7,3 +7,5 @@ romad.log
 .snapshots/
 
 bin/
+
+refs/

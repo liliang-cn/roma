@@ -19,6 +19,8 @@ type FileEventStore struct {
 	path string
 }
 
+const scannerMaxTokenSize = 8 * 1024 * 1024
+
 // NewFileEventStore constructs a file-backed event store.
 func NewFileEventStore(workDir string) *FileEventStore {
 	return &FileEventStore{
@@ -67,6 +69,7 @@ func (s *FileEventStore) ListEvents(ctx context.Context, filter EventFilter) ([]
 
 	out := make([]events.Record, 0)
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
 	for scanner.Scan() {
 		var event events.Record
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {

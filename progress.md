@@ -253,6 +253,11 @@
   - conflict handling no longer depends on reading raw git output alone
 - Hardened concurrent workspace reclaim:
   - git worktree add/remove operations are now serialized inside the workspace manager to avoid flaky parallel soak failures
+- Added a first Bubble Tea TUI surface:
+  - `roma tui`
+  - `romatui`
+  - the TUI launches an embedded `romad` on startup and cancels it on exit
+  - the TUI is slash-command driven and currently supports `/help`, `/status`, `/agent`, `/with`, `/run`, `/submit`, `/open`, `/cancel`, `/result`, and `/refresh`
 - Verified again:
   - `go test -count=1 ./...`
   - `go build ./...`

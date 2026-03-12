@@ -227,6 +227,15 @@ Status: in_progress
 - [x] Make `queue inspect` summarized by default, with raw event/artifact expansion only when explicitly requested
 - [x] Keep queue tail runtime-start pid formatting stable as an integer instead of float/scientific notation
 - [x] Make `roma result show` return a friendly pending result state for running/awaiting-approval sessions instead of failing on missing final answers
+- [x] Add a Bubble Tea TUI mode that starts an embedded `romad` on launch and stops it on exit
+- [x] Expose TUI slash commands for the everyday workflow:
+  - `/agent`
+  - `/with`
+  - `/run`
+  - `/submit`
+  - `/cancel`
+  - `/result`
+  - `/status`
 
 ## Risks
 
