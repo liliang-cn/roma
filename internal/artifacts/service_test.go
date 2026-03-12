@@ -138,6 +138,8 @@ func TestBuildExecutionPlanTracksReplaceWinningMode(t *testing.T) {
 		},
 		WinningMode:           "replace",
 		SelectedProposalIDs:   []string{"prop_task_curia_replace"},
+		DecisionConfidence:    domain.ConfidenceHigh,
+		ConsensusStrength:     "augustus_resolved",
 		HumanApprovalRequired: true,
 	})
 	if err != nil {
@@ -149,6 +151,15 @@ func TestBuildExecutionPlanTracksReplaceWinningMode(t *testing.T) {
 	}
 	if payload.ApplyMode != "proposal_replace" {
 		t.Fatalf("apply mode = %q, want proposal_replace", payload.ApplyMode)
+	}
+	if payload.DecisionConfidence != domain.ConfidenceHigh {
+		t.Fatalf("decision confidence = %q, want high", payload.DecisionConfidence)
+	}
+	if payload.ConsensusStrength != "augustus_resolved" {
+		t.Fatalf("consensus strength = %q, want augustus_resolved", payload.ConsensusStrength)
+	}
+	if len(payload.SelectedProposalIDs) != 1 || payload.SelectedProposalIDs[0] != "prop_task_curia_replace" {
+		t.Fatalf("selected proposals = %#v, want replace proposal id", payload.SelectedProposalIDs)
 	}
 	if len(payload.Steps) == 0 || payload.Steps[0] != "Replace the prior dominant proposal with the arbitrated fallback plan." {
 		t.Fatalf("steps = %#v, want replace preface", payload.Steps)
@@ -164,19 +175,21 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 		{ProposalID: "prop_b", RawScore: 18, WeightedScore: 36, VetoCount: 1, ReviewerCount: 2},
 	}
 	debate, err := svc.BuildDebateLog(context.Background(), BuildDebateLogRequest{
-		SessionID:           "sess_1",
-		TaskID:              "task_curia",
-		RunID:               "task_curia_debate",
-		ProposalIDs:         []string{"prop_a", "prop_b"},
-		BallotIDs:           []string{"ballot_1", "ballot_2"},
-		WinningProposalID:   "prop_a",
-		DisputeClass:        "close_score",
-		DisputeReasons:      []string{"close vote"},
-		DisputeDetected:     true,
-		CriticalVeto:        false,
-		TopScoreGap:         2,
-		Scoreboard:          scoreboard,
-		ArbitrationRequired: true,
+		SessionID:             "sess_1",
+		TaskID:                "task_curia",
+		RunID:                 "task_curia_debate",
+		ProposalIDs:           []string{"prop_a", "prop_b"},
+		BallotIDs:             []string{"ballot_1", "ballot_2"},
+		WinningProposalID:     "prop_a",
+		DisputeClass:          "close_score",
+		ArbitrationConfidence: domain.ConfidenceMedium,
+		ConsensusStrength:     "disputed_consensus",
+		DisputeReasons:        []string{"close vote"},
+		DisputeDetected:       true,
+		CriticalVeto:          false,
+		TopScoreGap:           2,
+		Scoreboard:            scoreboard,
+		ArbitrationRequired:   true,
 	})
 	if err != nil {
 		t.Fatalf("BuildDebateLog() error = %v", err)
@@ -188,23 +201,32 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	if debatePayload.DisputeClass != "close_score" {
 		t.Fatalf("dispute class = %q, want close_score", debatePayload.DisputeClass)
 	}
+	if debatePayload.ArbitrationConfidence != domain.ConfidenceMedium {
+		t.Fatalf("debate confidence = %q, want medium", debatePayload.ArbitrationConfidence)
+	}
+	if debatePayload.ConsensusStrength != "disputed_consensus" {
+		t.Fatalf("debate consensus strength = %q, want disputed_consensus", debatePayload.ConsensusStrength)
+	}
 	if len(debatePayload.Scoreboard) != 2 || debatePayload.Scoreboard[0].WeightedScore != 54 {
 		t.Fatalf("debate scoreboard = %#v, want weighted scoreboard entries", debatePayload.Scoreboard)
 	}
 
 	decision, err := svc.BuildDecisionPack(context.Background(), BuildDecisionPackRequest{
-		SessionID:           "sess_1",
-		TaskID:              "task_curia",
-		RunID:               "task_curia_decision",
-		WinningMode:         "merge",
-		DisputeClass:        "close_score",
-		SelectedProposalIDs: []string{"prop_a", "prop_b"},
-		ExecutionPlanID:     "plan_1",
-		ApprovalRequired:    true,
-		MergedRationale:     "merge due to close vote",
-		RejectedReasons:     []string{"prop_c scored lower"},
-		RiskFlags:           []string{"close_score", "needs_review"},
-		ReviewQuestions:     []string{"Which tradeoff separates prop_a and prop_b?"},
+		SessionID:             "sess_1",
+		TaskID:                "task_curia",
+		RunID:                 "task_curia_decision",
+		WinningMode:           "merge",
+		DisputeClass:          "close_score",
+		ArbitrationConfidence: domain.ConfidenceMedium,
+		ConsensusStrength:     "disputed_consensus",
+		SelectedProposalIDs:   []string{"prop_a", "prop_b"},
+		ExecutionPlanID:       "plan_1",
+		ApprovalRequired:      true,
+		MergedRationale:       "merge due to close vote",
+		RejectedReasons:       []string{"prop_c scored lower"},
+		RiskFlags:             []string{"close_score", "needs_review"},
+		ReviewQuestions:       []string{"Which tradeoff separates prop_a and prop_b?"},
+		DissentSummary:        []string{"prop_c was not selected."},
 		CandidateSummaries: []CuriaCandidateSummary{
 			{ProposalID: "prop_a", Summary: "A", RawScore: 20, WeightedScore: 54, VetoCount: 0},
 			{ProposalID: "prop_b", Summary: "B", RawScore: 18, WeightedScore: 36, VetoCount: 1},
@@ -224,6 +246,12 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	if decisionPayload.DisputeClass != "close_score" {
 		t.Fatalf("decision dispute class = %q, want close_score", decisionPayload.DisputeClass)
 	}
+	if decisionPayload.ArbitrationConfidence != domain.ConfidenceMedium {
+		t.Fatalf("decision confidence = %q, want medium", decisionPayload.ArbitrationConfidence)
+	}
+	if decisionPayload.ConsensusStrength != "disputed_consensus" {
+		t.Fatalf("decision consensus strength = %q, want disputed_consensus", decisionPayload.ConsensusStrength)
+	}
 	if len(decisionPayload.Scoreboard) != 2 || decisionPayload.Scoreboard[1].VetoCount != 1 {
 		t.Fatalf("decision scoreboard = %#v, want veto count carried through", decisionPayload.Scoreboard)
 	}
@@ -235,6 +263,9 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	}
 	if len(decisionPayload.ReviewerBreakdown) != 1 || decisionPayload.ReviewerBreakdown[0].ReviewerID != "codex-cli" {
 		t.Fatalf("reviewer breakdown = %#v, want reviewer contribution", decisionPayload.ReviewerBreakdown)
+	}
+	if len(decisionPayload.DissentSummary) != 1 {
+		t.Fatalf("dissent summary = %#v, want one dissent note", decisionPayload.DissentSummary)
 	}
 }
 

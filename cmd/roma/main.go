@@ -1730,6 +1730,12 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		if latestDebate.DisputeClass != "" {
 			fmt.Printf("curia_dispute_class=%s\n", latestDebate.DisputeClass)
 		}
+		if latestDebate.ArbitrationConfidence != "" {
+			fmt.Printf("curia_arbitration_confidence=%s\n", latestDebate.ArbitrationConfidence)
+		}
+		if latestDebate.ConsensusStrength != "" {
+			fmt.Printf("curia_consensus_strength=%s\n", latestDebate.ConsensusStrength)
+		}
 		fmt.Printf("curia_critical_veto=%t\n", latestDebate.CriticalVeto)
 		fmt.Printf("curia_top_score_gap=%d\n", latestDebate.TopScoreGap)
 		if len(latestDebate.DisputeReasons) > 0 {
@@ -1741,6 +1747,12 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 	}
 	if latestDecision != nil {
 		fmt.Printf("curia_winning_mode=%s\n", latestDecision.WinningMode)
+		if latestDecision.ArbitrationConfidence != "" {
+			fmt.Printf("curia_arbitration_confidence=%s\n", latestDecision.ArbitrationConfidence)
+		}
+		if latestDecision.ConsensusStrength != "" {
+			fmt.Printf("curia_consensus_strength=%s\n", latestDecision.ConsensusStrength)
+		}
 		if latestDecision.Arbitrated {
 			fmt.Printf("curia_arbitrated=true\n")
 		}
@@ -1755,6 +1767,9 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 		}
 		if len(latestDecision.ReviewQuestions) > 0 {
 			fmt.Printf("curia_review_questions=%s\n", strings.Join(latestDecision.ReviewQuestions, " | "))
+		}
+		if len(latestDecision.DissentSummary) > 0 {
+			fmt.Printf("curia_dissent=%s\n", strings.Join(latestDecision.DissentSummary, " | "))
 		}
 		for _, item := range latestDecision.CandidateSummaries {
 			fmt.Printf("candidate[%s]=weighted:%d raw:%d veto:%d summary:%s\n", item.ProposalID, item.WeightedScore, item.RawScore, item.VetoCount, item.Summary)
@@ -1796,6 +1811,8 @@ func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope)
 	if latestDebate != nil {
 		out.Dispute = latestDebate.DisputeDetected
 		out.DisputeClass = latestDebate.DisputeClass
+		out.ArbitrationConfidence = latestDebate.ArbitrationConfidence
+		out.ConsensusStrength = latestDebate.ConsensusStrength
 		out.CriticalVeto = latestDebate.CriticalVeto
 		out.TopScoreGap = latestDebate.TopScoreGap
 		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
@@ -1811,11 +1828,14 @@ func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope)
 	}
 	if latestDecision != nil {
 		out.WinningMode = latestDecision.WinningMode
+		out.ArbitrationConfidence = latestDecision.ArbitrationConfidence
+		out.ConsensusStrength = latestDecision.ConsensusStrength
 		out.Arbitrated = latestDecision.Arbitrated
 		out.ArbitratorID = latestDecision.ArbitratorID
 		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
+		out.DissentSummary = append([]string(nil), latestDecision.DissentSummary...)
 		out.CandidateSummaries = append([]artifacts.CuriaCandidateSummary(nil), latestDecision.CandidateSummaries...)
 		out.ReviewerBreakdown = append([]artifacts.CuriaReviewContribution(nil), latestDecision.ReviewerBreakdown...)
 		out.ReviewerWeights = summarizeCuriaReviewerWeightsCLI(workDir, latestDecision.ReviewerBreakdown)

@@ -772,6 +772,8 @@ func summarizeCuriaArtifacts(workDir string, items []domain.ArtifactEnvelope) *C
 	if latestDebate != nil {
 		out.Dispute = latestDebate.DisputeDetected
 		out.DisputeClass = latestDebate.DisputeClass
+		out.ArbitrationConfidence = latestDebate.ArbitrationConfidence
+		out.ConsensusStrength = latestDebate.ConsensusStrength
 		out.CriticalVeto = latestDebate.CriticalVeto
 		out.TopScoreGap = latestDebate.TopScoreGap
 		out.DisputeReasons = append([]string(nil), latestDebate.DisputeReasons...)
@@ -787,11 +789,14 @@ func summarizeCuriaArtifacts(workDir string, items []domain.ArtifactEnvelope) *C
 	}
 	if latestDecision != nil {
 		out.WinningMode = latestDecision.WinningMode
+		out.ArbitrationConfidence = latestDecision.ArbitrationConfidence
+		out.ConsensusStrength = latestDecision.ConsensusStrength
 		out.Arbitrated = latestDecision.Arbitrated
 		out.ArbitratorID = latestDecision.ArbitratorID
 		out.SelectedProposalIDs = append([]string(nil), latestDecision.SelectedProposalIDs...)
 		out.RiskFlags = append([]string(nil), latestDecision.RiskFlags...)
 		out.ReviewQuestions = append([]string(nil), latestDecision.ReviewQuestions...)
+		out.DissentSummary = append([]string(nil), latestDecision.DissentSummary...)
 		out.CandidateSummaries = append([]artifacts.CuriaCandidateSummary(nil), latestDecision.CandidateSummaries...)
 		out.ReviewerBreakdown = append([]artifacts.CuriaReviewContribution(nil), latestDecision.ReviewerBreakdown...)
 		out.ReviewerWeights = summarizeCuriaReviewerWeights(workDir, latestDecision.ReviewerBreakdown)

@@ -1813,8 +1813,14 @@ func TestServerCuriaDecisionFlowProducesPlanInboxApproval(t *testing.T) {
 	if sessionResp.Curia.DisputeClass == "" {
 		t.Fatalf("curia summary = %#v, want dispute class", sessionResp.Curia)
 	}
+	if sessionResp.Curia.ArbitrationConfidence == "" || sessionResp.Curia.ConsensusStrength == "" {
+		t.Fatalf("curia summary = %#v, want arbitration confidence and consensus strength", sessionResp.Curia)
+	}
 	if len(sessionResp.Curia.CandidateSummaries) == 0 || len(sessionResp.Curia.ReviewQuestions) == 0 {
 		t.Fatalf("curia summary = %#v, want decision refinement details", sessionResp.Curia)
+	}
+	if len(sessionResp.Curia.DissentSummary) == 0 {
+		t.Fatalf("curia summary = %#v, want dissent summary", sessionResp.Curia)
 	}
 	if len(sessionResp.Curia.ReviewerBreakdown) == 0 {
 		t.Fatalf("curia summary = %#v, want reviewer contribution details", sessionResp.Curia)

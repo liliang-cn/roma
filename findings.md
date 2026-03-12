@@ -180,8 +180,11 @@
   - Curia reputation now also has a dedicated inspection path:
     - daemon API `/curia/reputation`
     - CLI `roma curia reputation [--reviewer <agent_id>]`
-  - arbitration is human-first
-  - there is no Augustus path, no richer persisted reputation model, and no automatic dispute engine yet
+  - Curia is no longer purely human-first:
+    - `Augustus` automatic arbitration exists
+    - reviewer reputation is persisted on disk
+    - automatic Curia promotion exists for risky multi-agent runs and graph nodes
+  - the remaining Curia gap is not the absence of arbitration primitives; it is the lack of a mature high-confidence automatic dispute engine for more complex arguments
 - Execution-plan apply now has daemon API coverage, approval-aware gating, and dedicated audit events, but it still lacks richer replay summaries and conflict preview UX.
 - execution-plan preview is now a first-class concept:
   - daemon exposes `/plans/preview`
@@ -263,6 +266,17 @@
   - the local rule classifier should stay authoritative for immediate block/kill decisions
   - the starter/coordinator agent should consume emitted runtime signals for multi-agent runs and persist richer `semantic_report` artifacts
   - single-agent runs should fall back to the current agent as reviewer instead of exposing a separate classifier profile to users
+- The runtime stream classifier is now explicitly layered instead of being a single ad hoc matcher:
+  - transport chunk normalization
+  - pattern extraction for dangerous commands, approval phrases, parse warnings, JSON envelopes, diff headers, and tool-call hints
+  - semantic signal elevation from those patterns
+- Curia artifacts now carry richer arbitration semantics end-to-end:
+  - debate logs expose `arbitration_confidence` and `consensus_strength`
+  - decision packs expose `arbitration_confidence`, `consensus_strength`, and `dissent_summary`
+  - execution plans expose `decision_confidence`, `consensus_strength`, and `selected_proposal_ids`
+- High-confidence `Augustus` outcomes can now lower the approval burden:
+  - Curia execution plans are no longer always forced into human approval
+  - automatic arbitration can now produce execution plans with `human_approval_required=false`
  - Automatic Curia promotion is viable without a new scheduler mode if promotion happens at assignment construction time:
    - orchestrated multi-agent prompt runs can collapse into one Curia node
    - graph nodes can be upgraded in place before dispatch

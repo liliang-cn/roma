@@ -24,11 +24,15 @@ prompt = sys.argv[2]
 if "Augustus arbitration phase" in prompt:
     print("winning_mode: replace")
     print("selected_proposals: prop_task_augustus_gemini-cli")
+    print("confidence: high")
+    print("consensus_strength: augustus_resolved")
     print("rationale: Augustus selected the safer fallback proposal.")
     print("risk_flags:")
     print("- augustus_override")
     print("review_questions:")
     print("- Why did the original leader receive a veto?")
+    print("dissent_summary:")
+    print("- prop_task_augustus_codex-cli was rejected after veto.")
 elif "blind review phase" in prompt:
     if profile == "gemini-cli":
         print("prop_task_augustus_codex-cli is weak and veto")
@@ -102,6 +106,15 @@ func TestDetectDisputeFlagsCloseVoteAndVeto(t *testing.T) {
 	if got.Class != "close_score+critical_veto" {
 		t.Fatalf("Class = %q, want close_score+critical_veto", got.Class)
 	}
+	if got.Confidence != domain.ConfidenceLow {
+		t.Fatalf("Confidence = %q, want low", got.Confidence)
+	}
+	if got.ConsensusStrength != "veto_replacement" {
+		t.Fatalf("ConsensusStrength = %q, want veto_replacement", got.ConsensusStrength)
+	}
+	if len(got.DissentSummary) == 0 {
+		t.Fatal("DissentSummary = empty, want dissent entries")
+	}
 	summaries := buildCandidateSummaries(proposals, got.Scoreboard)
 	if len(summaries) != 3 || summaries[0].ProposalID != "prop_a" {
 		t.Fatalf("candidate summaries = %#v, want proposal summaries", summaries)
@@ -160,6 +173,15 @@ func TestExecutorUsesAugustusArbitration(t *testing.T) {
 	if plan.ApplyMode != "proposal_replace" {
 		t.Fatalf("apply mode = %q, want proposal_replace", plan.ApplyMode)
 	}
+	if plan.DecisionConfidence != domain.ConfidenceHigh {
+		t.Fatalf("decision confidence = %q, want high", plan.DecisionConfidence)
+	}
+	if plan.ConsensusStrength != "augustus_resolved" {
+		t.Fatalf("consensus strength = %q, want augustus_resolved", plan.ConsensusStrength)
+	}
+	if plan.HumanApprovalRequired {
+		t.Fatalf("human approval required = true, want false")
+	}
 	var decision artifacts.DecisionPackPayload
 	found := false
 	for _, item := range result.RelatedArtifacts {
@@ -176,6 +198,15 @@ func TestExecutorUsesAugustusArbitration(t *testing.T) {
 	}
 	if decision.WinningMode != "replace" {
 		t.Fatalf("winning mode = %q, want replace", decision.WinningMode)
+	}
+	if decision.ArbitrationConfidence != domain.ConfidenceHigh {
+		t.Fatalf("arbitration confidence = %q, want high", decision.ArbitrationConfidence)
+	}
+	if decision.ConsensusStrength != "augustus_resolved" {
+		t.Fatalf("consensus strength = %q, want augustus_resolved", decision.ConsensusStrength)
+	}
+	if len(decision.DissentSummary) == 0 {
+		t.Fatal("dissent summary = empty, want arbitration dissent notes")
 	}
 	if len(decision.SelectedProposalIDs) != 1 || decision.SelectedProposalIDs[0] != "prop_task_augustus_gemini-cli" {
 		t.Fatalf("selected proposals = %#v, want gemini replacement proposal", decision.SelectedProposalIDs)

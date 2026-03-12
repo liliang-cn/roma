@@ -374,3 +374,27 @@
   - user-defined agents now default to `$HOME/.roma/agents.json`
   - the first configured agent is the implicit default when `--agent` is omitted
   - `roma agent inspect` now reports the active config path alongside the profile payload
+
+## 2026-03-12 Curia and Classifier Calibration
+
+- Curia arbitration output is now materially richer:
+  - debate logs persist `arbitration_confidence` and `consensus_strength`
+  - decision packs persist `arbitration_confidence`, `consensus_strength`, and `dissent_summary`
+  - execution plans persist `decision_confidence`, `consensus_strength`, and `selected_proposal_ids`
+- High-confidence `Augustus` outcomes can now produce non-human-approval execution plans instead of always forcing manual approval.
+- CLI fallback Curia summaries are now aligned with daemon API summaries:
+  - `roma sessions curia`
+  - `queue inspect`
+  - `session inspect`
+  all surface arbitration confidence, consensus strength, and dissent summary.
+- Added an explicit runtime stream-classifier pipeline:
+  - transport layer: normalized lines with timestamps
+  - pattern layer: dangerous commands, approval phrases, parse warnings, JSON envelopes, diff headers, tool-call hints
+  - semantic layer: elevated `ApprovalRequested`, `DangerousCommandDetected`, and `ParseWarning` signals
+- Runtime supervision now consumes that classifier directly instead of a duplicated ad hoc line matcher.
+- Added deterministic classifier tests in `internal/policy/stream_classifier_test.go`.
+- Verified after this calibration:
+  - `go test -count=1 ./internal/curia ./internal/artifacts ./internal/api ./internal/policy ./internal/runtime`
+  - `go test -count=1 ./cmd/roma`
+  - `go test -count=1 ./...`
+  - `go build ./...`

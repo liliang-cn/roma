@@ -76,49 +76,57 @@ type CuriaReviewContribution struct {
 }
 
 type DebateLogPayload struct {
-	DebateLogID         string            `json:"debate_log_id"`
-	ProposalIDs         []string          `json:"proposal_ids"`
-	BallotIDs           []string          `json:"ballot_ids"`
-	DisputeSummary      string            `json:"dispute_summary"`
-	DisputeClass        string            `json:"dispute_class,omitempty"`
-	DisputeReasons      []string          `json:"dispute_reasons,omitempty"`
-	DisputeDetected     bool              `json:"dispute_detected"`
-	CriticalVeto        bool              `json:"critical_veto"`
-	TopScoreGap         int               `json:"top_score_gap"`
-	Scoreboard          []CuriaScoreEntry `json:"scoreboard,omitempty"`
-	QuorumReachedAt     string            `json:"quorum_reached_at"`
-	ArbitrationRequired bool              `json:"arbitration_required"`
-	WinningProposalID   string            `json:"winning_proposal_id,omitempty"`
+	DebateLogID           string            `json:"debate_log_id"`
+	ProposalIDs           []string          `json:"proposal_ids"`
+	BallotIDs             []string          `json:"ballot_ids"`
+	DisputeSummary        string            `json:"dispute_summary"`
+	DisputeClass          string            `json:"dispute_class,omitempty"`
+	ArbitrationConfidence domain.Confidence `json:"arbitration_confidence,omitempty"`
+	ConsensusStrength     string            `json:"consensus_strength,omitempty"`
+	DisputeReasons        []string          `json:"dispute_reasons,omitempty"`
+	DisputeDetected       bool              `json:"dispute_detected"`
+	CriticalVeto          bool              `json:"critical_veto"`
+	TopScoreGap           int               `json:"top_score_gap"`
+	Scoreboard            []CuriaScoreEntry `json:"scoreboard,omitempty"`
+	QuorumReachedAt       string            `json:"quorum_reached_at"`
+	ArbitrationRequired   bool              `json:"arbitration_required"`
+	WinningProposalID     string            `json:"winning_proposal_id,omitempty"`
 }
 
 type DecisionPackPayload struct {
-	DecisionPackID      string                    `json:"decision_pack_id"`
-	WinningMode         string                    `json:"winning_mode"`
-	DisputeClass        string                    `json:"dispute_class,omitempty"`
-	Arbitrated          bool                      `json:"arbitrated,omitempty"`
-	ArbitratorID        string                    `json:"arbitrator_id,omitempty"`
-	SelectedProposalIDs []string                  `json:"selected_proposal_ids"`
-	MergedRationale     string                    `json:"merged_rationale"`
-	RejectedReasons     []string                  `json:"rejected_reasons,omitempty"`
-	RiskFlags           []string                  `json:"risk_flags,omitempty"`
-	ReviewQuestions     []string                  `json:"review_questions,omitempty"`
-	CandidateSummaries  []CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
-	ReviewerBreakdown   []CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
-	Scoreboard          []CuriaScoreEntry         `json:"scoreboard,omitempty"`
-	ExecutionPlanID     string                    `json:"execution_plan_id"`
-	ApprovalRequired    bool                      `json:"approval_required"`
+	DecisionPackID        string                    `json:"decision_pack_id"`
+	WinningMode           string                    `json:"winning_mode"`
+	DisputeClass          string                    `json:"dispute_class,omitempty"`
+	ArbitrationConfidence domain.Confidence         `json:"arbitration_confidence,omitempty"`
+	ConsensusStrength     string                    `json:"consensus_strength,omitempty"`
+	Arbitrated            bool                      `json:"arbitrated,omitempty"`
+	ArbitratorID          string                    `json:"arbitrator_id,omitempty"`
+	SelectedProposalIDs   []string                  `json:"selected_proposal_ids"`
+	MergedRationale       string                    `json:"merged_rationale"`
+	RejectedReasons       []string                  `json:"rejected_reasons,omitempty"`
+	RiskFlags             []string                  `json:"risk_flags,omitempty"`
+	ReviewQuestions       []string                  `json:"review_questions,omitempty"`
+	DissentSummary        []string                  `json:"dissent_summary,omitempty"`
+	CandidateSummaries    []CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
+	ReviewerBreakdown     []CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
+	Scoreboard            []CuriaScoreEntry         `json:"scoreboard,omitempty"`
+	ExecutionPlanID       string                    `json:"execution_plan_id"`
+	ApprovalRequired      bool                      `json:"approval_required"`
 }
 
 type ExecutionPlanPayload struct {
-	ExecutionPlanID       string   `json:"execution_plan_id"`
-	Goal                  string   `json:"goal"`
-	Steps                 []string `json:"steps"`
-	ExpectedFiles         []string `json:"expected_files,omitempty"`
-	ForbiddenPaths        []string `json:"forbidden_paths,omitempty"`
-	RequiredChecks        []string `json:"required_checks,omitempty"`
-	ApplyMode             string   `json:"apply_mode"`
-	RollbackHint          string   `json:"rollback_hint,omitempty"`
-	HumanApprovalRequired bool     `json:"human_approval_required"`
+	ExecutionPlanID       string            `json:"execution_plan_id"`
+	Goal                  string            `json:"goal"`
+	Steps                 []string          `json:"steps"`
+	SelectedProposalIDs   []string          `json:"selected_proposal_ids,omitempty"`
+	ExpectedFiles         []string          `json:"expected_files,omitempty"`
+	ForbiddenPaths        []string          `json:"forbidden_paths,omitempty"`
+	RequiredChecks        []string          `json:"required_checks,omitempty"`
+	ApplyMode             string            `json:"apply_mode"`
+	DecisionConfidence    domain.Confidence `json:"decision_confidence,omitempty"`
+	ConsensusStrength     string            `json:"consensus_strength,omitempty"`
+	RollbackHint          string            `json:"rollback_hint,omitempty"`
+	HumanApprovalRequired bool              `json:"human_approval_required"`
 }
 
 type BuildProposalRequest struct {
@@ -141,41 +149,46 @@ type BuildBallotRequest struct {
 }
 
 type BuildDebateLogRequest struct {
-	SessionID           string
-	TaskID              string
-	RunID               string
-	ProposalIDs         []string
-	BallotIDs           []string
-	WinningProposalID   string
-	DisputeClass        string
-	DisputeReasons      []string
-	DisputeDetected     bool
-	CriticalVeto        bool
-	TopScoreGap         int
-	Scoreboard          []CuriaScoreEntry
-	ArbitrationRequired bool
+	SessionID             string
+	TaskID                string
+	RunID                 string
+	ProposalIDs           []string
+	BallotIDs             []string
+	WinningProposalID     string
+	DisputeClass          string
+	ArbitrationConfidence domain.Confidence
+	ConsensusStrength     string
+	DisputeReasons        []string
+	DisputeDetected       bool
+	CriticalVeto          bool
+	TopScoreGap           int
+	Scoreboard            []CuriaScoreEntry
+	ArbitrationRequired   bool
 }
 
 type BuildDecisionPackRequest struct {
-	SessionID           string
-	TaskID              string
-	RunID               string
-	WinningMode         string
-	DisputeClass        string
-	Arbitrated          bool
-	ArbitratorID        string
-	ProducerRole        domain.ProducerRole
-	ProducerAgentID     string
-	SelectedProposalIDs []string
-	ExecutionPlanID     string
-	ApprovalRequired    bool
-	MergedRationale     string
-	RejectedReasons     []string
-	RiskFlags           []string
-	ReviewQuestions     []string
-	CandidateSummaries  []CuriaCandidateSummary
-	ReviewerBreakdown   []CuriaReviewContribution
-	Scoreboard          []CuriaScoreEntry
+	SessionID             string
+	TaskID                string
+	RunID                 string
+	WinningMode           string
+	DisputeClass          string
+	ArbitrationConfidence domain.Confidence
+	ConsensusStrength     string
+	Arbitrated            bool
+	ArbitratorID          string
+	ProducerRole          domain.ProducerRole
+	ProducerAgentID       string
+	SelectedProposalIDs   []string
+	ExecutionPlanID       string
+	ApprovalRequired      bool
+	MergedRationale       string
+	RejectedReasons       []string
+	RiskFlags             []string
+	ReviewQuestions       []string
+	DissentSummary        []string
+	CandidateSummaries    []CuriaCandidateSummary
+	ReviewerBreakdown     []CuriaReviewContribution
+	Scoreboard            []CuriaScoreEntry
 }
 
 type BuildExecutionPlanRequest struct {
@@ -186,6 +199,8 @@ type BuildExecutionPlanRequest struct {
 	Proposal              ProposalPayload
 	WinningMode           string
 	SelectedProposalIDs   []string
+	DecisionConfidence    domain.Confidence
+	ConsensusStrength     string
 	HumanApprovalRequired bool
 }
 
@@ -229,40 +244,45 @@ func (s *Service) BuildBallot(_ context.Context, req BuildBallotRequest) (domain
 
 func (s *Service) BuildDebateLog(_ context.Context, req BuildDebateLogRequest) (domain.ArtifactEnvelope, error) {
 	payload := DebateLogPayload{
-		DebateLogID:         "debate_" + req.RunID,
-		ProposalIDs:         append([]string(nil), req.ProposalIDs...),
-		BallotIDs:           append([]string(nil), req.BallotIDs...),
-		DisputeSummary:      disputeSummary(req.WinningProposalID, req.ArbitrationRequired),
-		DisputeClass:        req.DisputeClass,
-		DisputeReasons:      append([]string(nil), req.DisputeReasons...),
-		DisputeDetected:     req.DisputeDetected,
-		CriticalVeto:        req.CriticalVeto,
-		TopScoreGap:         req.TopScoreGap,
-		Scoreboard:          append([]CuriaScoreEntry(nil), req.Scoreboard...),
-		QuorumReachedAt:     s.now().Format(time.RFC3339Nano),
-		ArbitrationRequired: req.ArbitrationRequired,
-		WinningProposalID:   req.WinningProposalID,
+		DebateLogID:           "debate_" + req.RunID,
+		ProposalIDs:           append([]string(nil), req.ProposalIDs...),
+		BallotIDs:             append([]string(nil), req.BallotIDs...),
+		DisputeSummary:        disputeSummary(req.WinningProposalID, req.ArbitrationRequired),
+		DisputeClass:          req.DisputeClass,
+		ArbitrationConfidence: req.ArbitrationConfidence,
+		ConsensusStrength:     req.ConsensusStrength,
+		DisputeReasons:        append([]string(nil), req.DisputeReasons...),
+		DisputeDetected:       req.DisputeDetected,
+		CriticalVeto:          req.CriticalVeto,
+		TopScoreGap:           req.TopScoreGap,
+		Scoreboard:            append([]CuriaScoreEntry(nil), req.Scoreboard...),
+		QuorumReachedAt:       s.now().Format(time.RFC3339Nano),
+		ArbitrationRequired:   req.ArbitrationRequired,
+		WinningProposalID:     req.WinningProposalID,
 	}
 	return s.buildCuriaEnvelope(req.SessionID, req.TaskID, "art_"+payload.DebateLogID, domain.ArtifactKindDebateLog, DebateLogPayloadSchema, domain.ProducerRoleSystem, "roma-curia", req.RunID, payload)
 }
 
 func (s *Service) BuildDecisionPack(_ context.Context, req BuildDecisionPackRequest) (domain.ArtifactEnvelope, error) {
 	payload := DecisionPackPayload{
-		DecisionPackID:      "dp_" + req.RunID,
-		WinningMode:         req.WinningMode,
-		DisputeClass:        req.DisputeClass,
-		Arbitrated:          req.Arbitrated,
-		ArbitratorID:        req.ArbitratorID,
-		SelectedProposalIDs: append([]string(nil), req.SelectedProposalIDs...),
-		MergedRationale:     req.MergedRationale,
-		RejectedReasons:     append([]string(nil), req.RejectedReasons...),
-		RiskFlags:           append([]string(nil), req.RiskFlags...),
-		ReviewQuestions:     append([]string(nil), req.ReviewQuestions...),
-		CandidateSummaries:  append([]CuriaCandidateSummary(nil), req.CandidateSummaries...),
-		ReviewerBreakdown:   append([]CuriaReviewContribution(nil), req.ReviewerBreakdown...),
-		Scoreboard:          append([]CuriaScoreEntry(nil), req.Scoreboard...),
-		ExecutionPlanID:     req.ExecutionPlanID,
-		ApprovalRequired:    req.ApprovalRequired,
+		DecisionPackID:        "dp_" + req.RunID,
+		WinningMode:           req.WinningMode,
+		DisputeClass:          req.DisputeClass,
+		ArbitrationConfidence: req.ArbitrationConfidence,
+		ConsensusStrength:     req.ConsensusStrength,
+		Arbitrated:            req.Arbitrated,
+		ArbitratorID:          req.ArbitratorID,
+		SelectedProposalIDs:   append([]string(nil), req.SelectedProposalIDs...),
+		MergedRationale:       req.MergedRationale,
+		RejectedReasons:       append([]string(nil), req.RejectedReasons...),
+		RiskFlags:             append([]string(nil), req.RiskFlags...),
+		ReviewQuestions:       append([]string(nil), req.ReviewQuestions...),
+		DissentSummary:        append([]string(nil), req.DissentSummary...),
+		CandidateSummaries:    append([]CuriaCandidateSummary(nil), req.CandidateSummaries...),
+		ReviewerBreakdown:     append([]CuriaReviewContribution(nil), req.ReviewerBreakdown...),
+		Scoreboard:            append([]CuriaScoreEntry(nil), req.Scoreboard...),
+		ExecutionPlanID:       req.ExecutionPlanID,
+		ApprovalRequired:      req.ApprovalRequired,
 	}
 	role := req.ProducerRole
 	agentID := req.ProducerAgentID
@@ -280,10 +300,13 @@ func (s *Service) BuildExecutionPlan(_ context.Context, req BuildExecutionPlanRe
 		ExecutionPlanID:       "plan_" + req.RunID,
 		Goal:                  req.Goal,
 		Steps:                 append([]string(nil), req.Proposal.EstimatedSteps...),
+		SelectedProposalIDs:   append([]string(nil), req.SelectedProposalIDs...),
 		ExpectedFiles:         append([]string(nil), req.Proposal.AffectedFiles...),
 		ForbiddenPaths:        []string{".git/", ".roma/"},
 		RequiredChecks:        []string{"go test ./...", "go build ./..."},
 		ApplyMode:             executionApplyMode(req.WinningMode),
+		DecisionConfidence:    req.DecisionConfidence,
+		ConsensusStrength:     req.ConsensusStrength,
 		RollbackHint:          "Reverse-apply the captured worktree patch if validation fails.",
 		HumanApprovalRequired: req.HumanApprovalRequired,
 	}

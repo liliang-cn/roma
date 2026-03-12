@@ -20,8 +20,8 @@ This document is the target architecture, not a claim that every subsystem below
 
 * a mostly-realized daemon-first control plane
 * a usable workspace/scheduler/persistence kernel
-* a partial Curia implementation with deterministic demos and initial automatic arbitration
-* an incomplete runtime classifier, gateway plane, and presentation plane
+* a staged Curia implementation with automatic promotion, `Augustus` arbitration, and structured consensus metadata
+* a usable but still incomplete runtime classifier, gateway plane, and presentation plane
 
 Current alignment against the design:
 
@@ -36,15 +36,15 @@ Current alignment against the design:
 
 ### Partially aligned / MVP today
 
-* Curia exists, including `proposal`, `ballot`, `debate_log`, `decision_pack`, `execution_plan`, dispute classification, reviewer weights, and an `Augustus` path, but it is not yet the fully autonomous high-confidence consensus engine described later in this document
-* the Policy Broker has pre-flight checks, approval gates, path-aware enforcement, and execution-plan apply controls, but it does not yet have a mature runtime semantic classifier or full action/role matrix
-* execution-plan preview, apply, rollback, inbox, and approval exist, but conflict resolution UX is still operator-heavy
+* Curia exists, including `proposal`, `ballot`, `debate_log`, `decision_pack`, `execution_plan`, dispute classification, reviewer weights, automatic promotion, an `Augustus` path, arbitration confidence, consensus strength, and dissent summaries, but it is not yet the fully autonomous high-confidence consensus engine described later in this document
+* the Policy Broker has pre-flight checks, approval gates, path-aware enforcement, execution-plan apply controls, a first transport/pattern/semantic runtime classifier, and a second-layer AI semantic review path, but it does not yet have the mature confidence-scored runtime semantics or full action/role matrix described later in this document
+* execution-plan preview, inbox, approve/reject, apply, rollback, structured conflict summaries, conflict context, and resolution options exist, but conflict resolution UX is still operator-heavy
 * gateway support exists as a bridge and approval hook, but not yet as a production-ready `roma-gatewayd` with mature WSS/retry/dead-letter behavior
 
 ### Major gaps relative to the target architecture
 
-* the Stream Classifier described in Section 7.4 is still mostly a design target
-* automatic scheduler promotion into Curia based on detected risk/conflict is not complete
+* the Stream Classifier described in Section 7.4 now has an initial implementation, but not yet the mature confidence-scored semantics and policy automation described in the target architecture
+* automatic scheduler promotion into Curia exists for risky multi-agent runs and graph nodes, but it is not yet a complete risk/conflict escalation system
 * presentation-plane goals for a real TUI and desktop client are not implemented in the repository today
 * gateway deployment, remote endpoint management, and rich remote watch/control remain incomplete
 
@@ -52,8 +52,8 @@ Rough implementation percentages, for planning purposes only:
 
 * control plane and persistence: `~90%`
 * workspace isolation and scheduler: `~85%`
-* Curia engine: `~55-60%`
-* policy and runtime classification: `~30-35%`
+* Curia engine: `~65-70%`
+* policy and runtime classification: `~45-50%`
 * gateway plane: `~20-25%`
 * presentation plane: `~0-5%`
 
@@ -924,13 +924,15 @@ Current status: partially implemented
 
 ### Phase 4: Curia Minimal
 
-Current status: implemented beyond the original minimum, but still incomplete relative to Curia Full
+Current status: implemented beyond the original minimum, with automatic promotion and `Augustus` arbitration, but still incomplete relative to Curia Full
 
 * scatter with multiple senators
 * quorum
 * simplified blind review
 * debate log
 * human arbitration fallback
+* automatic Curia promotion for risky multi-agent runs and graph nodes
+* structured arbitration confidence, consensus strength, and dissent output
 
 ### Phase 5: Curia Full + WSS Console
 

@@ -386,24 +386,7 @@ var (
 )
 
 func ClassifyOutputChunk(chunk string) []StreamSignal {
-	lines := strings.Split(chunk, "\n")
-	out := make([]StreamSignal, 0, len(lines))
-	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		if signal, ok := classifyDangerousOutput(line); ok {
-			out = append(out, signal)
-		}
-		if signal, ok := classifyApprovalOutput(line); ok {
-			out = append(out, signal)
-		}
-		if signal, ok := classifyParseWarning(line); ok {
-			out = append(out, signal)
-		}
-	}
-	return out
+	return AnalyzeOutputChunk(chunk).Signals
 }
 
 func classifyDangerousOutput(line string) (StreamSignal, bool) {

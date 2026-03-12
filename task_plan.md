@@ -154,6 +154,8 @@ Status: in_progress
 - [x] Emit semantic policy/runtime events from streamed agent output and terminate high-confidence dangerous command output
 - [x] Add a second-layer agent semantic classifier that persists `semantic_report` artifacts from runtime signals
 - [x] Make semantic review system-owned: starter agent reviews multi-agent signals and the current agent reviews single-agent signals
+- [x] Replace the ad hoc runtime output matcher with an explicit transport/pattern/semantic stream-classifier pipeline
+- [x] Surface runtime semantic events through the same structured live tail path used by queue attach/tail
 
 ### Phase 17: Curia Minimal
 Status: in_progress
@@ -167,6 +169,8 @@ Status: in_progress
 - [x] Surface reviewer weight / reputation truth through Curia session and inspection summaries
 - [x] Add automatic Curia promotion for risky multi-agent prompt runs and graph nodes
 - [x] Feed automatic Curia promotion reasons into scheduler eventing instead of relying on static graph-only definitions
+- [x] Carry arbitration confidence, consensus strength, and dissent summaries through debate logs, decision packs, execution plans, and Curia inspect output
+- [x] Allow high-confidence `Augustus` arbitration results to produce non-human-approval execution plans
 
 ### Phase 18: ExecutionPlan Closure
 Status: in_progress
@@ -181,6 +185,7 @@ Status: in_progress
 - [x] Make `dry-run` perform real merge preview instead of static path checks only
 - [x] Return conflict-context snippets alongside conflict paths during plan preview and apply failures
 - [x] Add structured conflict summaries and resolution options to preview/apply/inbox responses
+- [x] Route Curia decision confidence and consensus metadata into `execution_plan` payloads so apply policy can distinguish low-confidence versus high-confidence arbitration results
 
 ### Phase 19: Runtime Visibility and Attachability
 Status: in_progress
@@ -218,6 +223,10 @@ Status: in_progress
 - [x] Make `roma result show` return a friendly pending result state for running/awaiting-approval sessions instead of failing on missing final answers
 
 ## Risks
+
+- The runtime stream classifier is now layered, but it is still rules-first; it does not yet provide mature confidence-scored semantic extraction for arbitrary agent output.
+- Curia is now well beyond the original minimum, but complex disputes still need more sophisticated arbitration and escalation heuristics before it can be treated as fully autonomous.
+- Gateway and presentation-plane work still lag the control plane and should not be described as complete.
 
 - PTY behavior differs across coding CLIs; some still assume stronger TTY semantics.
 - Current persistence is mirrored across file and SQLite backends, so read-path divergence is still possible.

@@ -68,19 +68,21 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 	}
 	ballots := winner.ballots
 	debateLog, err := e.artifacts.BuildDebateLog(ctx, artifacts.BuildDebateLogRequest{
-		SessionID:           req.SessionID,
-		TaskID:              req.TaskID,
-		RunID:               req.TaskID + "_debate",
-		ProposalIDs:         collectProposalIDs(proposals),
-		BallotIDs:           collectBallotIDs(ballots),
-		WinningProposalID:   winner.proposal.ProposalID,
-		DisputeClass:        winner.dispute.Class,
-		DisputeReasons:      append([]string(nil), winner.dispute.RejectedReasons...),
-		DisputeDetected:     winner.dispute.Detected,
-		CriticalVeto:        winner.dispute.CriticalVeto,
-		TopScoreGap:         winner.dispute.TopScoreGap,
-		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
-		ArbitrationRequired: winner.dispute.Detected,
+		SessionID:             req.SessionID,
+		TaskID:                req.TaskID,
+		RunID:                 req.TaskID + "_debate",
+		ProposalIDs:           collectProposalIDs(proposals),
+		BallotIDs:             collectBallotIDs(ballots),
+		WinningProposalID:     winner.proposal.ProposalID,
+		DisputeClass:          winner.dispute.Class,
+		ArbitrationConfidence: winner.confidence,
+		ConsensusStrength:     winner.consensusStrength,
+		DisputeReasons:        append([]string(nil), winner.dispute.RejectedReasons...),
+		DisputeDetected:       winner.dispute.Detected,
+		CriticalVeto:          winner.dispute.CriticalVeto,
+		TopScoreGap:           winner.dispute.TopScoreGap,
+		Scoreboard:            append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
+		ArbitrationRequired:   winner.dispute.Detected,
 	})
 	if err != nil {
 		return ExecuteResult{}, err
@@ -93,31 +95,36 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResu
 		Proposal:              winner.proposal,
 		WinningMode:           winner.winningMode,
 		SelectedProposalIDs:   append([]string(nil), winner.selectedIDs...),
-		HumanApprovalRequired: true,
+		DecisionConfidence:    winner.confidence,
+		ConsensusStrength:     winner.consensusStrength,
+		HumanApprovalRequired: requiresHumanApproval(winner),
 	})
 	if err != nil {
 		return ExecuteResult{}, err
 	}
 	decisionPack, err := e.artifacts.BuildDecisionPack(ctx, artifacts.BuildDecisionPackRequest{
-		SessionID:           req.SessionID,
-		TaskID:              req.TaskID,
-		RunID:               req.TaskID + "_decision",
-		WinningMode:         winner.winningMode,
-		DisputeClass:        winner.dispute.Class,
-		Arbitrated:          winner.arbitrated,
-		ArbitratorID:        winner.arbitratorID,
-		ProducerRole:        winner.producerRole,
-		ProducerAgentID:     winner.producerAgentID,
-		SelectedProposalIDs: append([]string(nil), winner.selectedIDs...),
-		ExecutionPlanID:     plan.ID,
-		ApprovalRequired:    true,
-		MergedRationale:     decisionRationale(winner),
-		RejectedReasons:     append([]string(nil), winner.rejectedReasons...),
-		RiskFlags:           append([]string(nil), winner.riskFlags...),
-		ReviewQuestions:     append([]string(nil), winner.reviewQuestions...),
-		CandidateSummaries:  append([]artifacts.CuriaCandidateSummary(nil), winner.candidateSummaries...),
-		ReviewerBreakdown:   append([]artifacts.CuriaReviewContribution(nil), winner.reviewerBreakdown...),
-		Scoreboard:          append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
+		SessionID:             req.SessionID,
+		TaskID:                req.TaskID,
+		RunID:                 req.TaskID + "_decision",
+		WinningMode:           winner.winningMode,
+		DisputeClass:          winner.dispute.Class,
+		ArbitrationConfidence: winner.confidence,
+		ConsensusStrength:     winner.consensusStrength,
+		Arbitrated:            winner.arbitrated,
+		ArbitratorID:          winner.arbitratorID,
+		ProducerRole:          winner.producerRole,
+		ProducerAgentID:       winner.producerAgentID,
+		SelectedProposalIDs:   append([]string(nil), winner.selectedIDs...),
+		ExecutionPlanID:       plan.ID,
+		ApprovalRequired:      requiresHumanApproval(winner),
+		MergedRationale:       decisionRationale(winner),
+		RejectedReasons:       append([]string(nil), winner.rejectedReasons...),
+		RiskFlags:             append([]string(nil), winner.riskFlags...),
+		ReviewQuestions:       append([]string(nil), winner.reviewQuestions...),
+		DissentSummary:        append([]string(nil), winner.dissentSummary...),
+		CandidateSummaries:    append([]artifacts.CuriaCandidateSummary(nil), winner.candidateSummaries...),
+		ReviewerBreakdown:     append([]artifacts.CuriaReviewContribution(nil), winner.reviewerBreakdown...),
+		Scoreboard:            append([]artifacts.CuriaScoreEntry(nil), winner.dispute.Scoreboard...),
 	})
 	if err != nil {
 		return ExecuteResult{}, err
@@ -150,7 +157,10 @@ type winnerSelection struct {
 	ballotEnvelopes    []ballotEnvelope
 	selectedIDs        []string
 	winningMode        string
+	confidence         domain.Confidence
+	consensusStrength  string
 	rejectedReasons    []string
+	dissentSummary     []string
 	riskFlags          []string
 	reviewQuestions    []string
 	candidateSummaries []artifacts.CuriaCandidateSummary
@@ -163,14 +173,25 @@ type winnerSelection struct {
 }
 
 type disputeResult struct {
-	Detected        bool
-	Class           string
-	CriticalVeto    bool
-	TopScoreGap     int
-	WinningMode     string
-	SelectedIDs     []string
-	RejectedReasons []string
-	Scoreboard      []artifacts.CuriaScoreEntry
+	Detected          bool
+	Class             string
+	Confidence        domain.Confidence
+	ConsensusStrength string
+	CriticalVeto      bool
+	TopScoreGap       int
+	WinningMode       string
+	SelectedIDs       []string
+	RejectedReasons   []string
+	DissentSummary    []string
+	Scoreboard        []artifacts.CuriaScoreEntry
+}
+
+type rankedProposal struct {
+	id            string
+	rawScore      int
+	weightedScore int
+	vetoCount     int
+	reviewerCount int
 }
 
 func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quorum int) ([]domain.ArtifactEnvelope, winnerSelection, error) {
@@ -328,7 +349,10 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 		ballotEnvelopes:    ballotResults,
 		selectedIDs:        selectedIDs,
 		winningMode:        dispute.WinningMode,
+		confidence:         dispute.Confidence,
+		consensusStrength:  dispute.ConsensusStrength,
 		rejectedReasons:    append([]string(nil), dispute.RejectedReasons...),
+		dissentSummary:     append([]string(nil), dispute.DissentSummary...),
 		riskFlags:          buildRiskFlags(selected.proposal, dispute),
 		reviewQuestions:    buildReviewQuestions(selected.proposal, dispute),
 		candidateSummaries: buildCandidateSummaries(proposals, dispute.Scoreboard),
@@ -365,6 +389,14 @@ func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposal
 	if override.winningMode != "" {
 		winner.winningMode = override.winningMode
 	}
+	if override.confidence != "" {
+		winner.confidence = override.confidence
+	}
+	if override.consensusStrength != "" {
+		winner.consensusStrength = override.consensusStrength
+	} else if winner.consensusStrength == "" {
+		winner.consensusStrength = "augustus_resolved"
+	}
 	if len(override.selectedIDs) > 0 {
 		winner.selectedIDs = append([]string(nil), override.selectedIDs...)
 		if proposal, ok := selectProposalByID(proposals, override.selectedIDs[0]); ok {
@@ -377,6 +409,7 @@ func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposal
 	}
 	winner.riskFlags = mergeUniqueStrings(winner.riskFlags, override.riskFlags)
 	winner.reviewQuestions = mergeUniqueStrings(winner.reviewQuestions, override.reviewQuestions)
+	winner.dissentSummary = mergeUniqueStrings(winner.dissentSummary, override.dissentSummary)
 	winner.arbitrated = true
 	winner.arbitratorID = req.Arbitrator.ID
 	winner.producerRole = domain.ProducerRoleArbitrator
@@ -388,11 +421,14 @@ func (e *Executor) runAugustus(ctx context.Context, req ExecuteRequest, proposal
 }
 
 type augustusDecision struct {
-	winningMode     string
-	selectedIDs     []string
-	rationale       string
-	riskFlags       []string
-	reviewQuestions []string
+	winningMode       string
+	selectedIDs       []string
+	confidence        domain.Confidence
+	consensusStrength string
+	rationale         string
+	riskFlags         []string
+	reviewQuestions   []string
+	dissentSummary    []string
 }
 
 func augustusPrompt(req ExecuteRequest, proposals []domain.ArtifactEnvelope, winner winnerSelection) string {
@@ -401,9 +437,12 @@ func augustusPrompt(req ExecuteRequest, proposals []domain.ArtifactEnvelope, win
 	b.WriteString("Return a final arbitration decision using this exact shape:\n")
 	b.WriteString("winning_mode: accept|merge|replace\n")
 	b.WriteString("selected_proposals: prop_x[,prop_y]\n")
+	b.WriteString("confidence: low|medium|high\n")
+	b.WriteString("consensus_strength: strong_consensus|moderate_consensus|disputed_consensus|augustus_resolved\n")
 	b.WriteString("rationale: one concise sentence\n")
 	b.WriteString("risk_flags:\n- flag\n")
 	b.WriteString("review_questions:\n- question?\n\n")
+	b.WriteString("dissent_summary:\n- dissent note\n\n")
 	b.WriteString("Task:\n")
 	b.WriteString(req.BasePrompt)
 	b.WriteString("\n\nDispute class: ")
@@ -434,6 +473,8 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 	lines := strings.Split(output, "\n")
 	modeRe := regexp.MustCompile(`(?i)^winning_mode:\s*(accept|merge|replace)\s*$`)
 	selectedRe := regexp.MustCompile(`(?i)^selected_proposals:\s*(.+)\s*$`)
+	confidenceRe := regexp.MustCompile(`(?i)^confidence:\s*(low|medium|high)\s*$`)
+	consensusStrengthRe := regexp.MustCompile(`(?i)^consensus_strength:\s*([a-z_]+)\s*$`)
 	rationaleRe := regexp.MustCompile(`(?i)^rationale:\s*(.+)\s*$`)
 	section := ""
 	validIDs := make(map[string]struct{}, len(proposals))
@@ -460,6 +501,12 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 					decision.selectedIDs = append(decision.selectedIDs, id)
 				}
 			}
+		case confidenceRe.MatchString(line):
+			decision.confidence = domain.Confidence(strings.ToLower(confidenceRe.FindStringSubmatch(line)[1]))
+			section = ""
+		case consensusStrengthRe.MatchString(line):
+			decision.consensusStrength = strings.ToLower(consensusStrengthRe.FindStringSubmatch(line)[1])
+			section = ""
 		case rationaleRe.MatchString(line):
 			decision.rationale = rationaleRe.FindStringSubmatch(line)[1]
 			section = ""
@@ -467,10 +514,14 @@ func parseAugustusDecision(output string, proposals []domain.ArtifactEnvelope) a
 			section = "risk"
 		case strings.EqualFold(line, "review_questions:"):
 			section = "review"
+		case strings.EqualFold(line, "dissent_summary:"):
+			section = "dissent"
 		case strings.HasPrefix(line, "- ") && section == "risk":
 			decision.riskFlags = append(decision.riskFlags, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		case strings.HasPrefix(line, "- ") && section == "review":
 			decision.reviewQuestions = append(decision.reviewQuestions, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		case strings.HasPrefix(line, "- ") && section == "dissent":
+			decision.dissentSummary = append(decision.dissentSummary, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		}
 	}
 	return decision
@@ -668,13 +719,6 @@ func min(a, b int) int {
 }
 
 func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]int, scoreByProposal map[string]int, vetoByProposal map[string]int, reviewerCountByProposal map[string]int) disputeResult {
-	type rankedProposal struct {
-		id            string
-		rawScore      int
-		weightedScore int
-		vetoCount     int
-		reviewerCount int
-	}
 	ranked := make([]rankedProposal, 0, len(proposals))
 	for _, proposal := range proposals {
 		ranked = append(ranked, rankedProposal{
@@ -686,7 +730,12 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		})
 	}
 	if len(ranked) == 0 {
-		return disputeResult{WinningMode: "accept", Class: "none"}
+		return disputeResult{
+			WinningMode:       "accept",
+			Class:             "none",
+			Confidence:        domain.ConfidenceMedium,
+			ConsensusStrength: "moderate_consensus",
+		}
 	}
 	for i := 0; i < len(ranked); i++ {
 		for j := i + 1; j < len(ranked); j++ {
@@ -696,23 +745,38 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		}
 	}
 	result := disputeResult{
-		WinningMode: "accept",
-		Class:       "none",
-		SelectedIDs: []string{ranked[0].id},
+		WinningMode:       "accept",
+		Class:             "none",
+		Confidence:        domain.ConfidenceMedium,
+		ConsensusStrength: "moderate_consensus",
+		SelectedIDs:       []string{ranked[0].id},
 	}
 	if len(ranked) > 1 {
 		result.TopScoreGap = ranked[0].weightedScore - ranked[1].weightedScore
-		if result.TopScoreGap <= 3 {
+		switch {
+		case result.TopScoreGap >= 8:
+			result.Confidence = domain.ConfidenceHigh
+			result.ConsensusStrength = "strong_consensus"
+		case result.TopScoreGap >= 4:
+			result.Confidence = domain.ConfidenceMedium
+			result.ConsensusStrength = "moderate_consensus"
+		default:
 			result.Detected = true
 			result.Class = "close_score"
 			result.WinningMode = "merge"
+			result.Confidence = domain.ConfidenceLow
+			result.ConsensusStrength = "disputed_consensus"
 			result.SelectedIDs = []string{ranked[0].id, ranked[1].id}
 			result.RejectedReasons = append(result.RejectedReasons, "top proposals are too close to accept one without merge review")
 		}
+	} else {
+		result.Confidence = domain.ConfidenceHigh
+		result.ConsensusStrength = "strong_consensus"
 	}
 	if vetoByProposal[ranked[0].id] > 0 {
 		result.Detected = true
 		result.CriticalVeto = true
+		result.Confidence = domain.ConfidenceLow
 		if result.Class == "close_score" {
 			result.Class = "close_score+critical_veto"
 		} else {
@@ -720,10 +784,12 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		}
 		if len(ranked) > 1 {
 			result.WinningMode = "replace"
+			result.ConsensusStrength = "veto_replacement"
 			result.SelectedIDs = []string{ranked[1].id}
 			result.RejectedReasons = append(result.RejectedReasons, fmt.Sprintf("%s received a critical veto and was replaced by %s", ranked[0].id, ranked[1].id))
 		} else {
 			result.WinningMode = "merge"
+			result.ConsensusStrength = "blocked_by_veto"
 			if len(result.SelectedIDs) == 0 {
 				result.SelectedIDs = []string{ranked[0].id}
 			}
@@ -745,7 +811,19 @@ func detectDispute(proposals []proposalEnvelope, rawScoreByProposal map[string]i
 		}
 		result.RejectedReasons = append(result.RejectedReasons, fmt.Sprintf("%s scored lower in Curia review", proposal.id))
 	}
+	result.DissentSummary = buildDissentSummary(ranked, result.SelectedIDs)
 	return result
+}
+
+func buildDissentSummary(ranked []rankedProposal, selectedIDs []string) []string {
+	out := make([]string, 0, len(ranked))
+	for _, proposal := range ranked {
+		if containsString(selectedIDs, proposal.id) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s was not selected (weighted=%d veto=%d)", proposal.id, proposal.weightedScore, proposal.vetoCount))
+	}
+	return out
 }
 
 func decisionRationale(winner winnerSelection) string {
@@ -757,6 +835,16 @@ func decisionRationale(winner winnerSelection) string {
 	default:
 		return "Curia selected the highest-scoring proposal."
 	}
+}
+
+func requiresHumanApproval(winner winnerSelection) bool {
+	if !winner.arbitrated {
+		return true
+	}
+	if winner.confidence != domain.ConfidenceHigh {
+		return true
+	}
+	return winner.winningMode == "merge"
 }
 
 func containsString(items []string, target string) bool {

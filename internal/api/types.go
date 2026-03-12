@@ -129,21 +129,24 @@ type CuriaReviewerSummary struct {
 }
 
 type CuriaSummary struct {
-	Dispute             bool                                `json:"dispute"`
-	DisputeClass        string                              `json:"dispute_class,omitempty"`
-	Arbitrated          bool                                `json:"arbitrated,omitempty"`
-	ArbitratorID        string                              `json:"arbitrator_id,omitempty"`
-	CriticalVeto        bool                                `json:"critical_veto"`
-	TopScoreGap         int                                 `json:"top_score_gap"`
-	DisputeReasons      []string                            `json:"dispute_reasons,omitempty"`
-	WinningMode         string                              `json:"winning_mode,omitempty"`
-	SelectedProposalIDs []string                            `json:"selected_proposal_ids,omitempty"`
-	RiskFlags           []string                            `json:"risk_flags,omitempty"`
-	ReviewQuestions     []string                            `json:"review_questions,omitempty"`
-	CandidateSummaries  []artifacts.CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
-	ReviewerBreakdown   []artifacts.CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
-	ReviewerWeights     []CuriaReviewerSummary              `json:"reviewer_weights,omitempty"`
-	Scoreboard          []CuriaScoreSummary                 `json:"scoreboard,omitempty"`
+	Dispute               bool                                `json:"dispute"`
+	DisputeClass          string                              `json:"dispute_class,omitempty"`
+	ArbitrationConfidence domain.Confidence                   `json:"arbitration_confidence,omitempty"`
+	ConsensusStrength     string                              `json:"consensus_strength,omitempty"`
+	Arbitrated            bool                                `json:"arbitrated,omitempty"`
+	ArbitratorID          string                              `json:"arbitrator_id,omitempty"`
+	CriticalVeto          bool                                `json:"critical_veto"`
+	TopScoreGap           int                                 `json:"top_score_gap"`
+	DisputeReasons        []string                            `json:"dispute_reasons,omitempty"`
+	WinningMode           string                              `json:"winning_mode,omitempty"`
+	SelectedProposalIDs   []string                            `json:"selected_proposal_ids,omitempty"`
+	RiskFlags             []string                            `json:"risk_flags,omitempty"`
+	ReviewQuestions       []string                            `json:"review_questions,omitempty"`
+	DissentSummary        []string                            `json:"dissent_summary,omitempty"`
+	CandidateSummaries    []artifacts.CuriaCandidateSummary   `json:"candidate_summaries,omitempty"`
+	ReviewerBreakdown     []artifacts.CuriaReviewContribution `json:"reviewer_breakdown,omitempty"`
+	ReviewerWeights       []CuriaReviewerSummary              `json:"reviewer_weights,omitempty"`
+	Scoreboard            []CuriaScoreSummary                 `json:"scoreboard,omitempty"`
 }
 
 // QueueInspectResponse expands a queued job into its execution records.

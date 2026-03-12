@@ -25,15 +25,15 @@ import (
 
 // StartRequest describes a runtime launch.
 type StartRequest struct {
-	ExecutionID string
-	SessionID   string
-	TaskID      string
-	Profile     domain.AgentProfile
+	ExecutionID      string
+	SessionID        string
+	TaskID           string
+	Profile          domain.AgentProfile
 	SemanticReviewer domain.AgentProfile
-	Prompt      string
-	WorkingDir  string
-	Continuous  bool
-	MaxRounds   int
+	Prompt           string
+	WorkingDir       string
+	Continuous       bool
+	MaxRounds        int
 }
 
 // ExecutionState is the tracked supervisor state for a process.
@@ -68,13 +68,13 @@ type Result struct {
 
 // SemanticAnalysisRequest describes a stream signal that should be interpreted by a classifier agent.
 type SemanticAnalysisRequest struct {
-	ExecutionID string
-	SessionID   string
-	TaskID      string
-	WorkingDir  string
-	SourceAgent domain.AgentProfile
+	ExecutionID   string
+	SessionID     string
+	TaskID        string
+	WorkingDir    string
+	SourceAgent   domain.AgentProfile
 	ReviewerAgent domain.AgentProfile
-	Signal      policy.StreamSignal
+	Signal        policy.StreamSignal
 }
 
 // SemanticAnalyzer emits richer semantic reports from runtime stream signals.
@@ -440,7 +440,8 @@ func (s *Supervisor) appendOutputEvent(execID string, req StartRequest, stdout s
 		},
 	})
 	logRuntimeChunk(req, stdout)
-	for _, signal := range policy.ClassifyOutputChunk(stdout) {
+	classification := policy.AnalyzeOutputChunk(stdout)
+	for _, signal := range classification.Signals {
 		s.appendSemanticOutputEvent(execID, req, signal)
 		s.analyzeSignal(execID, req, signal)
 		if signal.Kind == policy.SignalDangerousCommandDetected && signal.Confidence == domain.ConfidenceHigh {
@@ -512,13 +513,13 @@ func (s *Supervisor) analyzeSignal(execID string, req StartRequest, signal polic
 	}
 	go func() {
 		if err := s.semantic.AnalyzeSignal(context.Background(), SemanticAnalysisRequest{
-			ExecutionID: execID,
-			SessionID:   req.SessionID,
-			TaskID:      req.TaskID,
-			WorkingDir:  req.WorkingDir,
-			SourceAgent: req.Profile,
+			ExecutionID:   execID,
+			SessionID:     req.SessionID,
+			TaskID:        req.TaskID,
+			WorkingDir:    req.WorkingDir,
+			SourceAgent:   req.Profile,
 			ReviewerAgent: req.SemanticReviewer,
-			Signal:      signal,
+			Signal:        signal,
 		}); err != nil {
 			log.Printf("semantic analyzer failed session=%s task=%s exec=%s: %v", req.SessionID, req.TaskID, execID, err)
 		}
