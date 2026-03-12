@@ -488,6 +488,7 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 		Payload: map[string]any{
 			"execution_id": "exec_task_live",
 			"agent":        "my-codex",
+			"pid":          4242,
 		},
 	}); err != nil {
 		t.Fatalf("AppendEvent(started) error = %v", err)
@@ -525,6 +526,9 @@ func TestServerQueueInspectIncludesLiveRuntime(t *testing.T) {
 	}
 	if resp.Live.ExecutionID != "exec_task_live" {
 		t.Fatalf("live execution id = %q, want exec_task_live", resp.Live.ExecutionID)
+	}
+	if resp.Live.ProcessPID != 4242 {
+		t.Fatalf("live pid = %d, want 4242", resp.Live.ProcessPID)
 	}
 	if resp.Live.WorkspacePath != prepared.EffectiveDir {
 		t.Fatalf("live workspace = %q, want %q", resp.Live.WorkspacePath, prepared.EffectiveDir)
@@ -584,7 +588,7 @@ func TestServerQueueInspectUsesJobWorkingDirForExecutionTruth(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	taskStore, err := taskstore.NewSQLiteStore(repoDir)
+	taskStore, err := taskstore.NewSQLiteStore(daemonDir)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -606,7 +610,7 @@ func TestServerQueueInspectUsesJobWorkingDirForExecutionTruth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
-	eventStore := preferredEventStore(repoDir)
+	eventStore := preferredEventStore(daemonDir)
 	if err := eventStore.AppendEvent(context.Background(), events.Record{
 		ID:         "evt_cross_root_started",
 		SessionID:  "sess_cross_root",

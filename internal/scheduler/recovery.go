@@ -125,7 +125,27 @@ func ReclaimStaleWorkspaces(ctx context.Context, workDir string) error {
 			}
 		}
 	}
-	return workspace.NewManager(workDir, nil).ReclaimStaleExcept(ctx, activeSessions)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		return err
+	}
+	sessions, err := sessionStore.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list sessions for workspace reclaim: %w", err)
+	}
+	roots := make(map[string]struct{})
+	for _, session := range sessions {
+		if session.WorkingDir == "" {
+			continue
+		}
+		roots[session.WorkingDir] = struct{}{}
+	}
+	for root := range roots {
+		if err := workspace.NewManager(root, nil).ReclaimStaleExcept(ctx, activeSessions); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ResumeRunner captures the recovery execution contract needed by the daemon.

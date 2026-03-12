@@ -253,6 +253,23 @@ func TestReclaimStaleWorkspaces(t *testing.T) {
 
 	workDir := t.TempDir()
 	initRecoveryGitRepo(t, workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	now := time.Now().UTC()
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_git",
+		TaskID:     "task_git",
+		Prompt:     "test",
+		Starter:    "codex-cli",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
 	manager := workspace.NewManager(workDir, nil)
 	prepared, err := manager.Prepare(context.Background(), "sess_git", "task_git", workDir, domain.TaskStrategyDirect)
 	if err != nil {

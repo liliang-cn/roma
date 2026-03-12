@@ -18,6 +18,7 @@ import (
 	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/plans"
 	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/run"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/sessions"
@@ -49,6 +50,7 @@ func NewDaemon() (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
+	controlDir := romapath.HomeDir()
 	registry, err := agents.DefaultRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("load registry: %w", err)
@@ -57,18 +59,20 @@ func NewDaemon() (*Daemon, error) {
 	if err := registry.LoadUserConfig(registry.UserConfigPath()); err != nil {
 		return nil, fmt.Errorf("load user agent config: %w", err)
 	}
-	queueBackend := newQueueBackend(wd)
-	historyBackend := newHistoryBackend(wd)
-	artifactBackend := newArtifactBackend(wd)
+	runner := run.NewService(registry)
+	runner.SetControlDir(controlDir)
+	queueBackend := newQueueBackend(controlDir)
+	historyBackend := newHistoryBackend(controlDir)
+	artifactBackend := newArtifactBackend(controlDir)
 	planService := plans.NewService(artifactBackend, workspacepkg.NewManager(wd, mem), mem)
-	server := api.NewServer(wd, queueBackend, historyBackend)
+	server := api.NewServer(controlDir, queueBackend, historyBackend)
 	daemon := &Daemon{
 		api:       server,
 		store:     mem,
 		gateway:   gateway.NewService(mem, planService, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
 		history:   historyBackend,
 		queue:     queueBackend,
-		runner:    run.NewService(registry),
+		runner:    runner,
 		sessions:  sessions.NewService(mem, mem, mem),
 		scheduler: scheduler.NewService(mem, mem, mem),
 		running:   make(map[string]context.CancelFunc),
@@ -125,11 +129,8 @@ func newArtifactBackend(workDir string) artifacts.Backend {
 
 // Run starts the daemon lifecycle and initializes bootstrap state.
 func (d *Daemon) Run(ctx context.Context) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-	if err := syncdb.NewWorkspace(wd).Run(ctx); err != nil {
+	controlDir := romapath.HomeDir()
+	if err := syncdb.NewWorkspace(controlDir).Run(ctx); err != nil {
 		return fmt.Errorf("sync workspace metadata: %w", err)
 	}
 	if err := d.api.Start(ctx); err != nil {
@@ -145,19 +146,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.queue.RecoverInterrupted(ctx); err != nil {
 		return fmt.Errorf("recover interrupted queue items: %w", err)
 	}
-	if err := scheduler.RecoverInterruptedLeases(ctx, wd); err != nil {
+	if err := scheduler.RecoverInterruptedLeases(ctx, controlDir); err != nil {
 		return fmt.Errorf("recover interrupted scheduler leases: %w", err)
 	}
-	if err := scheduler.ReclaimStaleWorkspaces(ctx, wd); err != nil {
+	if err := scheduler.ReclaimStaleWorkspaces(ctx, controlDir); err != nil {
 		return fmt.Errorf("reclaim stale workspaces: %w", err)
 	}
-	if err := scheduler.NormalizeInterruptedTasks(ctx, wd); err != nil {
+	if err := scheduler.NormalizeInterruptedTasks(ctx, controlDir); err != nil {
 		return fmt.Errorf("normalize interrupted tasks: %w", err)
 	}
-	if recovered, err := scheduler.RecoverableSessions(ctx, wd); err == nil && len(recovered) > 0 {
+	if recovered, err := scheduler.RecoverableSessions(ctx, controlDir); err == nil && len(recovered) > 0 {
 		log.Printf("romad recovered %d session(s) with runnable tasks from sqlite metadata", len(recovered))
 	}
-	if err := scheduler.ResumeRecoverableSessions(ctx, wd, d.queue, d.runner); err != nil {
+	if err := scheduler.ResumeRecoverableSessions(ctx, controlDir, d.queue, d.runner); err != nil {
 		return fmt.Errorf("resume recoverable sessions: %w", err)
 	}
 
@@ -245,7 +246,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if err := d.processNextQueueItem(ctx); err != nil {
 				log.Printf("romad queue error: %v", err)
 			}
-			if err := scheduler.ResumeRecoverableSessions(ctx, wd, d.queue, d.runner); err != nil {
+			if err := scheduler.ResumeRecoverableSessions(ctx, controlDir, d.queue, d.runner); err != nil {
 				log.Printf("romad recovery error: %v", err)
 			}
 		}

@@ -51,6 +51,7 @@ type Service struct {
 	store      artifacts.Backend
 	supervisor *runtime.Supervisor
 	tasks      store.TaskStore
+	controlDir string
 }
 
 // NewService constructs a run service.
@@ -63,6 +64,11 @@ func NewService(registry *agents.Registry) *Service {
 		supervisor: runtime.DefaultSupervisor(),
 		tasks:      nil,
 	}
+}
+
+// SetControlDir sets the persisted ROMA control-plane directory.
+func (s *Service) SetControlDir(dir string) {
+	s.controlDir = strings.TrimSpace(dir)
 }
 
 // Run starts the selected starter agent and streams its output.
@@ -86,10 +92,10 @@ func (s *Service) RunWithResult(ctx context.Context, req Request) (Result, error
 	if err := runtime.ValidateWorkingDir(req.WorkingDir); err != nil {
 		return Result{}, err
 	}
-	s.history = newHistoryBackend(req.WorkingDir)
-	s.events = newEventBackend(req.WorkingDir)
-	s.store = newArtifactBackend(req.WorkingDir)
-	s.tasks = newTaskBackend(req.WorkingDir)
+	s.history = s.newHistoryBackend(req.WorkingDir)
+	s.events = s.newEventBackend(req.WorkingDir)
+	s.store = s.newArtifactBackend(req.WorkingDir)
+	s.tasks = s.newTaskBackend(req.WorkingDir)
 	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	delegates, err := s.resolveDelegates(ctx, req.Delegates, profile.ID)
@@ -170,37 +176,9 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 			"delegates": req.Delegates,
 		},
 	})
-	assignments := make([]scheduler.NodeAssignment, 0, 1+len(delegates))
-	assignments = append(assignments, scheduler.NodeAssignment{
-		Node: domain.TaskNodeSpec{
-			ID:            taskID + "_starter",
-			Title:         "Starter execution",
-			Strategy:      domain.TaskStrategyDirect,
-			SchemaVersion: "v1",
-		},
-		Profile:    starter,
-		Continuous: req.Continuous,
-		MaxRounds:  req.MaxRounds,
-	})
-	prevID := taskID + "_starter"
-	for i, delegate := range delegates {
-		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
-		assignments = append(assignments, scheduler.NodeAssignment{
-			Node: domain.TaskNodeSpec{
-				ID:            nodeID,
-				Title:         "Relay delegate execution",
-				Strategy:      domain.TaskStrategyRelay,
-				Dependencies:  []string{prevID},
-				SchemaVersion: "v1",
-			},
-			Profile:    delegate,
-			Continuous: req.Continuous,
-			MaxRounds:  req.MaxRounds,
-		})
-		prevID = nodeID
-	}
+	assignments := buildOrchestratedAssignments(taskID, starter, delegates, req.Continuous, req.MaxRounds)
 
-	dispatcher := scheduler.NewDispatcher(req.WorkingDir, s.supervisor, s.events, s.tasks)
+	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
 	if err != nil {
 		var approvalErr *scheduler.ApprovalPendingError
@@ -335,7 +313,7 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 		Continuous: req.Continuous,
 		MaxRounds:  req.MaxRounds,
 	}}
-	dispatcher := scheduler.NewDispatcher(req.WorkingDir, s.supervisor, s.events, s.tasks)
+	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
 	fullAssignments := append([]scheduler.NodeAssignment(nil), assignments...)
 	if err == nil {
@@ -563,39 +541,132 @@ func (s *Service) evaluatePolicy(ctx context.Context, sessionID, taskID, mode, p
 }
 
 func assignmentsOrchestrated(delegates []domain.AgentProfile) int {
-	return 1 + len(delegates)
+	if len(delegates) == 0 {
+		return 1
+	}
+	return 2 + len(delegates)
 }
 
-func newHistoryBackend(workDir string) history.Backend {
-	fileStore := history.NewStore(workDir)
-	sqliteStore, err := history.NewSQLiteStore(workDir)
+func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, delegates []domain.AgentProfile, continuous bool, maxRounds int) []scheduler.NodeAssignment {
+	if len(delegates) == 0 {
+		return []scheduler.NodeAssignment{{
+			Node: domain.TaskNodeSpec{
+				ID:            taskID + "_starter",
+				Title:         "Starter execution",
+				Strategy:      domain.TaskStrategyDirect,
+				SchemaVersion: "v1",
+			},
+			Profile:    starter,
+			Continuous: continuous,
+			MaxRounds:  maxRounds,
+		}}
+	}
+
+	assignments := make([]scheduler.NodeAssignment, 0, 2+len(delegates))
+	bootstrapNodeID := taskID + "_starter_bootstrap"
+	starterWorkerNodeID := taskID + "_starter"
+	assignments = append(assignments, scheduler.NodeAssignment{
+		Node: domain.TaskNodeSpec{
+			ID:            bootstrapNodeID,
+			Title:         "Starter bootstrap",
+			Strategy:      domain.TaskStrategyDirect,
+			SchemaVersion: "v1",
+		},
+		Profile:    starter,
+		Continuous: continuous,
+		MaxRounds:  maxRounds,
+		PromptHint: buildStarterBootstrapPromptHint(starter, delegates),
+	})
+	assignments = append(assignments, scheduler.NodeAssignment{
+		Node: domain.TaskNodeSpec{
+			ID:            starterWorkerNodeID,
+			Title:         "Starter contribution",
+			Strategy:      domain.TaskStrategyRelay,
+			Dependencies:  []string{bootstrapNodeID},
+			SchemaVersion: "v1",
+		},
+		Profile:    starter,
+		Continuous: continuous,
+		MaxRounds:  maxRounds,
+		PromptHint: "Act as both coordinator and worker. Use the starter bootstrap output as shared context, then contribute your own concrete implementation in parallel with the delegate agents.",
+	})
+	for i, delegate := range delegates {
+		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
+		assignments = append(assignments, scheduler.NodeAssignment{
+			Node: domain.TaskNodeSpec{
+				ID:            nodeID,
+				Title:         "Concurrent delegate execution",
+				Strategy:      domain.TaskStrategyRelay,
+				Dependencies:  []string{bootstrapNodeID},
+				SchemaVersion: "v1",
+			},
+			Profile:    delegate,
+			Continuous: continuous,
+			MaxRounds:  maxRounds,
+			PromptHint: fmt.Sprintf("The starter agent %s produced the bootstrap plan and remains an active contributor. Use the shared bootstrap context, focus on your own contribution, and avoid duplicating other agents' work.", starter.DisplayName),
+		})
+	}
+	return assignments
+}
+
+func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile) string {
+	lines := []string{
+		fmt.Sprintf("You are the coordinating starter agent (%s).", starter.DisplayName),
+		"First produce a shared bootstrap plan for the rest of the agents.",
+		"Inspect the delegate agents' configured commands/args and infer which auto-run, YOLO, approval-bypass, or autopilot modes they support.",
+		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
+	}
+	if len(delegates) > 0 {
+		names := make([]string, 0, len(delegates))
+		for _, delegate := range delegates {
+			names = append(names, fmt.Sprintf("%s (%s)", delegate.DisplayName, delegate.ID))
+		}
+		lines = append(lines, "Delegate agents: "+strings.Join(names, ", "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Service) controlRoot(workDir string) string {
+	if s != nil && strings.TrimSpace(s.controlDir) != "" {
+		return s.controlDir
+	}
+	return workDir
+}
+
+func (s *Service) newHistoryBackend(workDir string) history.Backend {
+	controlDir := s.controlRoot(workDir)
+	fileStore := history.NewStore(controlDir)
+	sqliteStore, err := history.NewSQLiteStore(controlDir)
 	if err != nil {
 		return fileStore
 	}
 	return history.NewMirrorStore(fileStore, sqliteStore)
 }
 
-func newEventBackend(workDir string) store.EventStore {
-	fileStore := store.NewFileEventStore(workDir)
-	sqliteStore, err := store.NewSQLiteEventStore(workDir)
+func (s *Service) newEventBackend(workDir string) store.EventStore {
+	controlDir := s.controlRoot(workDir)
+	fileStore := store.NewFileEventStore(controlDir)
+	sqliteStore, err := store.NewSQLiteEventStore(controlDir)
 	if err != nil {
 		return fileStore
 	}
 	return store.NewMultiEventStore(fileStore, sqliteStore)
 }
 
-func newTaskBackend(workDir string) store.TaskStore {
-	fileStore := taskstore.NewStore(workDir)
-	sqliteStore, err := taskstore.NewSQLiteStore(workDir)
+func (s *Service) newTaskBackend(workDir string) store.TaskStore {
+	controlDir := s.controlRoot(workDir)
+	fileStore := taskstore.NewStore(controlDir)
+	sqliteStore, err := taskstore.NewSQLiteStore(controlDir)
 	if err != nil {
 		return fileStore
 	}
 	return taskstore.NewMirrorStore(fileStore, sqliteStore)
 }
 
-func newArtifactBackend(workDir string) artifacts.Backend {
-	fileStore := artifacts.NewFileStore(workDir)
-	sqliteStore, err := artifacts.NewSQLiteStore(workDir)
+func (s *Service) newArtifactBackend(workDir string) artifacts.Backend {
+	controlDir := s.controlRoot(workDir)
+	fileStore := artifacts.NewFileStore(controlDir)
+	sqliteStore, err := artifacts.NewSQLiteStore(controlDir)
 	if err != nil {
 		return fileStore
 	}

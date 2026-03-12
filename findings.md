@@ -25,7 +25,7 @@
 - Graph node execution now also persists dedicated task records under `.roma/tasks`, with node state, agent id, and artifact id.
 - Task state transitions are now emitted as explicit `TaskStateChanged` events by scheduler lifecycle control, instead of relay directly mutating stored task state without dedicated transition events.
 - `roma replay <session_id>` now reconstructs task progression, artifact linkage, and ordered timeline from the event store only.
-- Session history, task records, and event records now also mirror into `.roma/roma.db`, giving ROMA its first unified persistent backend.
+- Session history, task records, and event records now also mirror into `$HOME/.roma/roma.db`, giving ROMA its first unified persistent backend.
 - CLI and daemon API now prefer SQLite-backed reads for sessions, tasks, events, replay, and queue inspection metadata.
 - Queue metadata and artifact envelopes now also mirror into SQLite, with fallback to file-backed records for older runs that predate the mirror.
 - `syncdb` now backfills file-backed sessions, tasks, events, queue records, and artifact envelopes into SQLite before CLI inspection and daemon recovery paths run.
@@ -207,6 +207,15 @@
   - default `queue tail` output is now structured per event with timestamps, task ids, agent ids, and event classes
   - `roma queue tail --raw <job_id>` preserves the original stdout chunks when the operator wants the unstructured agent stream
   - heartbeat lines now show up as structured records in the watch loop instead of forcing users to infer liveness from unchanged JSON
+- Runtime visibility is now materially more actionable:
+  - `RuntimeStarted` / `RuntimeExited` now persist the real child-process pid
+  - `queue inspect` / `session inspect` expose `live.process_pid`
+  - CLI fallback queue/session inspection now reads control-plane truth from `$HOME/.roma` and workspace truth from the session `WorkingDir`, matching daemon API behavior
+  - `roma queue attach <job_id>` now gives a dedicated follow mode on top of the structured live tail
+  - `queue list` summaries now also expose multi-agent execution shape for active jobs:
+    - participant count
+    - `bootstrap` versus `fanout` phase
+    - current process pid when available
 - There was still no stable user-facing endpoint for "what is the answer?":
   - ROMA had strong internal truth (`session`, `task`, `artifact`, `plan`) but no single human-facing outcome object
   - `report` was too executor-centric and overloaded to serve as the final answer for code changes, Curia, and pure architecture/advice runs
@@ -216,8 +225,15 @@
   - `roma queue cancel <job_id>`
   - daemon API `POST /queue/{id}/cancel`
   - daemon-managed cancellation now propagates through the shared job context, so all agent processes launched under the same job are interrupted together
+  - CLI-side cancellation now resolves queue jobs across both the current workspace root and `$HOME/.roma`, instead of assuming the current local state directory is authoritative
+  - CLI cancellation now chooses the daemon rooted where the job actually lives before falling back to local state mutation, which makes global `$HOME/.roma` jobs cancelable from repository shells
 - Agent registry is now fully user-provided:
   - there are no built-in coding-agent profiles anymore
+- Multi-agent prompt runs no longer serialize delegates in a strict chain:
+  - the user-facing flag is now `--with`, not `--delegate`
+  - the starter now runs a dedicated bootstrap/coordinator node first
+  - the starter then stays in the execution set as a worker node
+  - delegates fan out concurrently after the bootstrap node instead of waiting on one another
   - user-defined agents now default to `$HOME/.roma/agents.json`
   - runtime launch now comes from profile `command` + `args` templates instead of hard-coded per-agent adapters
   - the first configured profile is the implicit default, and profiles can still request PTY behavior
@@ -231,7 +247,10 @@
   - stale local `.roma/run/api.json` could shadow a healthy global daemon
   - `systemd --user` service needed explicit PATH for `codex/gemini/copilot`
   - daemon discovery now falls back to a global daemon home, but live progress UX still needs work on top of that fix
-- ROMA home paths were previously split across `~/.config/roma`, `~/.local/share/roma`, and repo-local `.roma/`; the current code now uses `$HOME/.roma` as the single default home path.
+- ROMA home paths were previously split across `~/.config/roma`, `~/.local/share/roma`, and repo-local `.roma/`; the current code now uses `$HOME/.roma` as the single default control-plane path.
+- Queue/session/task/event/artifact/lease truth now comes from the daemon control root, while workspace metadata is resolved from each session's repository `WorkingDir`.
+- Stale repo-local `.roma/run/api.json` files should no longer shadow the daemon because client discovery now targets the ROMA home path instead of the current repository.
+- Scheduler-dispatched tasks now request isolated workspaces by default; repository execution should flow through worktrees rather than direct writes into the main checkout.
 - the concurrent DAG soak baseline is stronger now:
   - repeated graph runs already existed
   - parallel multi-session dispatcher soak now also verifies lease drain and workspace reclaim invariants under concurrent session execution

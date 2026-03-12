@@ -18,8 +18,19 @@ func HomeDir() string {
 	return filepath.Join(home, ".roma")
 }
 
-// StateDir returns the ROMA state directory for a workspace root.
-func StateDir(workDir string) string {
+// ControlDir returns the canonical ROMA control-plane directory.
+func ControlDir() string {
+	return HomeDir()
+}
+
+// ControlJoin returns a path rooted under the canonical ROMA control-plane directory.
+func ControlJoin(elems ...string) string {
+	parts := append([]string{ControlDir()}, elems...)
+	return filepath.Join(parts...)
+}
+
+// WorkspaceStateDir returns the workspace-scoped ROMA execution directory.
+func WorkspaceStateDir(workDir string) string {
 	cleaned := filepath.Clean(strings.TrimSpace(workDir))
 	if cleaned == "" || cleaned == "." {
 		return filepath.Clean(".roma")
@@ -30,8 +41,19 @@ func StateDir(workDir string) string {
 	return filepath.Join(cleaned, ".roma")
 }
 
-// Join returns a path rooted under the ROMA state directory.
+// WorkspaceJoin returns a path rooted under the workspace-scoped execution directory.
+func WorkspaceJoin(workDir string, elems ...string) string {
+	parts := append([]string{WorkspaceStateDir(workDir)}, elems...)
+	return filepath.Join(parts...)
+}
+
+// StateDir is retained as an alias for workspace-scoped execution state.
+func StateDir(workDir string) string {
+	return WorkspaceStateDir(workDir)
+}
+
+// Join is retained as an alias for workspace-scoped execution paths.
 func Join(workDir string, elems ...string) string {
-	parts := append([]string{StateDir(workDir)}, elems...)
+	parts := append([]string{WorkspaceStateDir(workDir)}, elems...)
 	return filepath.Join(parts...)
 }

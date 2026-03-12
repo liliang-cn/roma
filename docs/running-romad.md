@@ -1,12 +1,12 @@
 # Running `romad`
 
-`romad` is a local daemon. By default it stores its own runtime state under `$HOME/.roma`. If you intentionally run it from a repository root, ROMA still uses that repository's `.roma/` directory instead.
+`romad` is a local daemon. It stores its own control-plane state under `$HOME/.roma`.
 
-Keep these two paths separate:
+Keep these paths separate:
 
 - binary path: where `romad` is installed, for example `~/.local/bin/romad`
 - ROMA home: `$HOME/.roma`
-- repo-local mode: the directory where `romad` runs and writes `.roma/`
+- repository path: the project directory ROMA targets for execution through isolated worktrees
 
 Build the binaries first:
 
@@ -55,7 +55,7 @@ This unit assumes:
 - binary path: `$HOME/.local/bin/romad`
 - ROMA home: `$HOME/.roma`
 
-If you want to run ROMA against another state root, edit `WorkingDirectory=`.
+If you want to move ROMA's control-plane state, change `WorkingDirectory=` and keep it pointing at a dedicated ROMA home, not at a source repository.
 
 ## macOS (`launchd`)
 
@@ -87,11 +87,11 @@ The plist assumes:
 
 ## Windows
 
-The simplest way is to run `romad.exe` in a normal terminal from the desired workspace root:
+The simplest way is to run `romad.exe` in a normal terminal:
 
 ```powershell
 go build -o bin/romad.exe ./cmd/romad
-Set-Location C:\path\to\roma-workspace
+Set-Location C:\path\to\ROMA
 C:\path\to\ROMA\bin\romad.exe
 ```
 
@@ -100,7 +100,7 @@ For background execution, use Task Scheduler instead of a Windows service first.
 Suggested Task Scheduler settings:
 
 - Program: `C:\path\to\ROMA\bin\romad.exe`
-- Start in: `C:\path\to\roma-workspace`
+- Start in: `C:\path\to\ROMA`
 - Trigger: `At log on`
 - Run whether user is logged on or not: optional
 - Restart on failure: enabled
@@ -109,7 +109,8 @@ If you specifically want a Windows service, wrap `romad.exe` with a service mana
 
 ## Notes
 
-- `romad` currently uses the current working directory as its workspace root.
+- `romad` control-plane state lives in `$HOME/.roma`; target repositories are chosen per command via `roma run --cwd <repo>` or by running `roma` from that repository.
+- Agent execution should happen in isolated worktrees under the target repository, not directly inside `$HOME/.roma`.
 - If you change the binary install path, update the systemd unit or launchd plist path.
 - On all platforms, check the daemon health with:
 

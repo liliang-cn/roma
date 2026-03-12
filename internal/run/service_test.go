@@ -168,3 +168,35 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 		t.Fatalf("final artifact kind = %s, want %s", envelope.Kind, domain.ArtifactKindFinalAnswer)
 	}
 }
+
+func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
+	t.Parallel()
+
+	starter := domain.AgentProfile{ID: "starter", DisplayName: "Starter"}
+	delegates := []domain.AgentProfile{
+		{ID: "gemini", DisplayName: "Gemini"},
+		{ID: "copilot", DisplayName: "Copilot"},
+	}
+
+	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3)
+	if len(assignments) != 4 {
+		t.Fatalf("assignment count = %d, want 4", len(assignments))
+	}
+	if assignments[0].Node.ID != "task_1_starter_bootstrap" {
+		t.Fatalf("bootstrap node id = %q, want task_1_starter_bootstrap", assignments[0].Node.ID)
+	}
+	if assignments[1].Node.ID != "task_1_starter" {
+		t.Fatalf("starter worker node id = %q, want task_1_starter", assignments[1].Node.ID)
+	}
+	if got := assignments[1].Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
+		t.Fatalf("starter worker dependencies = %#v, want [task_1_starter_bootstrap]", got)
+	}
+	for _, assignment := range assignments[2:] {
+		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
+			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_bootstrap]", assignment.Node.ID, got)
+		}
+	}
+	if !strings.Contains(assignments[0].PromptHint, "YOLO") && !strings.Contains(assignments[0].PromptHint, "auto-run") {
+		t.Fatalf("bootstrap prompt hint = %q, want automation guidance", assignments[0].PromptHint)
+	}
+}

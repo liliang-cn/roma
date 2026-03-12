@@ -50,6 +50,7 @@ type Execution struct {
 	SessionID string
 	TaskID    string
 	Profile   domain.AgentProfile
+	PID       int
 	State     ExecutionState
 	StartedAt time.Time
 	EndedAt   time.Time
@@ -115,14 +116,11 @@ func NewDefaultSupervisorWithEvents(eventStore store.EventStore) *Supervisor {
 // RunAttached launches the runtime and attaches stdio to the current terminal.
 func (s *Supervisor) RunAttached(ctx context.Context, req StartRequest) error {
 	execID := s.ensureExecutionID(req)
-	s.markStarted(req, execID)
 	command, adapter, err := s.resolveCommand(ctx, req)
 	if err != nil {
-		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return err
 	}
 	if err := s.applyRuntimePolicy(ctx, req, command); err != nil {
-		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return err
 	}
 
@@ -143,7 +141,15 @@ func (s *Supervisor) RunAttached(ctx context.Context, req StartRequest) error {
 	command.Stderr = os.Stderr
 	command.Stdin = os.Stdin
 
-	if err := command.Run(); err != nil {
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("run agent %s: %w", req.Profile.ID, err)
+	}
+	pid := 0
+	if command.Process != nil {
+		pid = command.Process.Pid
+	}
+	s.markStarted(req, execID, pid)
+	if err := command.Wait(); err != nil {
 		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return fmt.Errorf("run agent %s: %w", req.Profile.ID, err)
 	}
@@ -161,14 +167,11 @@ func (s *Supervisor) RunCaptured(ctx context.Context, req StartRequest) (Result,
 
 func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (Result, error) {
 	execID := s.ensureExecutionID(req)
-	s.markStarted(req, execID)
 	command, adapter, err := s.resolveCommand(ctx, req)
 	if err != nil {
-		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return Result{}, err
 	}
 	if err := s.applyRuntimePolicy(ctx, req, command); err != nil {
-		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return Result{}, err
 	}
 
@@ -179,11 +182,9 @@ func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (R
 			return result, nil
 		}
 		if !canFallbackPTY(err) {
-			s.markFinished(execID, req.Profile, ExecutionStateFailed)
 			return result, err
 		}
 		if command, _, err = s.resolveCommand(ctx, req); err != nil {
-			s.markFinished(execID, req.Profile, ExecutionStateFailed)
 			return Result{}, err
 		}
 		command.Dir = req.WorkingDir
@@ -200,9 +201,13 @@ func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (R
 		return Result{}, fmt.Errorf("stderr pipe for agent %s: %w", req.Profile.ID, err)
 	}
 	if err := command.Start(); err != nil {
-		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return Result{}, fmt.Errorf("run agent %s: %w", req.Profile.ID, err)
 	}
+	pid := 0
+	if command.Process != nil {
+		pid = command.Process.Pid
+	}
+	s.markStarted(req, execID, pid)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -317,12 +322,13 @@ func (s *Supervisor) ensureExecutionID(req StartRequest) string {
 	return fmt.Sprintf("exec_%d", s.now().UnixNano())
 }
 
-func (s *Supervisor) markStarted(req StartRequest, execID string) {
+func (s *Supervisor) markStarted(req StartRequest, execID string, pid int) {
 	exec := Execution{
 		ID:        execID,
 		SessionID: req.SessionID,
 		TaskID:    req.TaskID,
 		Profile:   req.Profile,
+		PID:       pid,
 		State:     ExecutionStateRunning,
 		StartedAt: s.now(),
 	}
@@ -340,6 +346,7 @@ func (s *Supervisor) markStarted(req StartRequest, execID string) {
 			Payload: map[string]any{
 				"execution_id": execID,
 				"agent":        req.Profile.ID,
+				"pid":          pid,
 			},
 		})
 	}
@@ -369,6 +376,13 @@ func (s *Supervisor) markFinished(execID string, profile domain.AgentProfile, st
 	s.executions[execID] = exec
 	s.mu.Unlock()
 	if s.events != nil {
+		payload := map[string]any{
+			"execution_id": execID,
+			"agent":        profile.ID,
+		}
+		if exec.PID > 0 {
+			payload["pid"] = exec.PID
+		}
 		_ = s.events.AppendEvent(context.Background(), events.Record{
 			ID:         "evt_" + execID + "_exited",
 			SessionID:  exec.SessionID,
@@ -377,10 +391,7 @@ func (s *Supervisor) markFinished(execID string, profile domain.AgentProfile, st
 			ActorType:  events.ActorTypeSystem,
 			OccurredAt: exec.EndedAt,
 			ReasonCode: string(state),
-			Payload: map[string]any{
-				"execution_id": execID,
-				"agent":        profile.ID,
-			},
+			Payload:    payload,
 		})
 	}
 }
@@ -398,6 +409,7 @@ func (s *Supervisor) appendOutputEvent(execID string, req StartRequest, stdout s
 		ActorType:  events.ActorTypeAgent,
 		OccurredAt: s.now(),
 		Payload: map[string]any{
+			"execution_id": execID,
 			"agent":       req.Profile.ID,
 			"stdout":      stdout,
 			"working_dir": req.WorkingDir,
@@ -423,6 +435,11 @@ func (s *Supervisor) runAttachedPTY(req StartRequest, execID string, command *ex
 		return fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)
 	}
 	defer session.Close()
+	pid := 0
+	if command.Process != nil {
+		pid = command.Process.Pid
+	}
+	s.markStarted(req, execID, pid)
 
 	copyDone := make(chan error, 2)
 	go func() {
@@ -453,6 +470,11 @@ func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *ex
 		return Result{}, fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)
 	}
 	defer session.Close()
+	pid := 0
+	if command.Process != nil {
+		pid = command.Process.Pid
+	}
+	s.markStarted(req, execID, pid)
 
 	var output bytes.Buffer
 	readErrCh := make(chan error, 1)

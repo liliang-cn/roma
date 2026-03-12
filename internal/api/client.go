@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -334,6 +335,14 @@ func (c *Client) queueAction(ctx context.Context, id, action string) (queue.Requ
 		return queue.Request{}, fmt.Errorf("queue %s request: %w", action, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		msg := strings.TrimSpace(string(raw))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return queue.Request{}, fmt.Errorf("queue %s request returned %s: %s", action, resp.Status, msg)
+	}
 
 	var out queue.Request
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -771,8 +780,9 @@ func (c *Client) httpClient() (*http.Client, string, error) {
 }
 
 func candidateMetaPaths(workDir string) []string {
-	paths := make([]string, 0, 3)
-	seen := make(map[string]struct{}, 3)
+	_ = workDir
+	paths := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
 	addPath := func(metaPath string) {
 		metaPath = strings.TrimSpace(metaPath)
 		if metaPath == "" {
@@ -791,18 +801,9 @@ func candidateMetaPaths(workDir string) []string {
 		}
 		addPath(filepath.Join(root, "run", "api.json"))
 	}
-	addWorkspaceRoot := func(root string) {
-		root = strings.TrimSpace(root)
-		if root == "" {
-			return
-		}
-		addPath(romapath.Join(root, "run", "api.json"))
-	}
-
 	if override := daemonHomeOverride(); override != "" {
 		addStateRoot(override)
 	}
-	addWorkspaceRoot(workDir)
 	if fallback := defaultDaemonHome(); fallback != "" {
 		addStateRoot(fallback)
 	}

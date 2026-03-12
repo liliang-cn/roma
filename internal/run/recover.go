@@ -23,10 +23,10 @@ func (s *Service) ResumeSessionWithResult(ctx context.Context, workDir, sessionI
 		return Result{}, fmt.Errorf("working directory is required")
 	}
 
-	s.history = newHistoryBackend(workDir)
-	s.events = newEventBackend(workDir)
-	s.store = newArtifactBackend(workDir)
-	s.tasks = newTaskBackend(workDir)
+	s.history = s.newHistoryBackend(workDir)
+	s.events = s.newEventBackend(workDir)
+	s.store = s.newArtifactBackend(workDir)
+	s.tasks = s.newTaskBackend(workDir)
 	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	record, err := s.history.Get(ctx, sessionID)
@@ -84,7 +84,7 @@ func (s *Service) ResumeSessionWithResult(ctx context.Context, workDir, sessionI
 	}
 	s.appendSessionStateEvent(ctx, record)
 
-	dispatcher := scheduler.NewDispatcher(workDir, s.supervisor, s.events, s.tasks)
+	dispatcher := scheduler.NewDispatcherWithControlDir(workDir, s.controlRoot(workDir), s.supervisor, s.events, s.tasks)
 	execResult, runErr := dispatcher.Resume(ctx, sessionID, record.WorkingDir, record.Prompt, assignments, existing)
 	writeRelayResult(stdout, assignments, execResult)
 

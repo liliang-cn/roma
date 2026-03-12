@@ -10,6 +10,7 @@ ROMA treats multi-agent coding like a Roman state, not a chat room.
 
 - `romad` is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
 - `roma` is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
+- `roma-tui` is an interactive TUI for managing ROMA. It runs `romad` in the background and provides a command interface.
 - Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
 - Each task runs in an isolated workspace when possible. Agents work there first, then ROMA decides whether a plan can be merged back.
 
@@ -47,6 +48,7 @@ This produces:
 ```text
 bin/roma
 bin/romad
+bin/roma-tui
 ```
 
 Install them to `~/.local/bin`:
@@ -65,12 +67,12 @@ make test
 
 ## Run `romad`
 
-`romad` keeps its own state under `$HOME/.roma` by default. If you intentionally run it from a repository root, ROMA still uses that repository's `.roma/` directory instead.
-That means there are two separate paths to think about:
+`romad` keeps its own control-plane state under `$HOME/.roma`.
+There are two separate paths to think about:
 
 - binary path: where `romad` is installed, for example `~/.local/bin/romad`
 - ROMA home: `$HOME/.roma`
-- repo-local mode: the directory where `romad` runs and writes `.roma/`
+- repository path: the target project directory ROMA inspects and executes against through isolated worktrees
 
 Run it directly:
 
@@ -112,8 +114,7 @@ The unit assumes:
 
 - binary path: `$HOME/.local/bin/romad`
 - ROMA home: `$HOME/.roma`
-
-If you want `romad` to own a different state root, edit `WorkingDirectory=` in the unit.
+- repository work is still targeted by `roma run --cwd <repo>` or by invoking `roma` from that repository
 
 ## macOS
 
@@ -146,7 +147,7 @@ The LaunchAgent assumes:
 
 ## Windows
 
-The simplest default is to run `romad.exe` from the repository root:
+The simplest default is to run `romad.exe` from a normal terminal:
 
 ```powershell
 go build -o bin/romad.exe ./cmd/romad
@@ -157,7 +158,7 @@ Set-Location C:\path\to\ROMA
 For background execution, use Task Scheduler first:
 
 - Program: `C:\path\to\ROMA\bin\romad.exe`
-- Start in: `C:\path\to\roma-workspace`
+- Start in: `C:\path\to\ROMA`
 - Trigger: `At log on`
 - Restart on failure: enabled
 

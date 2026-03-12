@@ -13,9 +13,9 @@ Continue evolving ROMA from a local prototype into a daemon-first multi-agent or
 - `romad` supports daemon API, queue consumption, PTY-backed runtime execution, and graph job execution.
 - `roma` supports direct run, submit, graph run, session/artifact/event queries, and `queue inspect`.
 - Queue jobs now carry `session_id`, `task_id`, and `artifact_ids`.
-- Session/task/event writes now mirror into `.roma/roma.db` in addition to existing file persistence.
+- Session/task/event writes now mirror into `$HOME/.roma/roma.db` in addition to existing file persistence.
 - Direct, delegated, and graph runs can now opt into `--continuous` multi-round execution with `--max-rounds`.
-- ROMA's own default state root is now converging on `$HOME/.roma`, while repository-targeted task execution still keeps `--cwd` semantics separate from ROMA home.
+- ROMA control-plane state is now anchored at `$HOME/.roma`, while repository-targeted task execution keeps `--cwd` semantics separate from ROMA home.
 
 ## Phases
 
@@ -191,10 +191,18 @@ Status: in_progress
 - [x] Make `queue inspect` and `sessions inspect` surface live execution state for running jobs, not only completed artifacts and final task state
 - [x] Add a CLI command to tail one running job without requiring direct foreground execution
 - [x] Improve daemon logs so `journalctl --user -u romad -f` shows periodic heartbeats instead of only start/end markers
-- [ ] Fix running-session inspection parity so daemon/API and CLI fallback return the same structure while a job is in progress
-- [ ] Persist runtime pid and expose it through live inspection
+- [x] Make queue cancellation resolve jobs across the current workspace and `$HOME/.roma`, not only the current local state root
+- [x] Change multi-agent `run/submit` from sequential delegate chaining to starter-bootstrap + parallel fan-out execution
+- [x] Replace the user-facing `--delegate` term with `--with`, keeping `--delegate` only as a compatibility alias in argument parsing
+- [x] Split ROMA control-plane state from repository execution state:
+  - `$HOME/.roma` is now the single default control root
+  - daemon discovery no longer treats repo-local `.roma` as authoritative
+  - scheduler/recovery/workspace inspection now resolve workspaces from session `WorkingDir`
+- [x] Make isolated workspaces the default requested mode for scheduler-dispatched tasks
+- [x] Fix running-session inspection parity so daemon/API and CLI fallback return the same structure while a job is in progress
+- [x] Persist runtime pid and expose it through live inspection
 - [x] Emit lightweight progress events while nodes are running instead of only at node completion
-- [ ] Add an attach mode beyond polling tail so users can watch one running session without re-printing full inspect payloads
+- [x] Add an attach mode beyond polling tail so users can watch one running session without re-printing full inspect payloads
 - [x] Make `queue tail` default to structured runtime events, with `--raw` preserving raw stdout chunks
 - [x] Add a first-class user-facing session outcome artifact and expose it via `roma result show <session_id>`
 
@@ -214,9 +222,7 @@ Status: in_progress
 
 ## Next Immediate Steps
 
-1. Finish Phase 19 by persisting runtime pid and adding an attach mode richer than polling `queue tail`.
-2. Tighten running-session parity so daemon/API and CLI fallback expose exactly the same live structure while a job is active.
-3. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
-4. Extend structured runtime logging beyond `queue tail`, especially for daemon journald summaries and session-level watch flows.
-5. Use the improved live surface to continue CLI product simplification around `run`, `submit`, and `cancel`.
-6. Keep improving the user-facing outcome layer so `result show` can remain the main exit, not just a thin artifact wrapper.
+1. Expose the new starter-bootstrap / parallel fan-out semantics more clearly in queue/session summaries so users can see when fan-out begins.
+2. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
+3. Keep improving the user-facing outcome layer so `result show` can remain the main exit, not just a thin artifact wrapper.
+4. Make live progress more actionable by surfacing current round, participant count, and richer workspace metadata while a job is running.

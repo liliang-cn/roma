@@ -22,6 +22,7 @@ import (
 	"github.com/liliang-cn/roma/internal/policy"
 	"github.com/liliang-cn/roma/internal/queue"
 	"github.com/liliang-cn/roma/internal/replay"
+	"github.com/liliang-cn/roma/internal/romapath"
 	runsvc "github.com/liliang-cn/roma/internal/run"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/sqliteutil"
@@ -289,11 +290,12 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 		if err != nil {
 			return err
 		}
-		fmt.Printf("submitted to daemon id=%s agent=%s delegates=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+		fmt.Printf("submitted to daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
 		return nil
 	}
 
 	svc := runsvc.NewService(registry)
+	svc.SetControlDir(romapath.HomeDir())
 	return svc.Run(ctx, req)
 }
 
@@ -393,6 +395,7 @@ func runGraph(ctx context.Context, registry *agents.Registry, args []string) err
 	}
 
 	svc := runsvc.NewService(registry)
+	svc.SetControlDir(romapath.HomeDir())
 	return svc.RunGraph(ctx, graphReq, os.Stdout)
 }
 
@@ -431,7 +434,7 @@ func runCuria(ctx context.Context, args []string) error {
 			return err
 		}
 	} else {
-		store := curia.NewReputationStore(wd)
+		store := curia.NewReputationStore(romapath.HomeDir())
 		items, err = store.List(ctx)
 		if err != nil {
 			return err
@@ -576,7 +579,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("queued via daemon id=%s agent=%s delegates=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+		fmt.Printf("queued via daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
 		return nil
 	}
 
@@ -596,7 +599,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	if err := store.Enqueue(ctx, record); err != nil {
 		return err
 	}
-	fmt.Printf("queued id=%s agent=%s delegates=%s\n", id, req.StarterAgent, strings.Join(req.Delegates, ","))
+	fmt.Printf("queued id=%s agent=%s with=%s\n", id, req.StarterAgent, strings.Join(req.Delegates, ","))
 	return nil
 }
 
@@ -671,6 +674,12 @@ func runQueue(ctx context.Context, args []string) error {
 		}, subArg, rawTail)
 	}
 
+	if client.Available() && subcommand == "attach" {
+		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return client.QueueInspect(ctx, id)
+		}, subArg, rawTail)
+	}
+
 	if client.Available() && subcommand == "cancel" {
 		item, err := client.QueueCancel(ctx, subArg)
 		if err != nil {
@@ -733,6 +742,12 @@ func runQueue(ctx context.Context, args []string) error {
 	}
 
 	if subcommand == "tail" {
+		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return inspectQueueLocal(ctx, wd, id)
+		}, subArg, rawTail)
+	}
+
+	if subcommand == "attach" {
 		return runQueueTail(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
 			return inspectQueueLocal(ctx, wd, id)
 		}, subArg, rawTail)
@@ -901,7 +916,11 @@ func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw 
 		case events.TypeWorkspacePrepared:
 			lines = append(lines, fmt.Sprintf("%s dir=%s provider=%s", prefix, payloadString(record.Payload, "effective_dir"), payloadString(record.Payload, "provider")))
 		case events.TypeRuntimeStarted:
-			lines = append(lines, fmt.Sprintf("%s exec=%s agent=%s", prefix, payloadString(record.Payload, "execution_id"), payloadString(record.Payload, "agent")))
+			line := fmt.Sprintf("%s exec=%s agent=%s", prefix, payloadString(record.Payload, "execution_id"), payloadString(record.Payload, "agent"))
+			if pid := payloadString(record.Payload, "pid"); pid != "" && pid != "0" {
+				line += " pid=" + pid
+			}
+			lines = append(lines, line)
 		case events.TypeRuntimeStdoutCaptured:
 			chunk := strings.TrimSpace(payloadString(record.Payload, "stdout"))
 			if chunk == "" {
@@ -944,6 +963,9 @@ func formatQueueTailLine(resp api.QueueInspectResponse) string {
 		if resp.Live.ExecutionID != "" {
 			parts = append(parts, "exec="+resp.Live.ExecutionID)
 		}
+		if resp.Live.ProcessPID > 0 {
+			parts = append(parts, "pid="+strconv.Itoa(resp.Live.ProcessPID))
+		}
 		if resp.Live.WorkspacePath != "" {
 			parts = append(parts, "workspace="+resp.Live.WorkspacePath)
 		}
@@ -973,6 +995,9 @@ func formatQueueHeartbeatLine(resp api.QueueInspectResponse) string {
 	if resp.Live.CurrentAgentID != "" {
 		parts = append(parts, "agent="+resp.Live.CurrentAgentID)
 	}
+	if resp.Live.ProcessPID > 0 {
+		parts = append(parts, "pid="+strconv.Itoa(resp.Live.ProcessPID))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -987,36 +1012,43 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string) (api.QueueInspectR
 		return resp, nil
 	}
 
-	sessionStore := preferredHistoryStore(wd)
+	controlDir := romapath.HomeDir()
+	workspaceDir := req.WorkingDir
+	sessionStore := preferredHistoryStore(controlDir)
 	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil {
 		resp.Session = &session
+		if session.WorkingDir != "" {
+			workspaceDir = session.WorkingDir
+		}
 	}
-	if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+	if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 		if lease, err := leaseStore.Get(ctx, req.SessionID); err == nil {
 			resp.Lease = &lease
 			resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
 			resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
 		}
 	}
-	taskStore := preferredTaskStore(wd)
+	taskStore := preferredTaskStore(controlDir)
 	if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
 		resp.Tasks = items
 	}
-	artifactStore := preferredArtifactStore(wd)
+	artifactStore := preferredArtifactStore(controlDir)
 	if items, err := artifactStore.List(ctx, req.SessionID); err == nil {
 		resp.Artifacts = items
-		resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
+		resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
 	}
-	eventStore := preferredEventStore(wd)
+	eventStore := preferredEventStore(controlDir)
 	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
 		resp.Events = items
 		resp.Plans = summarizePlanActions(items)
 	}
-	manager := workspacepkg.NewManager(wd, nil)
-	if items, err := manager.List(ctx); err == nil {
-		for _, item := range items {
-			if item.SessionID == req.SessionID {
-				resp.Workspaces = append(resp.Workspaces, item)
+	if workspaceDir != "" {
+		manager := workspacepkg.NewManager(workspaceDir, nil)
+		if items, err := manager.List(ctx); err == nil {
+			for _, item := range items {
+				if item.SessionID == req.SessionID {
+					resp.Workspaces = append(resp.Workspaces, item)
+				}
 			}
 		}
 	}
@@ -1039,40 +1071,68 @@ func runQueueCancel(ctx context.Context, args []string) error {
 	}
 	_ = syncWorkspace(ctx, wd)
 
-	client := api.NewClient(wd)
+	clientRoot := resolveQueueClientRoot(ctx, wd, jobID)
+
+	client := api.NewClient(clientRoot)
 	if client.Available() {
 		item, err := client.QueueCancel(ctx, jobID)
-		if err != nil {
-			return err
+		if err == nil {
+			raw, err := json.MarshalIndent(item, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal queue cancel response: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
 		}
-		raw, err := json.MarshalIndent(item, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal queue cancel response: %w", err)
+		item, err = cancelQueueLocal(ctx, wd, jobID)
+		if err == nil {
+			raw, err := json.MarshalIndent(item, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal queue cancel response: %w", err)
+			}
+			fmt.Println(string(raw))
+			return nil
 		}
-		fmt.Println(string(raw))
-		return nil
+		return err
 	}
 
-	queueStore := preferredQueueStore(wd)
-	item, err := queueStore.Get(ctx, jobID)
+	item, err := cancelQueueLocal(ctx, clientRoot, jobID)
 	if err != nil {
 		return err
 	}
+	raw, err := json.MarshalIndent(item, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal queue cancel: %w", err)
+	}
+	fmt.Println(string(raw))
+	return nil
+}
+
+func cancelQueueLocal(ctx context.Context, wd, jobID string) (queue.Request, error) {
+	item, queueRoot, err := findQueueRequestAcrossRoots(ctx, wd, jobID)
+	if err != nil {
+		return queue.Request{}, err
+	}
+	queueStore := preferredQueueStore(queueRoot)
 	item.Status = queue.StatusCancelled
 	item.Error = "cancelled by user"
 	item.PolicyOverride = false
 	item.PolicyOverrideActor = ""
 	if err := queueStore.Update(ctx, item); err != nil {
-		return err
+		return queue.Request{}, err
+	}
+	executionRoot := queueRoot
+	if strings.TrimSpace(item.WorkingDir) != "" {
+		executionRoot = item.WorkingDir
 	}
 	if item.SessionID != "" {
-		sessionStore := preferredHistoryStore(wd)
+		sessionStore := preferredHistoryStore(executionRoot)
 		if session, err := sessionStore.Get(ctx, item.SessionID); err == nil {
 			session.Status = "cancelled"
 			session.UpdatedAt = time.Now().UTC()
 			_ = sessionStore.Save(ctx, session)
 		}
-		taskStore := preferredTaskStore(wd)
+		taskStore := preferredTaskStore(executionRoot)
 		if tasks, err := taskStore.ListTasksBySession(ctx, item.SessionID); err == nil {
 			for _, task := range tasks {
 				switch task.State {
@@ -1086,7 +1146,7 @@ func runQueueCancel(ctx context.Context, args []string) error {
 				}
 			}
 		}
-		eventStore := preferredEventStore(wd)
+		eventStore := preferredEventStore(executionRoot)
 		_ = eventStore.AppendEvent(ctx, events.Record{
 			ID:         "evt_" + item.ID + "_cancelled",
 			SessionID:  item.SessionID,
@@ -1100,12 +1160,34 @@ func runQueueCancel(ctx context.Context, args []string) error {
 			},
 		})
 	}
-	raw, err := json.MarshalIndent(item, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal queue cancel: %w", err)
+	return item, nil
+}
+
+func resolveQueueClientRoot(ctx context.Context, wd, jobID string) string {
+	if _, queueRoot, err := findQueueRequestAcrossRoots(ctx, wd, jobID); err == nil && strings.TrimSpace(queueRoot) != "" {
+		return queueRoot
 	}
-	fmt.Println(string(raw))
-	return nil
+	return wd
+}
+
+func findQueueRequestAcrossRoots(ctx context.Context, wd, jobID string) (queue.Request, string, error) {
+	var lastErr error
+	for _, root := range candidateQueueRoots(wd) {
+		item, err := preferredQueueStore(root).Get(ctx, jobID)
+		if err == nil {
+			return item, root, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("queue request %s not found", jobID)
+	}
+	return queue.Request{}, "", lastErr
+}
+
+func candidateQueueRoots(wd string) []string {
+	_ = wd
+	return []string{filepath.Clean(romapath.HomeDir())}
 }
 
 func applyQueueDecisionLocal(ctx context.Context, wd string, item queue.Request, approved bool) (bool, queue.Request, error) {
@@ -1444,33 +1526,37 @@ func runSessions(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		controlDir := romapath.HomeDir()
+		workspaceDir := record.WorkingDir
 		resp := api.SessionInspectResponse{Session: record, ApprovalResumeReady: true}
-		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+		if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 			if lease, err := leaseStore.Get(ctx, args[1]); err == nil {
 				resp.Lease = &lease
 				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
 				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
 			}
 		}
-		taskStore := preferredTaskStore(wd)
+		taskStore := preferredTaskStore(controlDir)
 		if items, err := taskStore.ListTasksBySession(ctx, args[1]); err == nil {
 			resp.Tasks = items
 		}
-		eventStore := preferredEventStore(wd)
+		eventStore := preferredEventStore(controlDir)
 		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: args[1]}); err == nil {
 			resp.Events = items
 			resp.Plans = summarizePlanActions(items)
 		}
-		artifactStore := preferredArtifactStore(wd)
+		artifactStore := preferredArtifactStore(controlDir)
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
-			resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
+			resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
 		}
-		manager := workspacepkg.NewManager(wd, eventStore)
-		if items, err := manager.List(ctx); err == nil {
-			for _, item := range items {
-				if item.SessionID == args[1] {
-					resp.Workspaces = append(resp.Workspaces, item)
+		if workspaceDir != "" {
+			manager := workspacepkg.NewManager(workspaceDir, nil)
+			if items, err := manager.List(ctx); err == nil {
+				for _, item := range items {
+					if item.SessionID == args[1] {
+						resp.Workspaces = append(resp.Workspaces, item)
+					}
 				}
 			}
 		}
@@ -1491,33 +1577,37 @@ func runSessions(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		controlDir := romapath.HomeDir()
+		workspaceDir := record.WorkingDir
 		resp := api.SessionInspectResponse{Session: record, ApprovalResumeReady: true}
-		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+		if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 			if lease, err := leaseStore.Get(ctx, args[1]); err == nil {
 				resp.Lease = &lease
 				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
 				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
 			}
 		}
-		taskStore := preferredTaskStore(wd)
+		taskStore := preferredTaskStore(controlDir)
 		if items, err := taskStore.ListTasksBySession(ctx, args[1]); err == nil {
 			resp.Tasks = items
 		}
-		eventStore := preferredEventStore(wd)
+		eventStore := preferredEventStore(controlDir)
 		if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: args[1]}); err == nil {
 			resp.Events = items
 			resp.Plans = summarizePlanActions(items)
 		}
-		artifactStore := preferredArtifactStore(wd)
+		artifactStore := preferredArtifactStore(controlDir)
 		if items, err := artifactStore.List(ctx, args[1]); err == nil {
 			resp.Artifacts = items
-			resp.Curia = summarizeCuriaArtifactsCLI(wd, items)
+			resp.Curia = summarizeCuriaArtifactsCLI(controlDir, items)
 		}
-		manager := workspacepkg.NewManager(wd, eventStore)
-		if items, err := manager.List(ctx); err == nil {
-			for _, item := range items {
-				if item.SessionID == args[1] {
-					resp.Workspaces = append(resp.Workspaces, item)
+		if workspaceDir != "" {
+			manager := workspacepkg.NewManager(workspaceDir, nil)
+			if items, err := manager.List(ctx); err == nil {
+				for _, item := range items {
+					if item.SessionID == args[1] {
+						resp.Workspaces = append(resp.Workspaces, item)
+					}
 				}
 			}
 		}
@@ -1691,7 +1781,7 @@ func summarizeCuriaReviewerWeightsCLI(workDir string, items []artifacts.CuriaRev
 	if workDir == "" || len(items) == 0 {
 		return nil
 	}
-	store := curia.NewReputationStore(workDir)
+	store := curia.NewReputationStore(romapath.HomeDir())
 	if store == nil {
 		return nil
 	}
@@ -2719,47 +2809,54 @@ func runEvents(ctx context.Context, args []string) error {
 }
 
 func preferredHistoryStore(workDir string) history.Backend {
-	sqliteStore, err := history.NewSQLiteStore(workDir)
+	controlDir := romapath.HomeDir()
+	sqliteStore, err := history.NewSQLiteStore(controlDir)
 	if err == nil {
 		return sqliteStore
 	}
-	return history.NewStore(workDir)
+	return history.NewStore(controlDir)
 }
 
 func preferredEventStore(workDir string) storepkg.EventStore {
-	sqliteStore, err := storepkg.NewSQLiteEventStore(workDir)
+	controlDir := romapath.HomeDir()
+	sqliteStore, err := storepkg.NewSQLiteEventStore(controlDir)
 	if err == nil {
 		return sqliteStore
 	}
-	return storepkg.NewFileEventStore(workDir)
+	return storepkg.NewFileEventStore(controlDir)
 }
 
 func preferredTaskStore(workDir string) storepkg.TaskStore {
-	sqliteStore, err := taskstore.NewSQLiteStore(workDir)
+	controlDir := romapath.HomeDir()
+	sqliteStore, err := taskstore.NewSQLiteStore(controlDir)
 	if err == nil {
 		return sqliteStore
 	}
-	return taskstore.NewStore(workDir)
+	return taskstore.NewStore(controlDir)
 }
 
 func preferredArtifactStore(workDir string) artifacts.Backend {
-	sqliteStore, err := artifacts.NewSQLiteStore(workDir)
+	controlDir := romapath.HomeDir()
+	sqliteStore, err := artifacts.NewSQLiteStore(controlDir)
 	if err == nil {
 		return sqliteStore
 	}
-	return artifacts.NewFileStore(workDir)
+	return artifacts.NewFileStore(controlDir)
 }
 
 func preferredQueueStore(workDir string) queue.Backend {
-	sqliteStore, err := queue.NewSQLiteStore(workDir)
+	controlDir := romapath.HomeDir()
+	fileStore := queue.NewStore(controlDir)
+	sqliteStore, err := queue.NewSQLiteStore(controlDir)
 	if err == nil {
-		return sqliteStore
+		return queue.NewMirrorStore(sqliteStore, fileStore)
 	}
-	return queue.NewStore(workDir)
+	return fileStore
 }
 
 func syncWorkspace(ctx context.Context, workDir string) error {
-	return syncdb.NewWorkspace(workDir).Run(ctx)
+	_ = workDir
+	return syncdb.NewWorkspace(romapath.HomeDir()).Run(ctx)
 }
 
 func parseRunArgs(args []string) (runsvc.Request, error) {
@@ -2780,10 +2877,10 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 				return runsvc.Request{}, fmt.Errorf("--cwd requires a value")
 			}
 			req.WorkingDir = args[i]
-		case "--delegate":
+		case "--with", "--delegate":
 			i++
 			if i >= len(args) {
-				return runsvc.Request{}, fmt.Errorf("--delegate requires a value")
+				return runsvc.Request{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
 			for _, part := range strings.Split(args[i], ",") {
 				part = strings.TrimSpace(part)
@@ -2831,8 +2928,8 @@ func printUsage() {
 	fmt.Println("  roma <command> [subcommand] [flags]")
 	fmt.Println("")
 	fmt.Println("Core:")
-	fmt.Println(`  roma run --agent codex "build a feature"`)
-	fmt.Println(`  roma submit --agent codex "build a feature"`)
+	fmt.Println(`  roma run --agent codex --with gemini,copilot "build a feature"`)
+	fmt.Println(`  roma submit --agent codex --with gemini,copilot "build a feature"`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma cancel <job_id>")
 	fmt.Println("  roma result show <session_id>")
@@ -2853,7 +2950,7 @@ func printUsage() {
 	fmt.Println("  roma help agent")
 	fmt.Println("  roma help debug")
 	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
-	fmt.Println(`  roma run --agent my-codex "build a feature"`)
+	fmt.Println(`  roma run --agent my-codex --with my-gemini,my-copilot "build a feature"`)
 }
 
 func printTopicUsage(topic string) {
@@ -2887,6 +2984,7 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma queue list [--status <status>] [--mode <direct|graph>]")
 		fmt.Println("  roma queue show <job_id>")
 		fmt.Println("  roma queue inspect <job_id>")
+		fmt.Println("  roma queue attach <job_id> [--raw]")
 		fmt.Println("  roma queue tail <job_id> [--raw]")
 		fmt.Println("  roma queue cancel <job_id>")
 		fmt.Println("  roma approve <job_id>")
@@ -3001,7 +3099,13 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 	if req.SessionID == "" {
 		return "-"
 	}
-	taskStore := preferredTaskStore(wd)
+	controlDir := romapath.HomeDir()
+	workspaceDir := req.WorkingDir
+	sessionStore := preferredHistoryStore(controlDir)
+	if session, err := sessionStore.Get(ctx, req.SessionID); err == nil && session.WorkingDir != "" {
+		workspaceDir = session.WorkingDir
+	}
+	taskStore := preferredTaskStore(controlDir)
 	items, err := taskStore.ListTasksBySession(ctx, req.SessionID)
 	if err != nil || len(items) == 0 {
 		return "-"
@@ -3024,22 +3128,24 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		}
 	}
 	summary := fmt.Sprintf("nodes=%d ok=%d run=%d wait=%d fail=%d", total, succeeded, running, waiting, failed)
-	eventStore := preferredEventStore(wd)
+	eventStore := preferredEventStore(controlDir)
 	var eventItems []events.Record
 	if items, err := eventStore.ListEvents(ctx, storepkg.EventFilter{SessionID: req.SessionID}); err == nil {
 		eventItems = items
 	}
-	manager := workspacepkg.NewManager(wd, nil)
 	var workspaceItems []workspacepkg.Prepared
-	if items, err := manager.List(ctx); err == nil {
-		for _, item := range items {
-			if item.SessionID == req.SessionID {
-				workspaceItems = append(workspaceItems, item)
+	if workspaceDir != "" {
+		manager := workspacepkg.NewManager(workspaceDir, nil)
+		if items, err := manager.List(ctx); err == nil {
+			for _, item := range items {
+				if item.SessionID == req.SessionID {
+					workspaceItems = append(workspaceItems, item)
+				}
 			}
 		}
 	}
 	var lease *scheduler.LeaseRecord
-	if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+	if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 		if item, err := leaseStore.Get(ctx, req.SessionID); err == nil {
 			lease = &item
 		}
@@ -3051,8 +3157,17 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		if live.CurrentAgentID != "" {
 			summary += " agent=" + live.CurrentAgentID
 		}
+		if live.ProcessPID > 0 {
+			summary += " pid=" + strconv.Itoa(live.ProcessPID)
+		}
+		if phase := queueExecutionPhase(req, live.CurrentTaskID); phase != "" {
+			summary += " phase=" + phase
+		}
 	}
-	artifactStore := preferredArtifactStore(wd)
+	if participantCount := 1 + len(req.Delegates); participantCount > 1 {
+		summary += " agents=" + strconv.Itoa(participantCount)
+	}
+	artifactStore := preferredArtifactStore(controlDir)
 	artifactsForSession, err := artifactStore.List(ctx, req.SessionID)
 	if err != nil || len(artifactsForSession) == 0 {
 		return summary
@@ -3061,6 +3176,22 @@ func queueNodeSummary(ctx context.Context, wd string, req queue.Request) string 
 		return summary + " " + curia
 	}
 	return summary
+}
+
+func queueExecutionPhase(req queue.Request, currentTaskID string) string {
+	if len(req.Delegates) == 0 {
+		return ""
+	}
+	switch {
+	case strings.Contains(currentTaskID, "_starter_bootstrap"):
+		return "bootstrap"
+	case strings.Contains(currentTaskID, "_starter"), strings.Contains(currentTaskID, "_delegate_"):
+		return "fanout"
+	case currentTaskID == "":
+		return "scheduled"
+	default:
+		return "fanout"
+	}
 }
 
 func queueCuriaSuffix(items []domain.ArtifactEnvelope) string {
@@ -3108,7 +3239,7 @@ func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subc
 		case "list":
 			subcommand = "list"
 			expectJobID = false
-		case "show", "inspect", "cancel", "tail":
+		case "show", "inspect", "cancel", "tail", "attach":
 			subcommand = args[i]
 			expectJobID = true
 		case "--status":
@@ -3134,7 +3265,7 @@ func parseQueueArgs(args []string) (statusFilter string, modeFilter string, subc
 			return "", "", "", "", false, fmt.Errorf("unknown queue argument %q", args[i])
 		}
 	}
-	if expectJobID || ((subcommand == "show" || subcommand == "inspect" || subcommand == "cancel" || subcommand == "tail") && subArg == "") {
+	if expectJobID || ((subcommand == "show" || subcommand == "inspect" || subcommand == "cancel" || subcommand == "tail" || subcommand == "attach") && subArg == "") {
 		return "", "", "", "", false, fmt.Errorf("roma queue %s requires a job id", subcommand)
 	}
 	return statusFilter, modeFilter, subcommand, subArg, raw, nil

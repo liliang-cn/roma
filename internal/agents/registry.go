@@ -17,6 +17,7 @@ import (
 type Registry struct {
 	builtins map[string]domain.AgentProfile
 	users    map[string]domain.AgentProfile
+	userOrder []string
 	path     string
 }
 
@@ -30,6 +31,7 @@ func NewRegistry(profiles ...domain.AgentProfile) (*Registry, error) {
 	registry := &Registry{
 		builtins: make(map[string]domain.AgentProfile, len(profiles)),
 		users:    make(map[string]domain.AgentProfile),
+		userOrder: make([]string, 0),
 	}
 
 	for _, profile := range profiles {
@@ -70,11 +72,16 @@ func (r *Registry) LoadUserConfig(path string) error {
 	}
 
 	r.users = make(map[string]domain.AgentProfile, len(profiles))
+	r.userOrder = make([]string, 0, len(profiles))
 	for _, p := range profiles {
 		if err := domain.ValidateAgentProfile(p); err != nil {
 			return fmt.Errorf("validate agent %s: %w", p.ID, err)
 		}
+		if _, exists := r.users[p.ID]; exists {
+			return fmt.Errorf("duplicate agent id %s in config", p.ID)
+		}
 		r.users[p.ID] = p
+		r.userOrder = append(r.userOrder, p.ID)
 	}
 	return nil
 }
@@ -105,8 +112,8 @@ func (r *Registry) SaveUserConfig() error {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
-	profiles := make([]domain.AgentProfile, 0, len(r.users))
-	for _, id := range r.sortedUserIDs() {
+	profiles := make([]domain.AgentProfile, 0, len(r.userOrder))
+	for _, id := range r.userOrder {
 		profiles = append(profiles, r.users[id])
 	}
 
@@ -119,15 +126,6 @@ func (r *Registry) SaveUserConfig() error {
 		return fmt.Errorf("write agent config: %w", err)
 	}
 	return nil
-}
-
-func (r *Registry) sortedUserIDs() []string {
-	ids := make([]string, 0, len(r.users))
-	for id := range r.users {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	return ids
 }
 
 // Register is kept for compatibility but adds to builtins.
@@ -147,6 +145,9 @@ func (r *Registry) Add(profile domain.AgentProfile) error {
 	if err := domain.ValidateAgentProfile(profile); err != nil {
 		return err
 	}
+	if _, exists := r.users[profile.ID]; !exists {
+		r.userOrder = append(r.userOrder, profile.ID)
+	}
 	r.users[profile.ID] = profile
 	return nil
 }
@@ -157,6 +158,12 @@ func (r *Registry) Remove(id string) error {
 		return fmt.Errorf("agent %s not found", id)
 	}
 	delete(r.users, id)
+	for i, item := range r.userOrder {
+		if item == id {
+			r.userOrder = append(r.userOrder[:i], r.userOrder[i+1:]...)
+			break
+		}
+	}
 	return nil
 }
 
@@ -182,32 +189,22 @@ func (r *Registry) Get(idOrAlias string) (domain.AgentProfile, bool) {
 // List returns sorted agent profiles.
 func (r *Registry) List(_ context.Context) []domain.AgentProfile {
 	out := make([]domain.AgentProfile, 0, len(r.builtins)+len(r.users))
-	for _, profile := range r.builtins {
-		out = append(out, profile)
-	}
-	for _, profile := range r.users {
-		out = append(out, profile)
-	}
-	slices.SortFunc(out, func(a, b domain.AgentProfile) int {
-		if a.DisplayName == b.DisplayName {
-			switch {
-			case a.ID < b.ID:
-				return -1
-			case a.ID > b.ID:
-				return 1
-			default:
-				return 0
-			}
+	for _, id := range r.userOrder {
+		if profile, ok := r.users[id]; ok {
+			out = append(out, profile)
 		}
-		switch {
-		case a.DisplayName < b.DisplayName:
-			return -1
-		case a.DisplayName > b.DisplayName:
-			return 1
-		default:
-			return 0
+	}
+	builtinIDs := make([]string, 0, len(r.builtins))
+	for id := range r.builtins {
+		if _, exists := r.users[id]; exists {
+			continue
 		}
-	})
+		builtinIDs = append(builtinIDs, id)
+	}
+	slices.Sort(builtinIDs)
+	for _, id := range builtinIDs {
+		out = append(out, r.builtins[id])
+	}
 	return out
 }
 

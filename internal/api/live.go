@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ type RuntimeLiveSummary struct {
 	CurrentTaskState  string     `json:"current_task_state,omitempty"`
 	CurrentAgentID    string     `json:"current_agent_id,omitempty"`
 	ExecutionID       string     `json:"execution_id,omitempty"`
+	ProcessPID        int        `json:"process_pid,omitempty"`
 	WorkspacePath     string     `json:"workspace_path,omitempty"`
 	WorkspaceProvider string     `json:"workspace_provider,omitempty"`
 	WorkspaceStatus   string     `json:"workspace_status,omitempty"`
@@ -48,6 +50,7 @@ func SummarizeRuntimeLive(sessionStatus string, tasks []domain.TaskRecord, recor
 	runtimeStarted, runtimeOutput, latestEvent := selectRuntimeEvents(summary.CurrentTaskID, records)
 	if runtimeStarted != nil {
 		summary.ExecutionID = payloadString(runtimeStarted.Payload, "execution_id")
+		summary.ProcessPID = payloadInt(runtimeStarted.Payload, "pid")
 		if agent := payloadString(runtimeStarted.Payload, "agent"); agent != "" {
 			summary.CurrentAgentID = agent
 		}
@@ -272,6 +275,30 @@ func payloadString(payload map[string]any, key string) string {
 		return typed.String()
 	default:
 		return fmt.Sprint(typed)
+	}
+}
+
+func payloadInt(payload map[string]any, key string) int {
+	if payload == nil {
+		return 0
+	}
+	value, ok := payload[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return n
+	default:
+		n, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(typed)))
+		return n
 	}
 }
 

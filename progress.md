@@ -194,11 +194,25 @@
   - agent config now defaults to `$HOME/.roma/agents.json`
   - daemon discovery now prefers `$HOME/.roma/run/api.json`
   - systemd and launchd templates now point at `$HOME/.roma`
+  - control-plane stores are now wired from `$HOME/.roma`, not from the target repository
+  - repository workspaces are resolved from session `WorkingDir`, not inferred from daemon cwd
+  - scheduler-dispatched tasks now request isolated workspace execution by default
 - Added live runtime visibility for active jobs:
   - `queue inspect` and `session inspect` now include a `live` section
   - `live` currently summarizes current task, agent, execution id, workspace path, heartbeat time, last event, and last output preview
   - `queue list` now surfaces current running task and agent in the summary for active jobs
   - `roma queue tail <job_id>` now polls and prints live job progress until the job leaves `pending/running`
+- Tightened live/runtime inspection:
+  - runtime start/exit events now persist child-process pid
+  - `live.process_pid` is now exposed through queue/session inspection and queue tail heartbeat lines
+  - CLI fallback queue/session inspection now uses `$HOME/.roma` for control-plane truth and the session `WorkingDir` for workspace truth
+  - `roma queue attach <job_id>` now follows a running job without dumping a full inspect payload every time
+  - running multi-agent jobs now show `phase=bootstrap|fanout`, participant count, and pid in queue summaries
+ - Fixed queue cancellation so CLI fallback can find and cancel jobs stored under `$HOME/.roma`, not only jobs rooted in the current workspace
+ - Changed multi-agent `run/submit` semantics:
+   - the starter now executes a bootstrap/coordinator node first
+   - the starter then participates again as a worker node
+   - delegate agents now fan out concurrently after the bootstrap node instead of running one-by-one in a relay chain
 
 ## Latest Verified Commands
 

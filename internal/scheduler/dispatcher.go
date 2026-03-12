@@ -40,13 +40,18 @@ func (e *ApprovalPendingError) Error() string {
 
 // NewDispatcher constructs a scheduler-owned dispatcher.
 func NewDispatcher(workDir string, supervisor *runtime.Supervisor, eventStore store.EventStore, taskStore store.TaskStore) *Dispatcher {
+	return NewDispatcherWithControlDir(workDir, workDir, supervisor, eventStore, taskStore)
+}
+
+// NewDispatcherWithControlDir constructs a dispatcher with an explicit control-plane root.
+func NewDispatcherWithControlDir(workDir, controlDir string, supervisor *runtime.Supervisor, eventStore store.EventStore, taskStore store.TaskStore) *Dispatcher {
 	var lifecycle *GraphLifecycle
 	if taskStore != nil {
 		lifecycle = NewGraphLifecycle(taskStore, eventStore)
 	}
 	var leases *LeaseStore
-	if workDir != "" {
-		if store, err := NewLeaseStore(workDir); err == nil {
+	if controlDir != "" {
+		if store, err := NewLeaseStore(controlDir); err == nil {
 			leases = store
 		}
 	}

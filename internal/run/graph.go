@@ -101,10 +101,10 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 	if req.WorkingDir == "" {
 		return Result{}, fmt.Errorf("working directory is required")
 	}
-	s.history = newHistoryBackend(req.WorkingDir)
-	s.events = newEventBackend(req.WorkingDir)
-	s.store = newArtifactBackend(req.WorkingDir)
-	s.tasks = newTaskBackend(req.WorkingDir)
+	s.history = s.newHistoryBackend(req.WorkingDir)
+	s.events = s.newEventBackend(req.WorkingDir)
+	s.store = s.newArtifactBackend(req.WorkingDir)
+	s.tasks = s.newTaskBackend(req.WorkingDir)
 	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
 
 	assignments := make([]scheduler.NodeAssignment, 0, len(req.Nodes))
@@ -174,7 +174,7 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 			"node_count": len(assignments),
 		},
 	})
-	dispatcher := scheduler.NewDispatcher(req.WorkingDir, s.supervisor, s.events, s.tasks)
+	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
 	fullAssignments := append([]scheduler.NodeAssignment(nil), assignments...)
 	if err == nil {

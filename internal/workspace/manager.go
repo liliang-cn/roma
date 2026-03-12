@@ -586,9 +586,9 @@ func requestedMode(strategy domain.TaskStrategy) Mode {
 	case domain.TaskStrategyDirect:
 		return ModeIsolatedWrite
 	case domain.TaskStrategyRelay, domain.TaskStrategyCuria:
-		return ModeSharedRead
+		return ModeIsolatedWrite
 	default:
-		return ModeSharedRead
+		return ModeIsolatedWrite
 	}
 }
 

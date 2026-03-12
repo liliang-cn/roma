@@ -182,7 +182,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	releasedWorkspaces := 0
 	reclaimedWorkspaces := 0
 	mergedWorkspaces := 0
-	if items, err := workspacepkg.NewManager(workDir, nil).List(r.Context()); err == nil {
+	if items, err := s.listAllWorkspaces(r.Context()); err == nil {
 		for _, item := range items {
 			switch item.Status {
 			case "prepared":
@@ -456,8 +456,8 @@ func (s *Server) handlePlanShow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing artifact id", http.StatusBadRequest)
 		return
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(controlDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	envelope, _, err := service.Inspect(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -471,8 +471,8 @@ func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(controlDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	items, err := service.Inbox(r.Context(), r.URL.Query().Get("session"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -517,8 +517,13 @@ func (s *Server) handlePlanPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact_id is required", http.StatusBadRequest)
 		return
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	workspaceDir, err := s.workspaceRootForSession(r.Context(), req.SessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(workspaceDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	result, err := service.Preview(r.Context(), req.SessionID, req.TaskID, req.ArtifactID)
 	if err != nil {
 		writePlanError(w, err)
@@ -541,8 +546,8 @@ func (s *Server) handlePlanDecision(w http.ResponseWriter, r *http.Request, arti
 	if req.Actor == "" {
 		req.Actor = policy.OverrideActor()
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(controlDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	var err error
 	if approved {
 		err = service.Approve(r.Context(), artifactID, req.Actor)
@@ -577,8 +582,13 @@ func (s *Server) handlePlanApply(w http.ResponseWriter, r *http.Request) {
 	if req.PolicyOverride && req.PolicyOverrideActor == "" {
 		req.PolicyOverrideActor = policy.OverrideActor()
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	workspaceDir, err := s.workspaceRootForSession(r.Context(), req.SessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(workspaceDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	result, err := service.Apply(r.Context(), req.SessionID, req.TaskID, req.ArtifactID, plans.ApplyOptions{
 		DryRun:              req.DryRun,
 		PolicyOverride:      req.PolicyOverride,
@@ -605,8 +615,13 @@ func (s *Server) handlePlanRollback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact_id is required", http.StatusBadRequest)
 		return
 	}
-	workDir := s.workDir
-	service := plans.NewService(preferredArtifactStore(workDir), workspacepkg.NewManager(workDir, preferredEventStore(workDir)), preferredEventStore(workDir))
+	workspaceDir, err := s.workspaceRootForSession(r.Context(), req.SessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	controlDir := s.workDir
+	service := plans.NewService(preferredArtifactStore(controlDir), workspacepkg.NewManager(workspaceDir, preferredEventStore(controlDir)), preferredEventStore(controlDir))
 	result, err := service.Rollback(r.Context(), req.SessionID, req.TaskID, req.ArtifactID)
 	if err != nil {
 		writePlanError(w, err)
@@ -1119,41 +1134,41 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 	resp := QueueInspectResponse{Job: job, ApprovalResumeReady: true}
 
 	if job.SessionID != "" {
-		inspectDir := s.workDir
-		if job.WorkingDir != "" {
-			inspectDir = job.WorkingDir
-		}
+		controlDir := s.workDir
+		workspaceDir := job.WorkingDir
 		if session, err := s.sessionStore.Get(r.Context(), job.SessionID); err == nil {
 			resp.Session = &session
 			if session.WorkingDir != "" {
-				inspectDir = session.WorkingDir
+				workspaceDir = session.WorkingDir
 			}
 		}
-		if leaseStore, err := scheduler.NewLeaseStore(inspectDir); err == nil {
+		if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 			if lease, err := leaseStore.Get(r.Context(), job.SessionID); err == nil {
 				resp.Lease = &lease
 				resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
 				resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
 			}
 		}
-		taskStore := preferredTaskStore(inspectDir)
+		taskStore := preferredTaskStore(controlDir)
 		if items, err := taskStore.ListTasksBySession(r.Context(), job.SessionID); err == nil {
 			resp.Tasks = items
 		}
-		eventStore := preferredEventStore(inspectDir)
+		eventStore := preferredEventStore(controlDir)
 		if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: job.SessionID}); err == nil {
 			resp.Events = items
 			resp.Plans = summarizePlanActions(items)
 		}
-		artifactStore := preferredArtifactStore(inspectDir)
+		artifactStore := preferredArtifactStore(controlDir)
 		if items, err := artifactStore.List(r.Context(), job.SessionID); err == nil {
 			resp.Artifacts = items
-			resp.Curia = summarizeCuriaArtifacts(inspectDir, items)
+			resp.Curia = summarizeCuriaArtifacts(controlDir, items)
 		}
-		if items, err := workspacepkg.NewManager(inspectDir, nil).List(r.Context()); err == nil {
-			for _, item := range items {
-				if item.SessionID == job.SessionID {
-					resp.Workspaces = append(resp.Workspaces, item)
+		if workspaceDir != "" {
+			if items, err := workspacepkg.NewManager(workspaceDir, nil).List(r.Context()); err == nil {
+				for _, item := range items {
+					if item.SessionID == job.SessionID {
+						resp.Workspaces = append(resp.Workspaces, item)
+					}
 				}
 			}
 		}
@@ -1176,12 +1191,12 @@ func (s *Server) handleResultShow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing session id", http.StatusBadRequest)
 		return
 	}
-	session, inspectDir, err := s.resolveSessionRecord(r.Context(), id)
+	session, _, err := s.resolveSessionRecord(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	artifactStore := preferredArtifactStore(inspectDir)
+	artifactStore := preferredArtifactStore(s.workDir)
 	envelope, err := resolveFinalAnswerEnvelope(r.Context(), artifactStore, session)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -1224,31 +1239,33 @@ func (s *Server) handleSessionInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := SessionInspectResponse{Session: session, ApprovalResumeReady: true}
-	if leaseStore, err := scheduler.NewLeaseStore(inspectDir); err == nil {
+	if leaseStore, err := scheduler.NewLeaseStore(s.workDir); err == nil {
 		if lease, err := leaseStore.Get(r.Context(), id); err == nil {
 			resp.Lease = &lease
 			resp.PendingApprovalTaskIDs = append(resp.PendingApprovalTaskIDs, lease.PendingApprovalTaskIDs...)
 			resp.ApprovalResumeReady = len(lease.PendingApprovalTaskIDs) == 0
 		}
 	}
-	taskStore := preferredTaskStore(inspectDir)
+	taskStore := preferredTaskStore(s.workDir)
 	if items, err := taskStore.ListTasksBySession(r.Context(), id); err == nil {
 		resp.Tasks = items
 	}
-	eventStore := preferredEventStore(inspectDir)
+	eventStore := preferredEventStore(s.workDir)
 	if items, err := eventStore.ListEvents(r.Context(), store.EventFilter{SessionID: id}); err == nil {
 		resp.Events = items
 		resp.Plans = summarizePlanActions(items)
 	}
-	artifactStore := preferredArtifactStore(inspectDir)
+	artifactStore := preferredArtifactStore(s.workDir)
 	if items, err := artifactStore.List(r.Context(), id); err == nil {
 		resp.Artifacts = items
-		resp.Curia = summarizeCuriaArtifacts(inspectDir, items)
+		resp.Curia = summarizeCuriaArtifacts(s.workDir, items)
 	}
-	if items, err := workspacepkg.NewManager(inspectDir, nil).List(r.Context()); err == nil {
-		for _, item := range items {
-			if item.SessionID == id {
-				resp.Workspaces = append(resp.Workspaces, item)
+	if inspectDir != "" {
+		if items, err := workspacepkg.NewManager(inspectDir, nil).List(r.Context()); err == nil {
+			for _, item := range items {
+				if item.SessionID == id {
+					resp.Workspaces = append(resp.Workspaces, item)
+				}
 			}
 		}
 	}
@@ -1279,6 +1296,53 @@ func (s *Server) resolveSessionRecord(ctx context.Context, sessionID string) (hi
 		}
 	}
 	return history.SessionRecord{}, "", fmt.Errorf("session %s not found", sessionID)
+}
+
+func (s *Server) workspaceRootForSession(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", fmt.Errorf("session id is required")
+	}
+	session, workspaceDir, err := s.resolveSessionRecord(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(session.WorkingDir) != "" {
+		return session.WorkingDir, nil
+	}
+	if strings.TrimSpace(workspaceDir) != "" && workspaceDir != s.workDir {
+		return workspaceDir, nil
+	}
+	return "", fmt.Errorf("session %s has no workspace root", sessionID)
+}
+
+func (s *Server) listAllWorkspaces(ctx context.Context) ([]workspacepkg.Prepared, error) {
+	sessionStore := preferredHistoryStore(s.workDir)
+	sessions, err := sessionStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roots := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, session := range sessions {
+		root := strings.TrimSpace(session.WorkingDir)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+	}
+	items := make([]workspacepkg.Prepared, 0)
+	for _, root := range roots {
+		found, err := workspacepkg.NewManager(root, nil).List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, found...)
+	}
+	return items, nil
 }
 
 func resolveFinalAnswerEnvelope(ctx context.Context, artifactStore artifacts.Backend, session history.SessionRecord) (domain.ArtifactEnvelope, error) {
@@ -1446,8 +1510,7 @@ func (s *Server) handleWorkspaceList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workDir := s.workDir
-	items, err := workspacepkg.NewManager(workDir, nil).List(r.Context())
+	items, err := s.listAllWorkspaces(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1474,8 +1537,12 @@ func (s *Server) handleWorkspaceShow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workspace path must be /workspaces/{session}/{task}", http.StatusBadRequest)
 		return
 	}
-	workDir := s.workDir
-	item, err := workspacepkg.NewManager(workDir, nil).Get(r.Context(), parts[0], parts[1])
+	workspaceDir, err := s.workspaceRootForSession(r.Context(), parts[0])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	item, err := workspacepkg.NewManager(workspaceDir, nil).Get(r.Context(), parts[0], parts[1])
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -1493,8 +1560,12 @@ func (s *Server) handleWorkspaceMerge(w http.ResponseWriter, r *http.Request, re
 		http.Error(w, "workspace path must be /workspaces/{session}/{task}/merge", http.StatusBadRequest)
 		return
 	}
-	workDir := s.workDir
-	manager := workspacepkg.NewManager(workDir, preferredEventStore(workDir))
+	workspaceDir, err := s.workspaceRootForSession(r.Context(), parts[0])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	manager := workspacepkg.NewManager(workspaceDir, preferredEventStore(s.workDir))
 	item, err := manager.Get(r.Context(), parts[0], parts[1])
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -1517,13 +1588,11 @@ func (s *Server) handleWorkspaceCleanup(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workDir := s.workDir
-	manager := workspacepkg.NewManager(workDir, preferredEventStore(workDir))
-	if err := manager.ReclaimStale(r.Context()); err != nil {
+	if err := scheduler.ReclaimStaleWorkspaces(r.Context(), s.workDir); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	items, err := manager.List(r.Context())
+	items, err := s.listAllWorkspaces(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
