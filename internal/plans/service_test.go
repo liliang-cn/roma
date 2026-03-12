@@ -192,6 +192,12 @@ func TestServiceApplyDryRunReportsMergeConflictPreview(t *testing.T) {
 	if result.RemediationHint == "" {
 		t.Fatalf("result = %#v, want remediation hint", result)
 	}
+	if result.ConflictSummary == "" {
+		t.Fatalf("result = %#v, want conflict summary", result)
+	}
+	if len(result.ResolutionOptions) == 0 {
+		t.Fatalf("result = %#v, want resolution options", result)
+	}
 }
 
 func TestServicePreviewDoesNotAppendPlanAppliedEvent(t *testing.T) {

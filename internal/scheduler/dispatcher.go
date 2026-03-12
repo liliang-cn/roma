@@ -346,6 +346,7 @@ func (d *Dispatcher) executeBatch(
 					SessionID:   sessionID,
 					TaskID:      assignment.Node.ID,
 					Profile:     assignment.Profile,
+					SemanticReviewer: chooseSemanticReviewer(assignment),
 					Prompt:      prompt,
 					WorkingDir:  workspace.EffectiveDir,
 					Continuous:  assignment.Continuous,
@@ -457,4 +458,11 @@ func label(err error) string {
 		return "failed"
 	}
 	return "success"
+}
+
+func chooseSemanticReviewer(assignment NodeAssignment) domain.AgentProfile {
+	if strings.TrimSpace(assignment.SemanticReviewer.ID) != "" {
+		return assignment.SemanticReviewer
+	}
+	return assignment.Profile
 }

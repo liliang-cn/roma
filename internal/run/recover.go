@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/liliang-cn/roma/internal/domain"
-	"github.com/liliang-cn/roma/internal/runtime"
 	"github.com/liliang-cn/roma/internal/scheduler"
 )
 
@@ -27,7 +26,7 @@ func (s *Service) ResumeSessionWithResult(ctx context.Context, workDir, sessionI
 	s.events = s.newEventBackend(workDir)
 	s.store = s.newArtifactBackend(workDir)
 	s.tasks = s.newTaskBackend(workDir)
-	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
+	s.supervisor = s.newSupervisor(workDir)
 
 	record, err := s.history.Get(ctx, sessionID)
 	if err != nil {

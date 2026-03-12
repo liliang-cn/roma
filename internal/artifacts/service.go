@@ -15,6 +15,8 @@ import (
 const (
 	// ReportPayloadSchema is the bootstrap schema name for generic run reports.
 	ReportPayloadSchema = "roma/report/v1"
+	// SemanticReportPayloadSchema is the agent-assisted semantic classifier schema.
+	SemanticReportPayloadSchema = "roma/semantic_report/v1"
 	// FinalAnswerPayloadSchema is the user-facing session outcome schema.
 	FinalAnswerPayloadSchema = "roma/final_answer/v1"
 )
@@ -30,6 +32,22 @@ type ReportPayload struct {
 	RawOutput        string            `json:"raw_output,omitempty"`
 	SourceAgentID    string            `json:"source_agent_id"`
 	SourceAgentName  string            `json:"source_agent_name"`
+}
+
+// SemanticReportPayload is the structured interpretation emitted by a classifier agent.
+type SemanticReportPayload struct {
+	ReportID          string            `json:"report_id"`
+	SourceSignal      string            `json:"source_signal"`
+	SourceReason      string            `json:"source_reason"`
+	SourceConfidence  domain.Confidence `json:"source_confidence"`
+	SourceText        string            `json:"source_text"`
+	ClassifierAgentID string            `json:"classifier_agent_id"`
+	Intent            string            `json:"intent"`
+	Risk              domain.Confidence `json:"risk"`
+	NeedsApproval     bool              `json:"needs_approval"`
+	RecommendCuria    bool              `json:"recommend_curia"`
+	Summary           string            `json:"summary"`
+	RawOutput         string            `json:"raw_output,omitempty"`
 }
 
 // FinalAnswerPayload is the user-facing outcome for a completed or paused session.
@@ -76,6 +94,19 @@ type BuildFinalAnswerRequest struct {
 	StarterAgent string
 	Artifacts    []domain.ArtifactEnvelope
 	Err          error
+}
+
+// BuildSemanticReportRequest describes semantic-report creation input.
+type BuildSemanticReportRequest struct {
+	SessionID        string
+	TaskID           string
+	RunID            string
+	Agent            domain.AgentProfile
+	SignalKind       string
+	SignalReason     string
+	SignalConfidence domain.Confidence
+	SignalText       string
+	Output           string
 }
 
 // Service creates structured artifacts for runtime outputs.
@@ -144,6 +175,9 @@ func SummaryFromEnvelope(envelope domain.ArtifactEnvelope) string {
 	if payload, ok := envelope.Payload.(ReportPayload); ok {
 		return payload.Summary
 	}
+	if payload, ok := envelope.Payload.(SemanticReportPayload); ok {
+		return payload.Summary
+	}
 	if payload, ok := envelope.Payload.(FinalAnswerPayload); ok {
 		return payload.Summary
 	}
@@ -170,6 +204,63 @@ func SummaryFromEnvelope(envelope domain.ArtifactEnvelope) string {
 		return ""
 	}
 	return payload.Summary
+}
+
+// BuildSemanticReport creates a semantic-report envelope from a classifier-agent output.
+func (s *Service) BuildSemanticReport(ctx context.Context, req BuildSemanticReportRequest) (domain.ArtifactEnvelope, error) {
+	_ = ctx
+
+	if req.SessionID == "" {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("session id is required")
+	}
+	if req.TaskID == "" {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("task id is required")
+	}
+	if req.Agent.ID == "" {
+		return domain.ArtifactEnvelope{}, fmt.Errorf("classifier agent id is required")
+	}
+
+	intent, risk, needsApproval, recommendCuria, summary := parseSemanticClassifierOutput(req.Output)
+	if summary == "" {
+		summary = summarize(preferredOutput(req.Output, req.SignalText))
+	}
+
+	payload := SemanticReportPayload{
+		ReportID:          "semantic_" + req.RunID,
+		SourceSignal:      req.SignalKind,
+		SourceReason:      req.SignalReason,
+		SourceConfidence:  req.SignalConfidence,
+		SourceText:        req.SignalText,
+		ClassifierAgentID: req.Agent.ID,
+		Intent:            intent,
+		Risk:              risk,
+		NeedsApproval:     needsApproval,
+		RecommendCuria:    recommendCuria,
+		Summary:           summary,
+		RawOutput:         req.Output,
+	}
+
+	envelope := domain.ArtifactEnvelope{
+		ID:            "art_" + payload.ReportID,
+		Kind:          domain.ArtifactKindSemanticReport,
+		SchemaVersion: "v1",
+		Producer: domain.Producer{
+			AgentID: req.Agent.ID,
+			Role:    domain.ProducerRoleReviewer,
+			RunID:   req.RunID,
+		},
+		SessionID:     req.SessionID,
+		TaskID:        req.TaskID,
+		CreatedAt:     s.now(),
+		PayloadSchema: SemanticReportPayloadSchema,
+		Payload:       payload,
+	}
+	checksum, err := checksumEnvelope(envelope)
+	if err != nil {
+		return domain.ArtifactEnvelope{}, err
+	}
+	envelope.Checksum = checksum
+	return envelope, nil
 }
 
 // BuildFinalAnswer creates a user-facing final answer envelope.
@@ -281,6 +372,38 @@ func firstLines(output string, limit int) []string {
 	return lines
 }
 
+func parseSemanticClassifierOutput(output string) (intent string, risk domain.Confidence, needsApproval bool, recommendCuria bool, summary string) {
+	risk = inferConfidence(output)
+	lines := strings.Split(output, "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "intent:"):
+			intent = strings.TrimSpace(line[len("intent:"):])
+		case strings.HasPrefix(lower, "risk:"):
+			switch strings.ToLower(strings.TrimSpace(line[len("risk:"):])) {
+			case "high":
+				risk = domain.ConfidenceHigh
+			case "medium":
+				risk = domain.ConfidenceMedium
+			case "low":
+				risk = domain.ConfidenceLow
+			}
+		case strings.HasPrefix(lower, "needs_approval:"):
+			needsApproval = strings.EqualFold(strings.TrimSpace(line[len("needs_approval:"):]), "true")
+		case strings.HasPrefix(lower, "recommend_curia:"):
+			recommendCuria = strings.EqualFold(strings.TrimSpace(line[len("recommend_curia:"):]), "true")
+		case strings.HasPrefix(lower, "summary:"):
+			summary = strings.TrimSpace(line[len("summary:"):])
+		}
+	}
+	return intent, risk, needsApproval, recommendCuria, summary
+}
+
 func trimLine(line string) string {
 	for len(line) > 0 && (line[0] == ' ' || line[0] == '\n' || line[0] == '\r' || line[0] == '\t') {
 		line = line[1:]
@@ -357,6 +480,26 @@ func FinalAnswerFromEnvelope(envelope domain.ArtifactEnvelope) (FinalAnswerPaylo
 	var payload FinalAnswerPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return FinalAnswerPayload{}, false
+	}
+	return payload, true
+}
+
+// SemanticReportFromEnvelope extracts a semantic-report payload.
+func SemanticReportFromEnvelope(envelope domain.ArtifactEnvelope) (SemanticReportPayload, bool) {
+	if envelope.Kind != domain.ArtifactKindSemanticReport {
+		return SemanticReportPayload{}, false
+	}
+	switch typed := envelope.Payload.(type) {
+	case SemanticReportPayload:
+		return typed, true
+	}
+	raw, err := json.Marshal(envelope.Payload)
+	if err != nil {
+		return SemanticReportPayload{}, false
+	}
+	var payload SemanticReportPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return SemanticReportPayload{}, false
 	}
 	return payload, true
 }

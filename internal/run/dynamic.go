@@ -55,6 +55,7 @@ func (s *Service) extendDynamicDelegations(
 			}
 
 			nodeID := nextDynamicDelegateNodeID(currentAssignments, req.SourceNodeID)
+			reviewer := semanticReviewerForDynamicDelegate(currentAssignments, req.SourceNodeID)
 			node := domain.TaskNodeSpec{
 				ID:            nodeID,
 				Title:         "Dynamic delegated follow-up",
@@ -69,9 +70,10 @@ func (s *Service) extendDynamicDelegations(
 				}
 			}
 			currentAssignments = append(currentAssignments, scheduler.NodeAssignment{
-				Node:       node,
-				Profile:    profile,
-				PromptHint: req.Instruction,
+				Node:             node,
+				Profile:          profile,
+				SemanticReviewer: reviewer,
+				PromptHint:       req.Instruction,
 			})
 			addedDelegates = append(addedDelegates, profile.ID)
 			seen[key] = struct{}{}
@@ -164,6 +166,19 @@ func nextDynamicDelegateNodeID(assignments []scheduler.NodeAssignment, sourceNod
 		}
 	}
 	return fmt.Sprintf("%s__delegate_%d", sourceNodeID, maxIndex+1)
+}
+
+func semanticReviewerForDynamicDelegate(assignments []scheduler.NodeAssignment, sourceNodeID string) domain.AgentProfile {
+	for _, assignment := range assignments {
+		if assignment.Node.ID != sourceNodeID {
+			continue
+		}
+		if strings.TrimSpace(assignment.SemanticReviewer.ID) != "" {
+			return assignment.SemanticReviewer
+		}
+		return assignment.Profile
+	}
+	return domain.AgentProfile{}
 }
 
 func cloneArtifacts(in map[string]domain.ArtifactEnvelope) map[string]domain.ArtifactEnvelope {

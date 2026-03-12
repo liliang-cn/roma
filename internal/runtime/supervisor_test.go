@@ -4,10 +4,13 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
+	"github.com/liliang-cn/roma/internal/policy"
 	"github.com/liliang-cn/roma/internal/store"
 )
 
@@ -141,5 +144,109 @@ func TestRunCapturedStreamsStdoutEvents(t *testing.T) {
 	}
 	if got := records[0].Payload["stdout"]; got == "" {
 		t.Fatalf("stdout payload = %#v, want chunk", records[0].Payload)
+	}
+}
+
+type dangerousFakeAdapter struct{}
+
+func (dangerousFakeAdapter) Supports(domain.AgentProfile) bool { return true }
+
+func (dangerousFakeAdapter) BuildCommand(ctx context.Context, req StartRequest) (*exec.Cmd, error) {
+	script := `import sys,time
+print("$ rm -rf /")
+sys.stdout.flush()
+time.sleep(10)`
+	return exec.CommandContext(ctx, "python3", "-c", script), nil
+}
+
+func TestRunCapturedDetectsDangerousOutputAndTerminates(t *testing.T) {
+	t.Parallel()
+
+	mem := store.NewMemoryStore()
+	supervisor := NewSupervisorWithEvents(mem, dangerousFakeAdapter{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := supervisor.RunCaptured(ctx, StartRequest{
+		ExecutionID: "exec_danger",
+		SessionID:   "sess_danger",
+		TaskID:      "task_danger",
+		Profile: domain.AgentProfile{
+			ID:      "danger",
+			Command: "python3",
+		},
+		Prompt:     "do dangerous work",
+		WorkingDir: ".",
+	})
+	if err == nil {
+		t.Fatal("RunCaptured() error = nil, want termination error")
+	}
+
+	records, err := mem.ListEvents(context.Background(), store.EventFilter{
+		SessionID: "sess_danger",
+		TaskID:    "task_danger",
+		Type:      events.TypeDangerousCommandDetected,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents(danger) error = %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("dangerous events = 0, want semantic detection")
+	}
+	if got := records[0].Payload["confidence"]; got != domain.ConfidenceHigh {
+		t.Fatalf("confidence = %#v, want %s", got, domain.ConfidenceHigh)
+	}
+}
+
+type recordingAnalyzer struct {
+	mu   sync.Mutex
+	reqs []SemanticAnalysisRequest
+	seen chan SemanticAnalysisRequest
+}
+
+func (a *recordingAnalyzer) AnalyzeSignal(_ context.Context, req SemanticAnalysisRequest) error {
+	a.mu.Lock()
+	a.reqs = append(a.reqs, req)
+	a.mu.Unlock()
+	if a.seen != nil {
+		a.seen <- req
+	}
+	return nil
+}
+
+func TestRunCapturedInvokesSemanticAnalyzer(t *testing.T) {
+	t.Parallel()
+
+	mem := store.NewMemoryStore()
+	supervisor := NewSupervisorWithEvents(mem, dangerousFakeAdapter{})
+	analyzer := &recordingAnalyzer{seen: make(chan SemanticAnalysisRequest, 1)}
+	supervisor.SetSemanticAnalyzer(analyzer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, _ = supervisor.RunCaptured(ctx, StartRequest{
+		ExecutionID: "exec_semantic",
+		SessionID:   "sess_semantic",
+		TaskID:      "task_semantic",
+		Profile: domain.AgentProfile{
+			ID:      "danger",
+			Command: "python3",
+		},
+		Prompt:     "do dangerous work",
+		WorkingDir: ".",
+	})
+
+	select {
+	case req := <-analyzer.seen:
+		if req.Signal.Kind != policy.SignalDangerousCommandDetected {
+			t.Fatalf("signal kind = %s, want %s", req.Signal.Kind, policy.SignalDangerousCommandDetected)
+		}
+		if req.SourceAgent.ID != "danger" {
+			t.Fatalf("source agent = %s, want danger", req.SourceAgent.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("semantic analyzer was not invoked")
 	}
 }

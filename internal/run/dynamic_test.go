@@ -79,3 +79,20 @@ func TestNextDynamicDelegateNodeID(t *testing.T) {
 		t.Fatalf("nextDynamicDelegateNodeID() = %q, want task_1__delegate_3", got)
 	}
 }
+
+func TestSemanticReviewerForDynamicDelegateInheritsStarter(t *testing.T) {
+	t.Parallel()
+
+	assignments := []scheduler.NodeAssignment{
+		{
+			Node:             domain.TaskNodeSpec{ID: "task_1_starter"},
+			Profile:          domain.AgentProfile{ID: "my-codex"},
+			SemanticReviewer: domain.AgentProfile{ID: "my-codex"},
+		},
+	}
+
+	reviewer := semanticReviewerForDynamicDelegate(assignments, "task_1_starter")
+	if reviewer.ID != "my-codex" {
+		t.Fatalf("semanticReviewerForDynamicDelegate() = %q, want my-codex", reviewer.ID)
+	}
+}

@@ -70,13 +70,14 @@ const (
 type ArtifactKind string
 
 const (
-	ArtifactKindProposal      ArtifactKind = "proposal"
-	ArtifactKindBallot        ArtifactKind = "ballot"
-	ArtifactKindDebateLog     ArtifactKind = "debate_log"
-	ArtifactKindDecisionPack  ArtifactKind = "decision_pack"
-	ArtifactKindExecutionPlan ArtifactKind = "execution_plan"
-	ArtifactKindFinalAnswer   ArtifactKind = "final_answer"
-	ArtifactKindReport        ArtifactKind = "report"
+	ArtifactKindProposal       ArtifactKind = "proposal"
+	ArtifactKindBallot         ArtifactKind = "ballot"
+	ArtifactKindDebateLog      ArtifactKind = "debate_log"
+	ArtifactKindDecisionPack   ArtifactKind = "decision_pack"
+	ArtifactKindExecutionPlan  ArtifactKind = "execution_plan"
+	ArtifactKindSemanticReport ArtifactKind = "semantic_report"
+	ArtifactKindFinalAnswer    ArtifactKind = "final_answer"
+	ArtifactKindReport         ArtifactKind = "report"
 )
 
 // Producer identifies the artifact producer.

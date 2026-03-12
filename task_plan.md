@@ -150,6 +150,10 @@ Status: in_progress
 - [x] Record richer override metadata in policy decision events and queue/session inspection
 - [x] Push path-scoped policy checks further into merge/apply boundaries, not only run/dispatch pre-flight
 - [x] Add a first action-aware path policy matrix for execution-plan apply
+- [x] Add first-pass runtime output classification for approval prompts, dangerous commands, and parse warnings
+- [x] Emit semantic policy/runtime events from streamed agent output and terminate high-confidence dangerous command output
+- [x] Add a second-layer agent semantic classifier that persists `semantic_report` artifacts from runtime signals
+- [x] Make semantic review system-owned: starter agent reviews multi-agent signals and the current agent reviews single-agent signals
 
 ### Phase 17: Curia Minimal
 Status: in_progress
@@ -161,6 +165,8 @@ Status: in_progress
 - [x] Add CLI examples and inspection shortcuts specialized for Curia sessions
 - [x] Add first dispute-detection signals and formalize `winning_mode` beyond hard-coded accept-only output
 - [x] Surface reviewer weight / reputation truth through Curia session and inspection summaries
+- [x] Add automatic Curia promotion for risky multi-agent prompt runs and graph nodes
+- [x] Feed automatic Curia promotion reasons into scheduler eventing instead of relying on static graph-only definitions
 
 ### Phase 18: ExecutionPlan Closure
 Status: in_progress
@@ -174,6 +180,7 @@ Status: in_progress
 - [x] Return structured merge/apply conflict and validation details from the plan service
 - [x] Make `dry-run` perform real merge preview instead of static path checks only
 - [x] Return conflict-context snippets alongside conflict paths during plan preview and apply failures
+- [x] Add structured conflict summaries and resolution options to preview/apply/inbox responses
 
 ### Phase 19: Runtime Visibility and Attachability
 Status: in_progress
@@ -229,4 +236,4 @@ Status: in_progress
 1. Keep exposing starter-bootstrap / parallel fan-out more clearly in queue/session summaries and structured tail output.
 2. Keep refining Curia arbitration and conflict UX now that running jobs are observable.
 3. Keep improving the user-facing outcome layer so `result show` can remain the main exit, not just a thin artifact wrapper.
-4. Make live progress more actionable with richer event semantics beyond current round, participant count, and workspace metadata.
+4. Expand runtime classifier coverage beyond current approval/dangerous/parse-warning signals and surface those signals in richer queue/session summaries.

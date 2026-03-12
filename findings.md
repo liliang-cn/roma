@@ -258,6 +258,18 @@
   - `session/task/artifact/event/plan/workspace` are better treated as internal inspection surfaces under a `debug` namespace
 - The live inspection path now resolves control-plane truth from `$HOME/.roma` and workspace/runtime truth from the session `WorkingDir`; running-session inspection no longer depends on the current repository shell.
 - `roma` and `romad` were previously coupled too tightly to the current workspace root:
+- The first useful runtime stream-classifier step is not a full parser; it is semantic extraction from stdout chunks into a small fixed set of events (`ApprovalRequested`, `DangerousCommandDetected`, `ParseWarning`) plus a kill-switch for high-confidence dangerous command output.
+- Agent-backed semantic classification is useful as a second layer, not as the hard safety boundary:
+  - the local rule classifier should stay authoritative for immediate block/kill decisions
+  - the starter/coordinator agent should consume emitted runtime signals for multi-agent runs and persist richer `semantic_report` artifacts
+  - single-agent runs should fall back to the current agent as reviewer instead of exposing a separate classifier profile to users
+ - Automatic Curia promotion is viable without a new scheduler mode if promotion happens at assignment construction time:
+   - orchestrated multi-agent prompt runs can collapse into one Curia node
+   - graph nodes can be upgraded in place before dispatch
+ - Execution-plan conflict UX becomes materially easier to operate once preview/apply/inbox all carry the same triad:
+   - `conflict_summary`
+   - `conflict_context`
+   - `resolution_options`
   - stale local `.roma/run/api.json` could shadow a healthy global daemon
   - `systemd --user` service needed explicit PATH for `codex/gemini/copilot`
   - daemon discovery now falls back to a global daemon home, but live progress UX still needs work on top of that fix

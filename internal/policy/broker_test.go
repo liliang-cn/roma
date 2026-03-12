@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/store"
 )
@@ -163,5 +164,46 @@ func TestEvaluatePathActionAllowsProtectedPlanApplyWithApprovedOverride(t *testi
 	decision := EvaluatePathAction(ActionPlanApply, []string{".github/workflows/build.yml"}, true, "local_owner")
 	if decision.Kind != DecisionAllow || decision.Reason != "approved_override" {
 		t.Fatalf("decision = %#v, want allow/approved_override", decision)
+	}
+}
+
+func TestRecommendCuriaForProtectedScope(t *testing.T) {
+	t.Parallel()
+
+	rec := RecommendCuria(Request{
+		Prompt:       "Refactor auth and billing paths with a breaking change",
+		WorkingDir:   t.TempDir(),
+		EffectiveDir: t.TempDir(),
+	}, 3)
+	if !rec.Upgrade {
+		t.Fatal("upgrade = false, want true")
+	}
+	if len(rec.Reasons) == 0 {
+		t.Fatal("reasons = empty, want promotion reason")
+	}
+}
+
+func TestClassifyOutputChunk(t *testing.T) {
+	t.Parallel()
+
+	signals := ClassifyOutputChunk("$ rm -rf /\napproval required before applying patch\njson parse error in report")
+	if len(signals) < 3 {
+		t.Fatalf("signal count = %d, want >= 3", len(signals))
+	}
+	if signals[0].Kind != SignalDangerousCommandDetected || signals[0].Confidence != domain.ConfidenceHigh {
+		t.Fatalf("dangerous signal = %#v, want high-confidence dangerous command", signals[0])
+	}
+	foundApproval := false
+	foundParse := false
+	for _, signal := range signals {
+		if signal.Kind == SignalApprovalRequested {
+			foundApproval = true
+		}
+		if signal.Kind == SignalParseWarning {
+			foundParse = true
+		}
+	}
+	if !foundApproval || !foundParse {
+		t.Fatalf("signals = %#v, want approval and parse-warning", signals)
 	}
 }

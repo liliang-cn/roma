@@ -15,10 +15,10 @@ import (
 
 // Registry provides discoverable agent profiles.
 type Registry struct {
-	builtins map[string]domain.AgentProfile
-	users    map[string]domain.AgentProfile
+	builtins  map[string]domain.AgentProfile
+	users     map[string]domain.AgentProfile
 	userOrder []string
-	path     string
+	path      string
 }
 
 // DefaultUserConfigPath returns the per-user registry config location.
@@ -29,8 +29,8 @@ func DefaultUserConfigPath() string {
 // NewRegistry constructs a registry from agent profiles.
 func NewRegistry(profiles ...domain.AgentProfile) (*Registry, error) {
 	registry := &Registry{
-		builtins: make(map[string]domain.AgentProfile, len(profiles)),
-		users:    make(map[string]domain.AgentProfile),
+		builtins:  make(map[string]domain.AgentProfile, len(profiles)),
+		users:     make(map[string]domain.AgentProfile),
 		userOrder: make([]string, 0),
 	}
 

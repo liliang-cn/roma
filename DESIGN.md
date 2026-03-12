@@ -14,6 +14,49 @@ ROMA is not another wrapper around a single AI CLI. It is a local execution kern
 
 The system is designed for local development workflows that need long-running sessions, multi-agent coordination, approval gates, and deterministic recovery semantics.
 
+## 1.1 Implementation Snapshot (2026-03-12)
+
+This document is the target architecture, not a claim that every subsystem below is fully implemented today. As of 2026-03-12, the repository is best understood as:
+
+* a mostly-realized daemon-first control plane
+* a usable workspace/scheduler/persistence kernel
+* a partial Curia implementation with deterministic demos and initial automatic arbitration
+* an incomplete runtime classifier, gateway plane, and presentation plane
+
+Current alignment against the design:
+
+### Largely aligned today
+
+* `romad` is the execution truth source for queue, session, task, artifact, lease, and recovery state
+* SQLite-backed metadata plus filesystem blobs are in use
+* Git-worktree-backed isolated execution exists for writable tasks when the target repository supports it
+* artifact envelopes are the handoff contract between nodes
+* PTY-backed runtime supervision exists for supported coding-agent CLIs
+* local daemon APIs exist for queue, session, task, workspace, plan, status, and result inspection
+
+### Partially aligned / MVP today
+
+* Curia exists, including `proposal`, `ballot`, `debate_log`, `decision_pack`, `execution_plan`, dispute classification, reviewer weights, and an `Augustus` path, but it is not yet the fully autonomous high-confidence consensus engine described later in this document
+* the Policy Broker has pre-flight checks, approval gates, path-aware enforcement, and execution-plan apply controls, but it does not yet have a mature runtime semantic classifier or full action/role matrix
+* execution-plan preview, apply, rollback, inbox, and approval exist, but conflict resolution UX is still operator-heavy
+* gateway support exists as a bridge and approval hook, but not yet as a production-ready `roma-gatewayd` with mature WSS/retry/dead-letter behavior
+
+### Major gaps relative to the target architecture
+
+* the Stream Classifier described in Section 7.4 is still mostly a design target
+* automatic scheduler promotion into Curia based on detected risk/conflict is not complete
+* presentation-plane goals for a real TUI and desktop client are not implemented in the repository today
+* gateway deployment, remote endpoint management, and rich remote watch/control remain incomplete
+
+Rough implementation percentages, for planning purposes only:
+
+* control plane and persistence: `~90%`
+* workspace isolation and scheduler: `~85%`
+* Curia engine: `~55-60%`
+* policy and runtime classification: `~30-35%`
+* gateway plane: `~20-25%`
+* presentation plane: `~0-5%`
+
 ## 2. Goals and Non-Goals
 
 ### 2.1 Goals
@@ -846,6 +889,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 
 ### Phase 1: Daemon + Direct
 
+Current status: largely implemented
+
 * `romad` skeleton
 * SQLite event store
 * PTY provider
@@ -856,6 +901,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 
 ### Phase 2: Relay + Workspace
 
+Current status: largely implemented
+
 * DAG scheduler
 * artifact envelope validation
 * worktree lifecycle
@@ -864,6 +911,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 * diff approval flow
 
 ### Phase 3: Remote Gateway Basic
+
+Current status: partially implemented
 
 * `roma-gatewayd`
 * event fan-out
@@ -875,6 +924,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 
 ### Phase 4: Curia Minimal
 
+Current status: implemented beyond the original minimum, but still incomplete relative to Curia Full
+
 * scatter with multiple senators
 * quorum
 * simplified blind review
@@ -883,6 +934,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 
 ### Phase 5: Curia Full + WSS Console
 
+Current status: partially implemented at the arbitration layer, not implemented at the remote console layer
+
 * dispute detection automation
 * arbitrator agent
 * decision pack to execution plan closure
@@ -890,6 +943,8 @@ Gateway adapters should evolve independently from orchestration logic. New remot
 * WSS remote watch
 
 ### Phase 6: Desktop + Plugins
+
+Current status: not implemented
 
 * Wails GUI
 * multi-terminal dashboard

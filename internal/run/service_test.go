@@ -188,6 +188,12 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	if assignments[1].Node.ID != "task_1_starter" {
 		t.Fatalf("starter worker node id = %q, want task_1_starter", assignments[1].Node.ID)
 	}
+	if assignments[0].SemanticReviewer.ID != "starter" {
+		t.Fatalf("bootstrap reviewer = %q, want starter", assignments[0].SemanticReviewer.ID)
+	}
+	if assignments[1].SemanticReviewer.ID != "starter" {
+		t.Fatalf("starter reviewer = %q, want starter", assignments[1].SemanticReviewer.ID)
+	}
 	if got := assignments[1].Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
 		t.Fatalf("starter worker dependencies = %#v, want [task_1_starter_bootstrap]", got)
 	}
@@ -195,8 +201,94 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
 			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_bootstrap]", assignment.Node.ID, got)
 		}
+		if assignment.SemanticReviewer.ID != "starter" {
+			t.Fatalf("delegate %s reviewer = %q, want starter", assignment.Node.ID, assignment.SemanticReviewer.ID)
+		}
 	}
 	if !strings.Contains(assignments[0].PromptHint, "YOLO") && !strings.Contains(assignments[0].PromptHint, "auto-run") {
 		t.Fatalf("bootstrap prompt hint = %q, want automation guidance", assignments[0].PromptHint)
+	}
+}
+
+func TestMaybePromoteOrchestratedToCuriaForProtectedScope(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-copilot", DisplayName: "My Copilot", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-claude", DisplayName: "My Claude", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	assignments, reasons := svc.maybePromoteOrchestratedToCuria(
+		context.Background(),
+		"Refactor auth and billing flows with a breaking change",
+		t.TempDir(),
+		"task_1",
+		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+		[]domain.AgentProfile{
+			{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+			{ID: "my-copilot", DisplayName: "My Copilot", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+		},
+		true,
+		4,
+	)
+	if len(assignments) != 1 {
+		t.Fatalf("assignment count = %d, want 1", len(assignments))
+	}
+	if assignments[0].Node.Strategy != domain.TaskStrategyCuria {
+		t.Fatalf("strategy = %s, want curia", assignments[0].Node.Strategy)
+	}
+	if len(assignments[0].CuriaProfiles) != 3 {
+		t.Fatalf("curia profiles = %d, want 3", len(assignments[0].CuriaProfiles))
+	}
+	if assignments[0].CuriaArbitrationMode != "augustus" {
+		t.Fatalf("arbitration mode = %q, want augustus", assignments[0].CuriaArbitrationMode)
+	}
+	if len(reasons) == 0 {
+		t.Fatal("reasons = empty, want auto-curia reasons")
+	}
+}
+
+func TestMaybePromoteGraphAssignmentsToCuria(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-copilot", DisplayName: "My Copilot", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-claude", DisplayName: "My Claude", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	assignments, reasons := svc.maybePromoteGraphAssignmentsToCuria(context.Background(), "Apply a database migration for auth", t.TempDir(), []scheduler.NodeAssignment{{
+		Node: domain.TaskNodeSpec{
+			ID:       "node_1",
+			Title:    "Auth migration",
+			Strategy: domain.TaskStrategyDirect,
+		},
+		Profile: domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+	}})
+	if len(assignments) != 1 {
+		t.Fatalf("assignment count = %d, want 1", len(assignments))
+	}
+	if assignments[0].Node.Strategy != domain.TaskStrategyCuria {
+		t.Fatalf("strategy = %s, want curia", assignments[0].Node.Strategy)
+	}
+	if assignments[0].CuriaQuorum != 2 {
+		t.Fatalf("curia quorum = %d, want 2", assignments[0].CuriaQuorum)
+	}
+	if !strings.Contains(assignments[0].Node.Title, "[auto-curia]") {
+		t.Fatalf("title = %q, want [auto-curia] suffix", assignments[0].Node.Title)
+	}
+	if len(reasons) != 1 {
+		t.Fatalf("reasons = %#v, want one promotion reason", reasons)
 	}
 }

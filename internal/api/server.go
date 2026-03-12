@@ -495,9 +495,11 @@ func (s *Server) handlePlanInbox(w http.ResponseWriter, r *http.Request) {
 			Violations:            item.Violations,
 			Conflict:              item.Conflict,
 			ConflictDetail:        item.ConflictDetail,
+			ConflictSummary:       item.ConflictSummary,
 			ConflictPaths:         item.ConflictPaths,
 			ConflictContext:       item.ConflictContext,
 			RemediationHint:       item.RemediationHint,
+			ResolutionOptions:     item.ResolutionOptions,
 		})
 	}
 	writeJSON(w, http.StatusOK, PlanInboxResponse{Items: out})

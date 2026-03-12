@@ -220,9 +220,11 @@ type PlanInboxEntry struct {
 	Violations            []string                    `json:"violations,omitempty"`
 	Conflict              bool                        `json:"conflict,omitempty"`
 	ConflictDetail        string                      `json:"conflict_detail,omitempty"`
+	ConflictSummary       string                      `json:"conflict_summary,omitempty"`
 	ConflictPaths         []string                    `json:"conflict_paths,omitempty"`
 	ConflictContext       []workspace.ConflictSnippet `json:"conflict_context,omitempty"`
 	RemediationHint       string                      `json:"remediation_hint,omitempty"`
+	ResolutionOptions     []string                    `json:"resolution_options,omitempty"`
 }
 
 type PlanInboxResponse struct {

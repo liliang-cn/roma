@@ -238,6 +238,42 @@ func TestBuildCuriaDecisionArtifactsCarryScoreboard(t *testing.T) {
 	}
 }
 
+func TestBuildSemanticReport(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	envelope, err := svc.BuildSemanticReport(context.Background(), BuildSemanticReportRequest{
+		SessionID:        "sess_1",
+		TaskID:           "task_1",
+		RunID:            "run_semantic",
+		Agent:            domain.AgentProfile{ID: "semantic-reviewer", DisplayName: "Semantic Reviewer"},
+		SignalKind:       "dangerous_command_detected",
+		SignalReason:     "approval phrase",
+		SignalConfidence: domain.ConfidenceHigh,
+		SignalText:       "rm -rf /",
+		Output:           "intent: destructive_write\nrisk: high\nneeds_approval: true\nrecommend_curia: true\nsummary: The agent is attempting a dangerous destructive command.",
+	})
+	if err != nil {
+		t.Fatalf("BuildSemanticReport() error = %v", err)
+	}
+	if envelope.Kind != domain.ArtifactKindSemanticReport {
+		t.Fatalf("kind = %s, want %s", envelope.Kind, domain.ArtifactKindSemanticReport)
+	}
+	payload, ok := SemanticReportFromEnvelope(envelope)
+	if !ok {
+		t.Fatal("SemanticReportFromEnvelope() = false")
+	}
+	if payload.Intent != "destructive_write" {
+		t.Fatalf("intent = %q, want destructive_write", payload.Intent)
+	}
+	if payload.Risk != domain.ConfidenceHigh {
+		t.Fatalf("risk = %s, want %s", payload.Risk, domain.ConfidenceHigh)
+	}
+	if !payload.NeedsApproval || !payload.RecommendCuria {
+		t.Fatalf("payload = %#v, want approval and curia recommendations", payload)
+	}
+}
+
 func TestBuildFinalAnswer(t *testing.T) {
 	t.Parallel()
 

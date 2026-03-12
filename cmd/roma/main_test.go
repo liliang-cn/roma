@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liliang-cn/roma/internal/agents"
 	"github.com/liliang-cn/roma/internal/api"
 	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
@@ -181,6 +182,62 @@ func TestQueueTailEventLinesRaw(t *testing.T) {
 	}
 }
 
+func TestQueueTailEventLinesSemanticStructured(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 11, 15, 0, 0, 0, time.UTC)
+	lines := queueTailEventLines([]events.Record{
+		{
+			ID:         "evt_sem_1",
+			TaskID:     "task_1",
+			Type:       events.TypeDangerousCommandDetected,
+			OccurredAt: now,
+			ReasonCode: "dangerous_shell_rm_root",
+			Payload: map[string]any{
+				"agent":      "my-codex",
+				"confidence": "high",
+				"text":       "$ rm -rf /",
+			},
+		},
+	}, map[string]struct{}{}, false)
+	if len(lines) != 1 {
+		t.Fatalf("semantic lines = %d, want 1", len(lines))
+	}
+	for _, want := range []string{"[dangerous]", "confidence=high", `text="$ rm -rf /"`} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("structured line = %q, missing %q", lines[0], want)
+		}
+	}
+}
+
+func TestQueueTailEventLinesSemanticReportStructured(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 11, 15, 0, 0, 0, time.UTC)
+	lines := queueTailEventLines([]events.Record{
+		{
+			ID:         "evt_semantic_report",
+			TaskID:     "task_1",
+			Type:       events.TypeSemanticReportProduced,
+			OccurredAt: now,
+			ReasonCode: "approval_request",
+			Payload: map[string]any{
+				"classifier_agent_id": "my-codex",
+				"risk":                "high",
+				"summary":             "The agent is asking for risky approval.",
+			},
+		},
+	}, map[string]struct{}{}, false)
+	if len(lines) != 1 {
+		t.Fatalf("semantic report lines = %d, want 1", len(lines))
+	}
+	for _, want := range []string{"[semantic]", "classifier=my-codex", "risk=high", "intent=approval_request"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("structured line = %q, missing %q", lines[0], want)
+		}
+	}
+}
+
 func TestParseRunArgsWithAlias(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +255,24 @@ func TestParseRunArgsWithAlias(t *testing.T) {
 	}
 	if len(req.Delegates) != 1 || req.Delegates[0] != "my-gemini" {
 		t.Fatalf("delegates via --delegate = %#v, want [my-gemini]", req.Delegates)
+	}
+}
+
+func TestRunAgentsAddRejectsMetaFlag(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.DefaultRegistry()
+	if err != nil {
+		t.Fatalf("DefaultRegistry() error = %v", err)
+	}
+	err = runAgents(context.Background(), registry, []string{
+		"add", "my-codex", "My Codex", "/usr/bin/codex", "--meta", "role=classifier",
+	})
+	if err == nil {
+		t.Fatal("runAgents() error = nil, want unknown argument")
+	}
+	if !strings.Contains(err.Error(), `unknown argument "--meta"`) {
+		t.Fatalf("runAgents() error = %q, want unknown argument --meta", err)
 	}
 }
 

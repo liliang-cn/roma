@@ -1533,6 +1533,12 @@ func TestServerPlanApplyDryRunAndApprovalGate(t *testing.T) {
 	if preview.RemediationHint == "" {
 		t.Fatalf("preview = %#v, want remediation hint", preview)
 	}
+	if len(preview.ResolutionOptions) == 0 {
+		t.Fatalf("preview = %#v, want resolution options", preview)
+	}
+	if preview.Conflict && preview.ConflictSummary == "" {
+		t.Fatalf("preview = %#v, want conflict summary when conflict=true", preview)
+	}
 
 	if _, err := client.PlanApply(context.Background(), PlanApplyRequest{
 		SessionID:  "sess_plan",
@@ -1658,6 +1664,9 @@ func TestServerPlanInbox(t *testing.T) {
 	}
 	if items[0].Status != "pending_approval" {
 		t.Fatalf("status = %q, want pending_approval", items[0].Status)
+	}
+	if len(items[0].ResolutionOptions) == 0 {
+		t.Fatalf("plan inbox item = %#v, want resolution options", items[0])
 	}
 
 	if err := client.PlanApprove(context.Background(), envelope.ID, "local_owner"); err != nil {

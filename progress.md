@@ -224,6 +224,35 @@
   - `roma result show <session_id>` now returns a pending result summary for running/awaiting-approval sessions instead of failing on a missing final-answer artifact
 - `go test -count=1 ./...`
 - `go build ./...`
+
+## 2026-03-12
+
+- Added first-pass runtime semantic classification:
+  - `ApprovalRequested`
+  - `DangerousCommandDetected`
+  - `ParseWarning`
+- Streamed runtime stdout now emits semantic policy events and terminates the child process on high-confidence dangerous command output.
+- Added automatic Curia promotion for risky multi-agent prompt runs and graph nodes:
+  - orchestrated `run/submit --with ...` can now auto-upgrade into a Curia node
+  - risky graph nodes can auto-upgrade from direct/relay execution into Curia
+  - promotion reasons are persisted in scheduler eventing as `auto_curia_upgrade`
+- Added tests for:
+  - policy-based Curia recommendation
+  - runtime dangerous-command semantic detection/termination
+  - auto-Curia assignment generation for orchestrated and graph runs
+  - queue tail semantic event rendering
+- Added agent-backed semantic classification on top of the local runtime classifier:
+  - new `semantic_report` artifact kind and payload
+  - new `SemanticReportProduced` event
+  - runtime now invokes an optional classifier agent after local semantic signals are detected
+  - multi-agent runs now use the starter/coordinator as the semantic reviewer
+  - single-agent runs now fall back to the current agent as the semantic reviewer
+  - classifier selection is no longer user-configurable in `roma agent add`
+  - structured queue tail output now renders emitted semantic reports
+- Strengthened execution-plan conflict UX:
+  - preview/apply/inbox now expose `conflict_summary`
+  - preview/apply/inbox now expose `resolution_options`
+  - inbox now synthesizes approval/conflict guidance even when only a blocking status event exists
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma queue inspect job_1773190497370443455`
 - `timeout 35s env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/romad`
 - `env GOCACHE=/tmp/go-build-cache-roma go run ./cmd/roma graph run --file examples/relay-graph.json`

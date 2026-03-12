@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/store"
@@ -18,6 +20,7 @@ import (
 // DecisionKind identifies the policy outcome.
 type DecisionKind string
 type Action string
+type StreamSignalKind string
 
 const (
 	DecisionAllow DecisionKind = "allow"
@@ -26,6 +29,10 @@ const (
 
 	ActionRun       Action = "run"
 	ActionPlanApply Action = "plan_apply"
+
+	SignalApprovalRequested        StreamSignalKind = "approval_requested"
+	SignalDangerousCommandDetected StreamSignalKind = "dangerous_command_detected"
+	SignalParseWarning             StreamSignalKind = "parse_warning"
 )
 
 // Request describes the execution intent to be classified.
@@ -49,6 +56,18 @@ type Decision struct {
 	Kind     DecisionKind `json:"kind"`
 	Reason   string       `json:"reason"`
 	Warnings []string     `json:"warnings,omitempty"`
+}
+
+type CuriaRecommendation struct {
+	Upgrade bool     `json:"upgrade"`
+	Reasons []string `json:"reasons,omitempty"`
+}
+
+type StreamSignal struct {
+	Kind       StreamSignalKind  `json:"kind"`
+	Reason     string            `json:"reason"`
+	Confidence domain.Confidence `json:"confidence"`
+	Text       string            `json:"text"`
 }
 
 // Broker evaluates execution intent against minimum guardrails.
@@ -304,6 +323,159 @@ func EvaluatePathAction(action Action, paths []string, override bool, actor stri
 		Reason:   "protected_path_scope",
 		Warnings: protectedHits,
 	}
+}
+
+func RecommendCuria(req Request, participantCount int) CuriaRecommendation {
+	if participantCount < 2 {
+		return CuriaRecommendation{}
+	}
+	reasons := make([]string, 0, 4)
+	if protected := detectProtectedPaths(req); len(protected) > 0 {
+		reasons = append(reasons, "protected_path_scope")
+	}
+	lowered := strings.ToLower(req.Prompt)
+	for _, token := range []string{
+		"public api",
+		"breaking change",
+		"schema change",
+		"database migration",
+		"migration",
+		"auth",
+		"billing",
+		"refactor core",
+	} {
+		if strings.Contains(lowered, token) {
+			reasons = append(reasons, "high_risk_change")
+			break
+		}
+	}
+	if req.NodeCount > 8 {
+		reasons = append(reasons, "large_graph_execution")
+	}
+	if len(reasons) == 0 {
+		return CuriaRecommendation{}
+	}
+	return CuriaRecommendation{Upgrade: true, Reasons: dedupeStrings(reasons)}
+}
+
+var (
+	dangerousOutputPatterns = []struct {
+		re     *regexp.Regexp
+		reason string
+	}{
+		{regexp.MustCompile(`(?i)\brm\s+-rf\s+/`), "dangerous_shell_rm_root"},
+		{regexp.MustCompile(`(?i)\bgit\s+reset\s+--hard\b`), "dangerous_git_reset_hard"},
+		{regexp.MustCompile(`(?i)\bdrop\s+database\b`), "dangerous_sql_drop_database"},
+		{regexp.MustCompile(`(?i)\btruncate\s+table\b`), "dangerous_sql_truncate"},
+		{regexp.MustCompile(`(?i)\bsudo\s+rm\s+-rf\b`), "dangerous_shell_sudo_rm"},
+	}
+	approvalOutputPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bapproval required\b`),
+		regexp.MustCompile(`(?i)\bwaiting for approval\b`),
+		regexp.MustCompile(`(?i)\bpermission required\b`),
+		regexp.MustCompile(`(?i)\ballow\?\b`),
+		regexp.MustCompile(`(?i)\bapprove\?\b`),
+	}
+	parseWarningPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bparse warning\b`),
+		regexp.MustCompile(`(?i)\bjson parse error\b`),
+		regexp.MustCompile(`(?i)\binvalid json\b`),
+		regexp.MustCompile(`(?i)\bschema invalid\b`),
+		regexp.MustCompile(`(?i)\bfailed to parse\b`),
+	}
+)
+
+func ClassifyOutputChunk(chunk string) []StreamSignal {
+	lines := strings.Split(chunk, "\n")
+	out := make([]StreamSignal, 0, len(lines))
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if signal, ok := classifyDangerousOutput(line); ok {
+			out = append(out, signal)
+		}
+		if signal, ok := classifyApprovalOutput(line); ok {
+			out = append(out, signal)
+		}
+		if signal, ok := classifyParseWarning(line); ok {
+			out = append(out, signal)
+		}
+	}
+	return out
+}
+
+func classifyDangerousOutput(line string) (StreamSignal, bool) {
+	for _, item := range dangerousOutputPatterns {
+		if item.re.MatchString(line) {
+			confidence := domain.ConfidenceMedium
+			if looksLikeCommandOutput(line) {
+				confidence = domain.ConfidenceHigh
+			}
+			return StreamSignal{
+				Kind:       SignalDangerousCommandDetected,
+				Reason:     item.reason,
+				Confidence: confidence,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func classifyApprovalOutput(line string) (StreamSignal, bool) {
+	for _, re := range approvalOutputPatterns {
+		if re.MatchString(line) {
+			return StreamSignal{
+				Kind:       SignalApprovalRequested,
+				Reason:     "runtime_approval_requested",
+				Confidence: domain.ConfidenceHigh,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func classifyParseWarning(line string) (StreamSignal, bool) {
+	for _, re := range parseWarningPatterns {
+		if re.MatchString(line) {
+			return StreamSignal{
+				Kind:       SignalParseWarning,
+				Reason:     "runtime_parse_warning",
+				Confidence: domain.ConfidenceMedium,
+				Text:       line,
+			}, true
+		}
+	}
+	return StreamSignal{}, false
+}
+
+func looksLikeCommandOutput(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "$ ") ||
+		strings.HasPrefix(line, "# ") ||
+		strings.HasPrefix(strings.ToLower(line), "run: ") ||
+		strings.HasPrefix(strings.ToLower(line), "command: ") ||
+		strings.HasPrefix(strings.ToLower(line), "executing: ")
+}
+
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
 }
 
 func isEffectiveDirAllowed(baseDir, effectiveDir string) bool {

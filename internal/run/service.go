@@ -11,6 +11,7 @@ import (
 
 	"github.com/liliang-cn/roma/internal/agents"
 	"github.com/liliang-cn/roma/internal/artifacts"
+	"github.com/liliang-cn/roma/internal/classifier"
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
@@ -96,7 +97,7 @@ func (s *Service) RunWithResult(ctx context.Context, req Request) (Result, error
 	s.events = s.newEventBackend(req.WorkingDir)
 	s.store = s.newArtifactBackend(req.WorkingDir)
 	s.tasks = s.newTaskBackend(req.WorkingDir)
-	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
+	s.supervisor = s.newSupervisor(req.WorkingDir)
 
 	delegates, err := s.resolveDelegates(ctx, req.Delegates, profile.ID)
 	if err != nil {
@@ -177,6 +178,22 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 		},
 	})
 	assignments := buildOrchestratedAssignments(taskID, starter, delegates, req.Continuous, req.MaxRounds)
+	if upgraded, reasons := s.maybePromoteOrchestratedToCuria(ctx, req.Prompt, req.WorkingDir, taskID, starter, delegates, req.Continuous, req.MaxRounds); len(upgraded) > 0 {
+		assignments = upgraded
+		s.appendEvent(ctx, events.Record{
+			ID:         "evt_" + sessionID + "_auto_curia",
+			SessionID:  sessionID,
+			TaskID:     taskID,
+			Type:       events.TypeTaskGraphSubmitted,
+			ActorType:  events.ActorTypeScheduler,
+			OccurredAt: time.Now().UTC(),
+			ReasonCode: "auto_curia_upgrade",
+			Payload: map[string]any{
+				"reasons": reasons,
+				"mode":    "relay",
+			},
+		})
+	}
 
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
@@ -309,9 +326,10 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 			Strategy:      domain.TaskStrategyDirect,
 			SchemaVersion: "v1",
 		},
-		Profile:    profile,
-		Continuous: req.Continuous,
-		MaxRounds:  req.MaxRounds,
+		Profile:          profile,
+		SemanticReviewer: profile,
+		Continuous:       req.Continuous,
+		MaxRounds:        req.MaxRounds,
 	}}
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
@@ -556,9 +574,10 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 				Strategy:      domain.TaskStrategyDirect,
 				SchemaVersion: "v1",
 			},
-			Profile:    starter,
-			Continuous: continuous,
-			MaxRounds:  maxRounds,
+			Profile:          starter,
+			SemanticReviewer: starter,
+			Continuous:       continuous,
+			MaxRounds:        maxRounds,
 		}}
 	}
 
@@ -572,10 +591,11 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 			Strategy:      domain.TaskStrategyDirect,
 			SchemaVersion: "v1",
 		},
-		Profile:    starter,
-		Continuous: continuous,
-		MaxRounds:  maxRounds,
-		PromptHint: buildStarterBootstrapPromptHint(starter, delegates),
+		Profile:          starter,
+		SemanticReviewer: starter,
+		Continuous:       continuous,
+		MaxRounds:        maxRounds,
+		PromptHint:       buildStarterBootstrapPromptHint(starter, delegates),
 	})
 	assignments = append(assignments, scheduler.NodeAssignment{
 		Node: domain.TaskNodeSpec{
@@ -585,10 +605,11 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 			Dependencies:  []string{bootstrapNodeID},
 			SchemaVersion: "v1",
 		},
-		Profile:    starter,
-		Continuous: continuous,
-		MaxRounds:  maxRounds,
-		PromptHint: "Act as both coordinator and worker. Use the starter bootstrap output as shared context, then contribute your own concrete implementation in parallel with the delegate agents.",
+		Profile:          starter,
+		SemanticReviewer: starter,
+		Continuous:       continuous,
+		MaxRounds:        maxRounds,
+		PromptHint:       "Act as both coordinator and worker. Use the starter bootstrap output as shared context, then contribute your own concrete implementation in parallel with the delegate agents.",
 	})
 	for i, delegate := range delegates {
 		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
@@ -600,10 +621,11 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 				Dependencies:  []string{bootstrapNodeID},
 				SchemaVersion: "v1",
 			},
-			Profile:    delegate,
-			Continuous: continuous,
-			MaxRounds:  maxRounds,
-			PromptHint: fmt.Sprintf("The starter agent %s produced the bootstrap plan and remains an active contributor. Use the shared bootstrap context, focus on your own contribution, and avoid duplicating other agents' work.", starter.DisplayName),
+			Profile:          delegate,
+			SemanticReviewer: starter,
+			Continuous:       continuous,
+			MaxRounds:        maxRounds,
+			PromptHint:       fmt.Sprintf("The starter agent %s produced the bootstrap plan and remains an active contributor. Use the shared bootstrap context, focus on your own contribution, and avoid duplicating other agents' work.", starter.DisplayName),
 		})
 	}
 	return assignments
@@ -671,6 +693,12 @@ func (s *Service) newArtifactBackend(workDir string) artifacts.Backend {
 		return fileStore
 	}
 	return artifacts.NewMirrorStore(sqliteStore, fileStore)
+}
+
+func (s *Service) newSupervisor(_ string) *runtime.Supervisor {
+	supervisor := runtime.NewDefaultSupervisorWithEvents(s.events)
+	supervisor.SetSemanticAnalyzer(classifier.NewAgentAnalyzer(runtime.DefaultSupervisor(), s.store, s.events))
+	return supervisor
 }
 
 func newID(prefix string) string {

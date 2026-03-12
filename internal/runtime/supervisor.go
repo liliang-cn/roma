@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	stdruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ type StartRequest struct {
 	SessionID   string
 	TaskID      string
 	Profile     domain.AgentProfile
+	SemanticReviewer domain.AgentProfile
 	Prompt      string
 	WorkingDir  string
 	Continuous  bool
@@ -64,6 +66,22 @@ type Result struct {
 	Stderr      string
 }
 
+// SemanticAnalysisRequest describes a stream signal that should be interpreted by a classifier agent.
+type SemanticAnalysisRequest struct {
+	ExecutionID string
+	SessionID   string
+	TaskID      string
+	WorkingDir  string
+	SourceAgent domain.AgentProfile
+	ReviewerAgent domain.AgentProfile
+	Signal      policy.StreamSignal
+}
+
+// SemanticAnalyzer emits richer semantic reports from runtime stream signals.
+type SemanticAnalyzer interface {
+	AnalyzeSignal(ctx context.Context, req SemanticAnalysisRequest) error
+}
+
 // Adapter builds a launch command for a specific agent runtime.
 type Adapter interface {
 	Supports(profile domain.AgentProfile) bool
@@ -80,6 +98,7 @@ type Supervisor struct {
 	adapters   []Adapter
 	events     store.EventStore
 	pty        PTYProvider
+	semantic   SemanticAnalyzer
 	now        func() time.Time
 	mu         sync.RWMutex
 	executions map[string]Execution
@@ -111,6 +130,11 @@ func DefaultSupervisor() *Supervisor {
 // NewDefaultSupervisorWithEvents constructs the default user-profile-driven supervisor with event append support.
 func NewDefaultSupervisorWithEvents(eventStore store.EventStore) *Supervisor {
 	return NewSupervisorWithEvents(eventStore, ProfileAdapter{})
+}
+
+// SetSemanticAnalyzer configures a second-layer semantic classifier for streamed runtime signals.
+func (s *Supervisor) SetSemanticAnalyzer(analyzer SemanticAnalyzer) {
+	s.semantic = analyzer
 }
 
 // RunAttached launches the runtime and attaches stdio to the current terminal.
@@ -410,12 +434,95 @@ func (s *Supervisor) appendOutputEvent(execID string, req StartRequest, stdout s
 		OccurredAt: s.now(),
 		Payload: map[string]any{
 			"execution_id": execID,
-			"agent":       req.Profile.ID,
-			"stdout":      stdout,
-			"working_dir": req.WorkingDir,
+			"agent":        req.Profile.ID,
+			"stdout":       stdout,
+			"working_dir":  req.WorkingDir,
 		},
 	})
 	logRuntimeChunk(req, stdout)
+	for _, signal := range policy.ClassifyOutputChunk(stdout) {
+		s.appendSemanticOutputEvent(execID, req, signal)
+		s.analyzeSignal(execID, req, signal)
+		if signal.Kind == policy.SignalDangerousCommandDetected && signal.Confidence == domain.ConfidenceHigh {
+			s.terminateExecution(execID)
+		}
+	}
+}
+
+func (s *Supervisor) appendSemanticOutputEvent(execID string, req StartRequest, signal policy.StreamSignal) {
+	if s.events == nil {
+		return
+	}
+	eventType := semanticEventType(signal.Kind)
+	if eventType == "" {
+		return
+	}
+	id := fmt.Sprintf("evt_%s_semantic_%d", execID, atomic.AddUint64(&s.eventSeq, 1))
+	_ = s.events.AppendEvent(context.Background(), events.Record{
+		ID:         id,
+		SessionID:  req.SessionID,
+		TaskID:     req.TaskID,
+		Type:       eventType,
+		ActorType:  events.ActorTypePolicy,
+		OccurredAt: s.now(),
+		ReasonCode: signal.Reason,
+		Payload: map[string]any{
+			"execution_id": execID,
+			"agent":        req.Profile.ID,
+			"confidence":   signal.Confidence,
+			"text":         signal.Text,
+		},
+	})
+}
+
+func semanticEventType(kind policy.StreamSignalKind) events.Type {
+	switch kind {
+	case policy.SignalApprovalRequested:
+		return events.TypeApprovalRequested
+	case policy.SignalDangerousCommandDetected:
+		return events.TypeDangerousCommandDetected
+	case policy.SignalParseWarning:
+		return events.TypeParseWarning
+	default:
+		return ""
+	}
+}
+
+func (s *Supervisor) terminateExecution(execID string) {
+	s.mu.RLock()
+	exec, ok := s.executions[execID]
+	s.mu.RUnlock()
+	if !ok || exec.PID <= 0 {
+		return
+	}
+	proc, err := os.FindProcess(exec.PID)
+	if err != nil {
+		return
+	}
+	if stdruntime.GOOS == "windows" {
+		_ = proc.Kill()
+		return
+	}
+	_ = proc.Kill()
+}
+
+func (s *Supervisor) analyzeSignal(execID string, req StartRequest, signal policy.StreamSignal) {
+	if s.semantic == nil {
+		return
+	}
+	go func() {
+		if err := s.semantic.AnalyzeSignal(context.Background(), SemanticAnalysisRequest{
+			ExecutionID: execID,
+			SessionID:   req.SessionID,
+			TaskID:      req.TaskID,
+			WorkingDir:  req.WorkingDir,
+			SourceAgent: req.Profile,
+			ReviewerAgent: req.SemanticReviewer,
+			Signal:      signal,
+		}); err != nil {
+			log.Printf("semantic analyzer failed session=%s task=%s exec=%s: %v", req.SessionID, req.TaskID, execID, err)
+		}
+	}()
 }
 
 func (s *Supervisor) shouldUsePTY(adapter Adapter, profile domain.AgentProfile) bool {

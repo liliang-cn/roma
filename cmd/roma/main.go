@@ -955,6 +955,21 @@ func queueTailEventLines(records []events.Record, seen map[string]struct{}, raw 
 			}
 		case events.TypeRuntimeExited:
 			lines = append(lines, fmt.Sprintf("%s exec=%s state=%s", prefix, payloadString(record.Payload, "execution_id"), record.ReasonCode))
+		case events.TypeApprovalRequested, events.TypeDangerousCommandDetected, events.TypeParseWarning:
+			line := fmt.Sprintf("%s confidence=%s reason=%s", prefix, payloadString(record.Payload, "confidence"), record.ReasonCode)
+			if text := strings.TrimSpace(payloadString(record.Payload, "text")); text != "" {
+				line += " text=" + strconv.Quote(text)
+			}
+			lines = append(lines, line)
+		case events.TypeSemanticReportProduced:
+			line := fmt.Sprintf("%s classifier=%s risk=%s", prefix, payloadString(record.Payload, "classifier_agent_id"), payloadString(record.Payload, "risk"))
+			if intent := strings.TrimSpace(record.ReasonCode); intent != "" {
+				line += " intent=" + intent
+			}
+			if summary := strings.TrimSpace(payloadString(record.Payload, "summary")); summary != "" {
+				line += " summary=" + strconv.Quote(summary)
+			}
+			lines = append(lines, line)
 		case events.TypePlanApplyRejected, events.TypePlanApplied, events.TypePlanRolledBack:
 			lines = append(lines, fmt.Sprintf("%s reason=%s artifact=%s", prefix, record.ReasonCode, payloadString(record.Payload, "artifact_id")))
 		case events.TypeTaskStateChanged:
@@ -1965,6 +1980,8 @@ func printPlanInbox(items []api.PlanInboxEntry) error {
 		detail := item.LastReason
 		if item.ConflictDetail != "" {
 			detail = item.ConflictDetail
+		} else if item.ConflictSummary != "" {
+			detail = item.ConflictSummary
 		} else if item.RemediationHint != "" {
 			detail = item.RemediationHint
 		} else if len(item.Violations) > 0 {
@@ -3337,6 +3354,14 @@ func queueTailEventLabel(typ events.Type) string {
 		return "output"
 	case events.TypeRuntimeExited:
 		return "runtime-exit"
+	case events.TypeApprovalRequested:
+		return "approval"
+	case events.TypeDangerousCommandDetected:
+		return "dangerous"
+	case events.TypeParseWarning:
+		return "parse-warning"
+	case events.TypeSemanticReportProduced:
+		return "semantic"
 	case events.TypePlanApplyRejected, events.TypePlanApplied, events.TypePlanRolledBack:
 		return "plan"
 	case events.TypeTaskStateChanged:

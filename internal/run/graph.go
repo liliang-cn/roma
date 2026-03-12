@@ -13,7 +13,6 @@ import (
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
-	"github.com/liliang-cn/roma/internal/runtime"
 	"github.com/liliang-cn/roma/internal/scheduler"
 )
 
@@ -105,7 +104,7 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 	s.events = s.newEventBackend(req.WorkingDir)
 	s.store = s.newArtifactBackend(req.WorkingDir)
 	s.tasks = s.newTaskBackend(req.WorkingDir)
-	s.supervisor = runtime.NewDefaultSupervisorWithEvents(s.events)
+	s.supervisor = s.newSupervisor(req.WorkingDir)
 
 	assignments := make([]scheduler.NodeAssignment, 0, len(req.Nodes))
 	for _, node := range req.Nodes {
@@ -136,6 +135,11 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 			Continuous:           req.Continuous,
 			MaxRounds:            req.MaxRounds,
 		})
+	}
+	autoCuriaReasons := []string(nil)
+	if upgraded, reasons := s.maybePromoteGraphAssignmentsToCuria(ctx, req.Prompt, req.WorkingDir, assignments); len(reasons) > 0 {
+		assignments = upgraded
+		autoCuriaReasons = append(autoCuriaReasons, reasons...)
 	}
 
 	sessionID, taskID := reserveIDs("task_graph", req.SessionID, req.TaskID)
@@ -172,8 +176,23 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 		Payload: map[string]any{
 			"mode":       "graph",
 			"node_count": len(assignments),
+			"auto_curia": countAutoCuriaAssignments(assignments),
 		},
 	})
+	if len(autoCuriaReasons) > 0 {
+		s.appendEvent(ctx, events.Record{
+			ID:         "evt_" + sessionID + "_auto_curia",
+			SessionID:  sessionID,
+			TaskID:     taskID,
+			Type:       events.TypeTaskGraphSubmitted,
+			ActorType:  events.ActorTypeScheduler,
+			OccurredAt: record.CreatedAt,
+			ReasonCode: "auto_curia_upgrade",
+			Payload: map[string]any{
+				"reasons": autoCuriaReasons,
+			},
+		})
+	}
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
 	fullAssignments := append([]scheduler.NodeAssignment(nil), assignments...)

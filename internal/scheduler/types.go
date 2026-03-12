@@ -8,6 +8,7 @@ import (
 type NodeAssignment struct {
 	Node                 domain.TaskNodeSpec
 	Profile              domain.AgentProfile
+	SemanticReviewer     domain.AgentProfile
 	CuriaProfiles        []domain.AgentProfile
 	CuriaQuorum          int
 	CuriaArbitrator      domain.AgentProfile
