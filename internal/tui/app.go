@@ -68,7 +68,7 @@ func Run(ctx context.Context, opts Options) error {
 	input := textinput.New()
 	input.Placeholder = "/help"
 	input.Prompt = "> "
-	input.Focus()
+	input.Blur()
 	input.CharLimit = 0
 	input.Width = 80
 
@@ -81,14 +81,22 @@ func Run(ctx context.Context, opts Options) error {
 	jobList.SetShowPagination(false)
 	jobList.DisableQuitKeybindings()
 
+	commandList := list.New(nil, newCommandListDelegate(lightPalette), 0, 0)
+	commandList.Title = "Command"
+	commandList.SetShowStatusBar(false)
+	commandList.SetShowHelp(false)
+	commandList.SetFilteringEnabled(false)
+	commandList.SetShowPagination(false)
+	commandList.DisableQuitKeybindings()
+
 	m := model{
 		workingDir:     workingDir,
 		client:         client,
 		registry:       registry,
 		input:          input,
 		jobList:        jobList,
+		commandList:    commandList,
 		detailViewport: viewport.New(0, 0),
-		logViewport:    viewport.New(0, 0),
 		help:           help.New(),
 		daemonCancel:   daemonCancel,
 		daemonErrCh:    daemonErrCh,
@@ -110,13 +118,12 @@ func Run(ctx context.Context, opts Options) error {
 			"/quit",
 		},
 		boot:      bootMessage,
+		focus:     focusQueue,
 		themeName: "light",
 	}
 	m.refreshTheme()
 	m.detailViewport.MouseWheelEnabled = true
 	m.detailViewport.MouseWheelDelta = 3
-	m.logViewport.MouseWheelEnabled = true
-	m.logViewport.MouseWheelDelta = 3
 	if len(profiles) > 0 {
 		m.selectedAgent = profiles[0].ID
 	} else {

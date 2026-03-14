@@ -33,8 +33,9 @@ type model struct {
 	client     *api.Client
 	registry   *agents.Registry
 
-	input   textinput.Model
-	jobList list.Model
+	input       textinput.Model
+	jobList     list.Model
+	commandList list.Model
 
 	selectedAgent string
 	withAgents    []string
@@ -50,12 +51,14 @@ type model struct {
 	boot   string
 
 	detailViewport viewport.Model
-	logViewport    viewport.Model
 	help           help.Model
 	themeName      string
+	focus          focusTarget
 
 	messages []string
 	helpText []string
+
+	mainContent string
 
 	daemonCancel context.CancelFunc
 	daemonErrCh  <-chan error
@@ -74,7 +77,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.input.Width = max(20, msg.Width-6)
 		m.refreshTheme()
 		m.resizeViewports()
 		m.syncViewports()
@@ -84,32 +86,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc":
-			m.input.SetValue("")
-			return m, nil
-		case "enter":
-			line := strings.TrimSpace(m.input.Value())
-			if line == "" {
+		case "i":
+			if !m.input.Focused() {
+				m.focusInput("")
 				return m, nil
 			}
-			m.input.SetValue("")
-			return m, m.commandCmd(line)
-		}
-		var cmd tea.Cmd
-		var listCmd tea.Cmd
-		var detailCmd tea.Cmd
-		var logCmd tea.Cmd
-		if strings.TrimSpace(m.input.Value()) == "" {
-			m.jobList, listCmd = m.jobList.Update(msg)
-			if selected, ok := m.jobList.SelectedItem().(jobItem); ok && selected.id != "" && selected.id != m.selectedJobID {
-				m.selectedJobID = selected.id
-				return m, tea.Batch(listCmd, m.refreshCmd())
+		case "/":
+			if !m.input.Focused() {
+				m.focusInput("/")
+				return m, nil
 			}
+		case "esc":
+			if m.input.Focused() {
+				m.blurInput()
+			}
+			return m, nil
 		}
-		m.input, cmd = m.input.Update(msg)
-		m.detailViewport, detailCmd = m.detailViewport.Update(msg)
-		m.logViewport, logCmd = m.logViewport.Update(msg)
-		return m, tea.Batch(cmd, listCmd, detailCmd, logCmd)
+
+		if m.input.Focused() {
+			switch msg.String() {
+			case "up", "ctrl+p":
+				if m.commandMenuVisible() {
+					var cmd tea.Cmd
+					m.commandList, cmd = m.commandList.Update(msg)
+					return m, cmd
+				}
+			case "down", "ctrl+n":
+				if m.commandMenuVisible() {
+					var cmd tea.Cmd
+					m.commandList, cmd = m.commandList.Update(msg)
+					return m, cmd
+				}
+			case "tab":
+				if m.commandMenuVisible() {
+					m.acceptCommandSuggestion()
+					return m, nil
+				}
+			case "enter":
+				if m.shouldCompleteCommand() {
+					m.acceptCommandSuggestion()
+					return m, nil
+				}
+				line := strings.TrimSpace(m.input.Value())
+				if line == "" {
+					return m, nil
+				}
+				m.input.SetValue("")
+				m.blurInput()
+				return m, m.commandCmd(line)
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			m.syncCommandList()
+			m.syncViewports()
+			return m, cmd
+		}
+
+		var cmd tea.Cmd
+		m.detailViewport, cmd = m.detailViewport.Update(msg)
+		return m, cmd
 
 	case tickMsg:
 		select {
@@ -183,7 +218,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
-	m.logViewport, _ = m.logViewport.Update(msg)
 	return m, cmd
 }
 
@@ -191,7 +225,7 @@ func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	ld := computeLayout(m.width, m.height)
+	ld := m.layoutDims()
 
 	if !m.ready {
 		lines := []string{m.bootTitleStyle().Render("ROMA TUI"), "", m.boot}
@@ -202,23 +236,96 @@ func (m model) View() string {
 		return m.appStyle().Width(ld.appW).Render(strings.Join(lines, "\n"))
 	}
 
-	header := m.renderHeader()
-	body := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.jobList.View(),
-		" ",
-		m.panelStyle().Width(ld.rightPanelW).Render(m.detailViewport.View()),
-	)
-	logs := m.panelStyle().Width(ld.logPanelW).Render(m.logViewport.View())
+	body := lipgloss.NewStyle().Width(ld.mainW).Render(m.detailViewport.View())
 	input := m.inputPanelStyle().Width(ld.inputPanelW).Render(m.renderInput())
 	footer := m.footerHintStyle().Width(ld.footerW).Render(m.help.ShortHelpView(m.shortHelp()))
 
 	return m.appStyle().Width(ld.appW).Render(lipgloss.JoinVertical(
 		lipgloss.Left,
-		header,
 		body,
-		logs,
 		input,
 		footer,
 	))
+}
+
+func (m *model) focusInput(initial string) {
+	m.focus = focusInput
+	m.input.Focus()
+	if initial != "" && strings.TrimSpace(m.input.Value()) == "" {
+		m.input.SetValue(initial)
+	}
+	m.syncCommandList()
+	m.syncViewports()
+}
+
+func (m *model) blurInput() {
+	m.focus = focusQueue
+	m.input.Blur()
+	m.input.SetValue("")
+	m.commandList.SetItems(nil)
+	m.syncViewports()
+}
+
+func (m *model) syncCommandList() {
+	ld := m.layoutDims()
+	items := filterCommandItems(m.commandQuery())
+	if !m.input.Focused() || !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+		items = nil
+	}
+	m.commandList.SetItems(items)
+	menuH := min(6, max(0, len(items)))
+	if menuH > 0 {
+		menuH += 2
+	}
+	m.commandList.SetSize(max(24, ld.inputPanelW-4), menuH)
+	if len(items) > 0 {
+		m.commandList.Select(0)
+	}
+	m.input.Width = max(20, ld.inputPanelW-6)
+}
+
+func (m model) commandQuery() string {
+	value := strings.TrimSpace(m.input.Value())
+	if !strings.HasPrefix(value, "/") {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "/")
+	if idx := strings.IndexByte(value, ' '); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
+}
+
+func (m model) commandMenuVisible() bool {
+	return m.input.Focused() && len(m.commandList.Items()) > 0 && strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/")
+}
+
+func (m model) selectedCommandSuggestion() (commandItem, bool) {
+	item, ok := m.commandList.SelectedItem().(commandItem)
+	return item, ok
+}
+
+func (m model) shouldCompleteCommand() bool {
+	item, ok := m.selectedCommandSuggestion()
+	if !ok {
+		return false
+	}
+	current := strings.TrimSpace(m.input.Value())
+	if !strings.HasPrefix(current, "/") {
+		return false
+	}
+	if strings.Contains(strings.TrimPrefix(current, "/"), " ") {
+		return false
+	}
+	return strings.TrimSpace(item.insert) != current
+}
+
+func (m *model) acceptCommandSuggestion() {
+	item, ok := m.selectedCommandSuggestion()
+	if !ok {
+		return
+	}
+	m.input.SetValue(item.insert)
+	m.syncCommandList()
+	m.syncViewports()
 }

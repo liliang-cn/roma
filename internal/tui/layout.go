@@ -1,35 +1,30 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/list"
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/list"
+)
 
 // Layout constants.
 //
 // lipgloss Width() sets inner size (content + padding), border is added on top:
-//   panelStyle   has Padding(0,1) + RoundedBorder → rendered = Width() + 2 (border)
-//   appStyle     has Padding(0,1), no border       → rendered = Width()
+//
+//	panelStyle   has Padding(0,1) + RoundedBorder → rendered = Width() + 2 (border)
+//	appStyle     has Padding(0,1), no border       → rendered = Width()
 //
 // So to fit a panel inside inner width W:  panel.Width(W - 2)
 // Inner width of appStyle.Width(appW):     appW - 2  (horizontal padding eats 2)
 const (
-	// panelBorderH is the horizontal border overhead added to Width() by panelStyle.
-	panelBorderH = 2
-	// panelBorderV is the vertical border overhead (top + bottom) added by panelStyle.
-	panelBorderV = 2
-	// panelPadH is the horizontal padding inside panelStyle (Padding(0,1) = left+right = 2).
-	panelPadH = 2
 	// appPadH is the horizontal padding of appStyle (Padding(0,1) = left+right = 2).
 	appPadH = 2
 
-	// headerRows: brand(1) + subtitle(1) + meta(1) + stats-chips(3) + bottom-pad(1) = 7
-	headerRows = 7
 	// inputContentRows: title(1) + hint(1) + blank(1) + input-field(1) = 4
 	inputContentRows = 4
-	// inputPanelRows: inputContentRows + panelBorderV (top+bottom border)
-	inputPanelRows = inputContentRows + panelBorderV
+	// baseInputPanelRows: inputContentRows + rounded border overhead
+	baseInputPanelRows = inputContentRows + 2
 	// footerRows: one line of key hints
 	footerRows = 1
-	// vertFixed is the total rows consumed by non-scrollable sections.
-	vertFixed = headerRows + inputPanelRows + footerRows
 )
 
 // layoutDims holds all pre-computed dimensions so both resizeViewports and
@@ -38,17 +33,8 @@ type layoutDims struct {
 	// appW is passed to appStyle().Width(); rendered = appW, inner = appW - appPadH.
 	appW int
 
-	// Body row: list (left) + detail panel (right).
-	listW       int // list.SetSize width = exactly listW rendered chars
-	bodyH       int // total height of the body row
-	rightPanelW int // passed to panelStyle().Width(); rendered = rightPanelW + panelBorderH
-	detailW     int // detailViewport.Width  (fits inside rightPanelW - panelPadH)
-	detailH     int // detailViewport.Height (= bodyH - panelBorderV)
-
-	// Log panel.
-	logPanelW int // passed to panelStyle().Width(); rendered = logPanelW + panelBorderH
-	logW      int // logViewport.Width
-	logH      int // logViewport.Height
+	mainW int
+	mainH int
 
 	// Input panel.
 	inputPanelW int // passed to inputPanelStyle().Width(); same formula as logPanelW
@@ -58,75 +44,74 @@ type layoutDims struct {
 }
 
 // computeLayout derives all layout dimensions from the terminal size.
-func computeLayout(w, h int) layoutDims {
+func computeLayout(w, h, inputPanelRows int) layoutDims {
+	if inputPanelRows <= 0 {
+		inputPanelRows = baseInputPanelRows
+	}
 	// appW fills the terminal; appStyle renders at exactly appW chars.
 	appW := w
 	// innerW is the usable content width inside appStyle's horizontal padding.
 	innerW := appW - appPadH
 
-	// Vertical split: remaining rows after fixed sections go to body + log.
-	available := h - vertFixed
-	if available < 6 {
-		available = 6
-	}
-	bodyH := max(6, available*3/5)
-	logAllocH := max(4, available-bodyH)
+	mainW := max(16, innerW)
+	mainH := max(8, h-(inputPanelRows+footerRows))
 
-	// Horizontal split: list takes ~1/3, detail panel takes the rest.
-	listW := max(28, innerW/3)
-
-	// right panel rendered width = rightPanelW + panelBorderH.
-	// Constraint: listW + 1 (gap) + rightPanelW + panelBorderH = innerW
-	rightPanelW := max(20, innerW-listW-1-panelBorderH)
-	// detailViewport fills the panel's inner content area (panel padding eats panelPadH).
-	detailW := max(16, rightPanelW-panelPadH)
-	detailH := max(4, bodyH-panelBorderV)
-
-	// log/input panels span full inner width.
-	// Constraint: logPanelW + panelBorderH = innerW
-	logPanelW := max(20, innerW-panelBorderH)
-	logW := max(16, logPanelW-panelPadH)
-	logH := max(0, logAllocH-panelBorderV)
+	inputPanelW := max(20, innerW-2)
 
 	return layoutDims{
 		appW:        appW,
-		listW:       listW,
-		bodyH:       bodyH,
-		rightPanelW: rightPanelW,
-		detailW:     detailW,
-		detailH:     detailH,
-		logPanelW:   logPanelW,
-		logW:        logW,
-		logH:        logH,
-		inputPanelW: logPanelW,
+		mainW:       mainW,
+		mainH:       mainH,
+		inputPanelW: inputPanelW,
 		footerW:     innerW,
 	}
+}
+
+func (m model) layoutDims() layoutDims {
+	return computeLayout(m.width, m.height, m.inputPanelRows())
+}
+
+func (m model) inputPanelRows() int {
+	rows := baseInputPanelRows
+	if m.input.Focused() && strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+		rows += min(6, len(filterCommandItems(m.commandQuery()))) + 1
+	}
+	return rows
 }
 
 func (m *model) resizeViewports() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	ld := computeLayout(m.width, m.height)
-	m.jobList.SetSize(ld.listW, ld.bodyH)
-	m.detailViewport.Width = ld.detailW
-	m.detailViewport.Height = ld.detailH
-	m.logViewport.Width = ld.logW
-	m.logViewport.Height = ld.logH
+	ld := m.layoutDims()
+	m.detailViewport.Width = ld.mainW
+	m.detailViewport.Height = ld.mainH
 }
 
 func (m *model) syncViewports() {
 	m.resizeViewports()
-	m.syncJobList()
-	m.detailViewport.SetContent(m.renderDetail())
-	m.logViewport.SetContent(m.renderMessages())
-	m.logViewport.GotoBottom()
+	m.syncCommandList()
+	content := m.renderMain()
+	if content == m.mainContent {
+		return
+	}
+	offset := m.detailViewport.YOffset
+	m.detailViewport.SetContent(content)
+	m.mainContent = content
+	maxOffset := max(0, m.detailViewport.TotalLineCount()-m.detailViewport.Height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	m.detailViewport.SetYOffset(offset)
 }
 
 func (m *model) syncJobList() {
-	ld := computeLayout(m.width, m.height)
-	titleMax := max(16, ld.listW-4)
-	descMax := max(24, ld.listW-4)
+	ld := m.layoutDims()
+	titleMax := max(16, ld.mainW-8)
+	descMax := max(24, ld.mainW-8)
 
 	items := make([]list.Item, 0, len(m.queue))
 	selectedIndex := 0

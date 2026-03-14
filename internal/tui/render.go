@@ -9,45 +9,51 @@ import (
 	"github.com/liliang-cn/roma/internal/queue"
 )
 
+func (m model) renderMain() string {
+	sections := []string{m.renderHeader()}
+	if queueSection := m.renderQueue(); queueSection != "" {
+		sections = append(sections, "", queueSection)
+	}
+	if m.inspect != nil && m.inspect.Job.ID != "" {
+		sections = append(sections, "", m.renderDetail())
+	}
+	if logSection := m.renderMessages(); logSection != "" {
+		sections = append(sections, "", logSection)
+	}
+	return strings.Join(sections, "\n\n")
+}
+
 func (m model) renderHeader() string {
-	brand := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.palette().accentCool).
-		Padding(0, 0, 0, 0).
-		Render("ROMA")
-	meta := lipgloss.JoinHorizontal(lipgloss.Left,
-		m.labelStyle().Copy().Foreground(m.palette().accentCool).Render("agent "),
-		m.valueStyle().Render(fallbackAgent(m.selectedAgent)),
-		m.queueMutedStyle().Render("  •  "),
-		m.labelStyle().Copy().Foreground(m.palette().accentWarm).Render("with "),
-		m.valueStyle().Render(fallbackWith(m.withAgents)),
-		m.queueMutedStyle().Render("  •  "),
-		m.labelStyle().Copy().Foreground(m.palette().accent).Render("theme "),
-		m.valueStyle().Render(m.themeName),
-	)
-	stats := lipgloss.JoinHorizontal(lipgloss.Left,
-		m.infoChip("queue", fmt.Sprintf("%d", m.status.QueueItems), m.palette().accent),
-		" ",
-		m.infoChip("session", fmt.Sprintf("%d", m.status.Sessions), m.palette().success),
-		" ",
-		m.infoChip("artifact", fmt.Sprintf("%d", m.status.Artifacts), m.palette().warning),
-		" ",
-		m.infoChip("event", fmt.Sprintf("%d", m.status.Events), m.palette().danger),
-	)
-	subtitle := m.subtitleStyle().Render("embedded daemon • local multi-agent orchestration")
-	content := lipgloss.JoinVertical(lipgloss.Left, brand, subtitle, meta, stats)
-	return lipgloss.NewStyle().Padding(0, 0, 1, 0).Render(content)
+	lines := []string{
+		m.titleStyle().Render("ROMA"),
+		m.subtitleStyle().Render("local multi-agent orchestration"),
+		m.helpLineStyle().Render(
+			fmt.Sprintf(
+				"agent %s • with %s • theme %s • queue %d • session %d • artifact %d • event %d",
+				fallbackAgent(m.selectedAgent),
+				fallbackWith(m.withAgents),
+				m.themeName,
+				m.status.QueueItems,
+				m.status.Sessions,
+				m.status.Artifacts,
+				m.status.Events,
+			),
+		),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) renderQueue() string {
-	lines := []string{m.panelTitleStyle().Render("Queue")}
+	lines := []string{m.sectionTitle("Recent Jobs")}
 	if len(m.queue) == 0 {
-		lines = append(lines, "")
 		lines = append(lines, m.queueMutedStyle().Render("No jobs yet. Use /run <prompt> or /submit <prompt>."))
 		return strings.Join(lines, "\n")
 	}
-	for _, item := range m.queue {
-		lines = append(lines, "")
+	for i, item := range m.queue {
+		if i >= 8 {
+			lines = append(lines, m.queueMutedStyle().Render(fmt.Sprintf("... %d more job(s)", len(m.queue)-i)))
+			break
+		}
 		lines = append(lines, m.renderQueueItem(item))
 	}
 	return strings.Join(lines, "\n")
@@ -55,10 +61,10 @@ func (m model) renderQueue() string {
 
 func (m model) renderDetail() string {
 	if m.inspect == nil || m.inspect.Job.ID == "" {
-		return m.panelTitleStyle().Render("Details") + "\n\n" + m.queueMutedStyle().Render("Select a job on the left to inspect its live state, semantic summary, Curia outcome, and artifacts.")
+		return m.sectionTitle("Details") + "\n\n" + m.queueMutedStyle().Render("Use /open <job_id> to inspect a job.")
 	}
 	lines := []string{
-		m.panelTitleStyle().Render("Details"),
+		m.sectionTitle("Details"),
 		m.kvLine("job", m.inspect.Job.ID),
 		m.kvLine("status", string(m.inspect.Job.Status)),
 	}
@@ -127,12 +133,12 @@ func (m model) renderDetail() string {
 }
 
 func (m model) renderMessages() string {
-	lines := []string{m.panelTitleStyle().Render("Command Log")}
+	lines := []string{m.sectionTitle("Command Log")}
 	if len(m.messages) == 0 {
-		lines = append(lines, "", m.helpLineStyle().Render("Type /help to list commands. Plain text runs the current agent."))
+		lines = append(lines, m.helpLineStyle().Render("Type /help to list commands."))
 	} else {
-		lines = append(lines, "")
-		for _, line := range m.messages {
+		start := max(0, len(m.messages)-12)
+		for _, line := range m.messages[start:] {
 			lines = append(lines, m.logLineStyle().Render("• "+line))
 		}
 	}
@@ -141,28 +147,30 @@ func (m model) renderMessages() string {
 
 func (m model) renderInput() string {
 	title := m.panelTitleStyle().Render("Command")
-	help := m.helpLineStyle().Render("Use /run, /submit, /agent, /with, /open, /cancel, /result, /theme")
-	return strings.Join([]string{title, help, "", m.input.View()}, "\n")
+	help := m.helpLineStyle().Render("Press i to type. Start with / to open the command menu.")
+	lines := []string{title, help}
+	if m.commandMenuVisible() {
+		lines = append(lines, "", m.renderCommandSuggestions())
+	}
+	if m.input.Focused() {
+		lines = append(lines, "", m.input.View())
+	} else {
+		lines = append(lines, "", m.helpLineStyle().Render("Press i or / to focus input."))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) renderQueueItem(item queue.Request) string {
 	target := fallbackAgent(item.StarterAgent)
 	withAgents := fallbackWith(item.Delegates)
-	lines := []string{
-		lipgloss.JoinHorizontal(lipgloss.Center, m.statusChip(item.Status), " ", m.valueStyle().Render(trimLine(item.ID, 28))),
-		lipgloss.JoinHorizontal(lipgloss.Center,
-			m.labelStyle().Render("starter "), m.valueStyle().Render(target),
-			"  ",
-			m.labelStyle().Render("with "), m.valueStyle().Render(withAgents),
-		),
-		m.queueMutedStyle().Render(trimLine(compactQueueSummary(item), 52)),
-	}
-	style := m.queueItemStyle()
+	prefix := "  "
 	if item.ID == m.selectedJobID {
-		style = m.queueActiveStyle()
+		prefix = m.titleStyle().Render("> ")
 	}
-	ld := computeLayout(m.width, m.height)
-	return style.Width(max(18, ld.listW-4)).Render(strings.Join(lines, "\n"))
+	headline := prefix + m.statusChip(item.Status) + " " + m.valueStyle().Render(trimLine(item.ID, 32))
+	meta := prefix + m.labelStyle().Render("starter ") + m.valueStyle().Render(target) + m.queueMutedStyle().Render(" • ") + m.labelStyle().Render("with ") + m.valueStyle().Render(withAgents)
+	summary := prefix + m.queueMutedStyle().Render(trimLine(compactQueueSummary(item), 80))
+	return strings.Join([]string{headline, meta, summary}, "\n")
 }
 
 func (m model) statusChip(status queue.Status) string {
@@ -177,21 +185,7 @@ func (m model) statusChip(status queue.Status) string {
 	case queue.StatusFailed, queue.StatusRejected, queue.StatusCancelled:
 		color = m.palette().danger
 	}
-	return lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.palette().chipText).
-		Background(color).
-		Padding(0, 1).
-		Render(strings.ToUpper(string(status)))
-}
-
-func (m model) infoChip(label, value string, color lipgloss.Color) string {
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(color).
-		Foreground(m.palette().text).
-		Padding(0, 1).
-		Render(m.labelStyle().Copy().Foreground(color).Render(label) + " " + m.valueStyle().Render(value))
+	return lipgloss.NewStyle().Bold(true).Foreground(color).Render(strings.ToUpper(string(status)))
 }
 
 func (m model) sectionTitle(title string) string {
@@ -200,4 +194,24 @@ func (m model) sectionTitle(title string) string {
 
 func (m model) kvLine(label, value string) string {
 	return m.labelStyle().Render(label+": ") + m.valueStyle().Render(value)
+}
+
+func (m model) renderCommandSuggestions() string {
+	items := m.commandList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+	selected := m.commandList.Index()
+	lines := make([]string, 0, len(items))
+	for i, raw := range items {
+		item := raw.(commandItem)
+		prefix := "  "
+		lineStyle := m.helpLineStyle().Copy().Italic(false)
+		if i == selected {
+			prefix = m.titleStyle().Render("> ")
+			lineStyle = m.valueStyle()
+		}
+		lines = append(lines, prefix+lineStyle.Render(item.insert+"  "+m.queueMutedStyle().Render(item.description)))
+	}
+	return strings.Join(lines, "\n")
 }
