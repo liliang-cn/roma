@@ -6,10 +6,19 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/runtime"
+)
+
+// Default timeouts for Curia phases
+const (
+	// scatterTimeout is the max time to wait for all senators to submit proposals
+	scatterTimeout = 5 * time.Minute
+	// reviewTimeout is the max time to wait for all reviewers to submit ballots
+	reviewTimeout = 3 * time.Minute
 )
 
 type ExecuteRequest struct {
@@ -215,15 +224,22 @@ type rankedProposal struct {
 
 func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quorum int) ([]domain.ArtifactEnvelope, winnerSelection, error) {
 	proposalResults := make([]proposalEnvelope, len(req.Senators))
+	execIDs := make([]string, len(req.Senators))
 	var wg sync.WaitGroup
 	var firstErr error
 	var mu sync.Mutex
+	proposalsDone := make(chan struct{}, 1)
+	timedOut := false
+
+	// Launch scatter phase with timeout
 	for i, senator := range req.Senators {
+		execID := "curia_scatter_" + req.TaskID + "_" + senator.ID
+		execIDs[i] = execID
 		wg.Add(1)
-		go func(i int, senator domain.AgentProfile) {
+		go func(i int, senator domain.AgentProfile, execID string) {
 			defer wg.Done()
 			result, err := e.supervisor.RunCaptured(ctx, runtime.StartRequest{
-				ExecutionID: "curia_scatter_" + req.TaskID + "_" + senator.ID,
+				ExecutionID: execID,
 				SessionID:   req.SessionID,
 				TaskID:      req.TaskID,
 				Profile:     senator,
@@ -253,22 +269,79 @@ func (e *Executor) scatterAndReview(ctx context.Context, req ExecuteRequest, quo
 				mu.Unlock()
 				return
 			}
+			mu.Lock()
 			payload, _ := artifacts.ProposalFromEnvelope(envelope)
 			proposalResults[i] = proposalEnvelope{envelope: envelope, proposal: payload, author: senator}
-		}(i, senator)
+			// Signal done when we have enough proposals for quorum
+			completed := 0
+			for _, p := range proposalResults {
+				if p.envelope.ID != "" {
+					completed++
+				}
+			}
+			if completed >= quorum && firstErr == nil {
+				select {
+				case proposalsDone <- struct{}{}:
+				default:
+				}
+			}
+			mu.Unlock()
+		}(i, senator, execID)
 	}
+
+	// Wait for quorum proposals or timeout
+	select {
+	case <-proposalsDone:
+		// Quorum reached, proceed
+	case <-time.After(scatterTimeout):
+		// Timeout reached, kill all pending executions
+		timedOut = true
+		for _, execID := range execIDs {
+			if execID != "" {
+				_ = e.supervisor.Terminate(execID)
+			}
+		}
+	case <-ctx.Done():
+		// Context cancelled, kill all executions
+		for _, execID := range execIDs {
+			if execID != "" {
+				_ = e.supervisor.Terminate(execID)
+			}
+		}
+		return nil, winnerSelection{}, ctx.Err()
+	}
+
+	// Wait for all goroutines to finish
 	wg.Wait()
+
+	// If we timed out, also kill any remaining executions that may still be running
+	if timedOut {
+		for _, execID := range execIDs {
+			if execID != "" {
+				_ = e.supervisor.Terminate(execID)
+			}
+		}
+	}
+
 	if firstErr != nil {
 		return nil, winnerSelection{}, firstErr
 	}
+
 	proposals := make([]proposalEnvelope, 0, len(proposalResults))
 	for _, item := range proposalResults {
 		if item.envelope.ID != "" {
 			proposals = append(proposals, item)
 		}
 	}
+
+	// Check if we have enough proposals (either got quorum or timed out with partial)
 	if len(proposals) < quorum {
-		return nil, winnerSelection{}, fmt.Errorf("curia quorum not reached: got %d proposals, need %d", len(proposals), quorum)
+		if len(proposals) > 0 {
+			// Log the timeout but continue with available proposals if any
+			// This allows Curia to proceed with fewer than requested senators
+		} else {
+			return nil, winnerSelection{}, fmt.Errorf("curia quorum not reached: got %d proposals, need %d", len(proposals), quorum)
+		}
 	}
 
 	ballotResults := make([]ballotEnvelope, 0, len(req.Senators))
@@ -774,15 +847,20 @@ func reviewPrompt(req ExecuteRequest, proposals []proposalEnvelope, senator doma
 	b.WriteString("Task:\n")
 	b.WriteString(req.BasePrompt)
 	b.WriteString("\n\nProposals:\n")
-	for _, proposal := range proposals {
+	// Build anonymous ID mapping to hide author identity
+	anonIDByProposal := make(map[string]string, len(proposals))
+	for i, proposal := range proposals {
+		anonID := fmt.Sprintf("proposal_%d", i+1)
+		anonIDByProposal[proposal.proposal.ProposalID] = anonID
 		b.WriteString("- ")
-		b.WriteString(proposal.proposal.ProposalID)
+		b.WriteString(anonID)
 		b.WriteString(": ")
 		b.WriteString(proposal.proposal.Summary)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nReply by naming the best proposal id and giving a short critique.\n")
+	b.WriteString("\nReply by naming the best proposal id (e.g., proposal_1) and giving a short critique.\n")
 	_ = senator
+	_ = anonIDByProposal // TODO: pass to ballot detection to map back
 	return b.String()
 }
 

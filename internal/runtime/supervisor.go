@@ -514,6 +514,13 @@ func (s *Supervisor) terminateExecution(execID string) {
 	_ = proc.Kill()
 }
 
+// Terminate kills a running execution by its ID.
+// Returns nil if the execution was not found or already terminated.
+func (s *Supervisor) Terminate(execID string) error {
+	s.terminateExecution(execID)
+	return nil
+}
+
 func (s *Supervisor) analyzeSignal(execID string, req StartRequest, signal policy.StreamSignal) {
 	if s.semantic == nil {
 		return
@@ -582,6 +589,7 @@ func (s *Supervisor) runAttachedPTY(req StartRequest, execID string, command *ex
 
 func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *exec.Cmd) (Result, error) {
 	ensurePTYEnv(command)
+	log.Printf("[DEBUG] runCapturedPTY: command=%s, dir=%s, env=%v", command.Path, command.Dir, command.Env)
 	session, err := s.pty.Start(command)
 	if err != nil {
 		return Result{}, fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)

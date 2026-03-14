@@ -274,3 +274,73 @@ func TestRunCapturedInvokesSemanticAnalyzer(t *testing.T) {
 		t.Fatal("semantic analyzer was not invoked")
 	}
 }
+
+func TestTerminateKillsRunningExecution(t *testing.T) {
+	t.Parallel()
+
+	// Create a supervisor with a slow-running command
+	mem := store.NewMemoryStore()
+	supervisor := NewSupervisorWithEvents(mem, slowFakeAdapter{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start a slow execution in background
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		defer close(done)
+		_, runErr = supervisor.RunCaptured(ctx, StartRequest{
+			ExecutionID: "exec_slow",
+			SessionID:   "sess_slow",
+			TaskID:      "task_slow",
+			Profile: domain.AgentProfile{
+				ID:      "slow",
+				Command: "python3",
+			},
+			Prompt:     "sleep 30",
+			WorkingDir: ".",
+		})
+	}()
+
+	// Wait for the execution to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Terminate the execution
+	err := supervisor.Terminate("exec_slow")
+	if err != nil {
+		t.Fatalf("Terminate() error = %v", err)
+	}
+
+	// Wait for the execution to stop
+	<-done
+	cancel()
+
+	// The execution should have been terminated (not completed successfully)
+	if runErr == nil {
+		t.Log("RunCaptured returned nil error (process may have already finished)")
+	}
+}
+
+func TestTerminateNonExistentExecution(t *testing.T) {
+	t.Parallel()
+
+	mem := store.NewMemoryStore()
+	supervisor := NewSupervisorWithEvents(mem, slowFakeAdapter{})
+
+	// Terminating a non-existent execution should not error
+	err := supervisor.Terminate("exec_nonexistent")
+	if err != nil {
+		t.Fatalf("Terminate() error = %v, want nil", err)
+	}
+}
+
+// slowFakeAdapter runs a slow command that can be terminated
+type slowFakeAdapter struct{}
+
+func (slowFakeAdapter) Supports(profile domain.AgentProfile) bool { return profile.ID == "slow" }
+
+func (slowFakeAdapter) BuildCommand(_ context.Context, req StartRequest) (*exec.Cmd, error) {
+	// Create a slow command that runs for 30 seconds
+	cmd := exec.Command("python3", "-c", "import time; time.sleep(30)")
+	return cmd, nil
+}

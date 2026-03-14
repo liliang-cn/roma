@@ -56,13 +56,17 @@ func NewDispatcherWithControlDir(workDir, controlDir string, supervisor *runtime
 		}
 	}
 	now := time.Now().UTC
+	workspaceRoot := controlDir
+	if workspaceRoot == "" {
+		workspaceRoot = workDir
+	}
 	return &Dispatcher{
 		supervisor: supervisor,
 		artifacts:  artifacts.NewService(),
 		events:     eventStore,
 		lifecycle:  lifecycle,
 		leases:     leases,
-		workspaces: workspacepkg.NewManager(workDir, eventStore),
+		workspaces: workspacepkg.NewManager(workspaceRoot, eventStore),
 		ownerID:    fmt.Sprintf("lease_%d", now().UnixNano()),
 		now:        now,
 	}

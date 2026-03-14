@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/liliang-cn/roma/internal/artifacts"
@@ -347,5 +348,48 @@ func TestReputationStorePersistsReviewerWeight(t *testing.T) {
 	})
 	if weight < 3 {
 		t.Fatalf("effective weight = %d, want >= 3", weight)
+	}
+}
+
+func TestReviewPromptUsesAnonymousProposalIDs(t *testing.T) {
+	t.Parallel()
+
+	req := ExecuteRequest{
+		TaskID:     "test_task",
+		BasePrompt: "Test prompt",
+	}
+	proposals := []proposalEnvelope{
+		{
+			proposal: artifacts.ProposalPayload{
+				ProposalID: "prop_task_senator_1",
+				Summary:    "First proposal",
+			},
+			author: domain.AgentProfile{ID: "senator_1"},
+		},
+		{
+			proposal: artifacts.ProposalPayload{
+				ProposalID: "prop_task_senator_2",
+				Summary:    "Second proposal",
+			},
+			author: domain.AgentProfile{ID: "senator_2"},
+		},
+	}
+	senator := domain.AgentProfile{ID: "senator_3"}
+
+	prompt := reviewPrompt(req, proposals, senator)
+
+	// The prompt should NOT contain the author IDs
+	if strings.Contains(prompt, "senator_1") || strings.Contains(prompt, "senator_2") {
+		t.Error("reviewPrompt should use anonymous IDs, not author IDs")
+	}
+
+	// The prompt should contain anonymous IDs
+	if !strings.Contains(prompt, "proposal_1") || !strings.Contains(prompt, "proposal_2") {
+		t.Error("reviewPrompt should contain anonymous proposal IDs")
+	}
+
+	// The prompt should mention it's anonymous
+	if !strings.Contains(prompt, "anonymous") {
+		t.Error("reviewPrompt should mention anonymous proposals")
 	}
 }
