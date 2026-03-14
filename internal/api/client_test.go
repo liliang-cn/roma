@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/liliang-cn/roma/internal/romapath"
 )
 
 func TestClientFallsBackToGlobalDaemonHome(t *testing.T) {
@@ -40,7 +42,11 @@ func TestClientFallsBackToGlobalDaemonHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal global meta: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(globalHome, "run", "api.json"), raw, 0o644); err != nil {
+	globalMetaPath := romapath.Join(globalHome, "run", "api.json")
+	if err := os.MkdirAll(filepath.Dir(globalMetaPath), 0o755); err != nil {
+		t.Fatalf("mkdir resolved global run dir: %v", err)
+	}
+	if err := os.WriteFile(globalMetaPath, raw, 0o644); err != nil {
 		t.Fatalf("write global meta: %v", err)
 	}
 
@@ -61,5 +67,43 @@ func TestClientFallsBackToGlobalDaemonHome(t *testing.T) {
 	}
 	if _, _, err := client.httpClient(); err != nil {
 		t.Fatalf("httpClient() error = %v", err)
+	}
+}
+
+func TestClientUsesROMAHomeOverrideMetaPath(t *testing.T) {
+	workDir := t.TempDir()
+	overrideHome := t.TempDir()
+	t.Setenv("ROMA_HOME", overrideHome)
+
+	metaPath := romapath.Join(overrideHome, "run", "api.json")
+	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
+		t.Fatalf("mkdir override run dir: %v", err)
+	}
+	meta := map[string]string{
+		"network": "tcp",
+		"address": "override-daemon",
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal override meta: %v", err)
+	}
+	if err := os.WriteFile(metaPath, raw, 0o644); err != nil {
+		t.Fatalf("write override meta: %v", err)
+	}
+
+	previousHealthCheck := healthCheckFn
+	healthCheckFn = func(_ *http.Client, baseURL string) error {
+		if baseURL == "http://override-daemon" {
+			return nil
+		}
+		return fmt.Errorf("unavailable")
+	}
+	defer func() {
+		healthCheckFn = previousHealthCheck
+	}()
+
+	client := NewClient(workDir)
+	if !client.Available() {
+		t.Fatal("Available() = false, want true")
 	}
 }

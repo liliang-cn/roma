@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/liliang-cn/roma/internal/domain"
@@ -176,5 +177,117 @@ func TestRegistryDefaultProfileUsesFirstConfiguredAgent(t *testing.T) {
 	}
 	if profile.ID != "agent-a" {
 		t.Fatalf("DefaultProfile() = %s, want agent-a", profile.ID)
+	}
+}
+
+func TestRegistryAddInfersKnownRuntimeDefaults(t *testing.T) {
+	t.Parallel()
+
+	registry, _ := DefaultRegistry()
+	if err := registry.Add(domain.AgentProfile{
+		ID:           "my-codex",
+		DisplayName:  "My Codex",
+		Command:      "codex",
+		Availability: domain.AgentAvailabilityPlanned,
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	profile, ok := registry.Get("my-codex")
+	if !ok {
+		t.Fatal("Get(my-codex) failed")
+	}
+	if !profile.UsePTY {
+		t.Fatal("UsePTY = false, want true")
+	}
+	if len(profile.Args) == 0 {
+		t.Fatal("Args empty, want inferred defaults")
+	}
+	if got := profile.Args[0]; got != "exec" {
+		t.Fatalf("first arg = %q, want exec", got)
+	}
+}
+
+func TestRegistryLoadUserConfigInfersKnownRuntimeDefaults(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "agents.json")
+	data := `[
+  {
+    "id": "my-gemini",
+    "display_name": "My Gemini",
+    "command": "gemini",
+    "availability": "planned"
+  }
+]`
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	registry, _ := DefaultRegistry()
+	if err := registry.LoadUserConfig(configPath); err != nil {
+		t.Fatalf("LoadUserConfig() error = %v", err)
+	}
+	profile, ok := registry.Get("my-gemini")
+	if !ok {
+		t.Fatal("Get(my-gemini) failed")
+	}
+	if len(profile.Args) == 0 {
+		t.Fatal("Args empty after load, want inferred defaults")
+	}
+	if !profile.UsePTY {
+		t.Fatal("UsePTY = false, want true")
+	}
+}
+
+func TestRegistryAddUserProfileSerializesConcurrentWriters(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "agents.json")
+	registryA, _ := DefaultRegistry()
+	registryB, _ := DefaultRegistry()
+	registryA.SetUserConfigPath(path)
+	registryB.SetUserConfigPath(path)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errCh <- registryA.AddUserProfile(domain.AgentProfile{
+			ID:           "agent-a",
+			DisplayName:  "Agent A",
+			Command:      "agent-a",
+			Availability: domain.AgentAvailabilityPlanned,
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		errCh <- registryB.AddUserProfile(domain.AgentProfile{
+			ID:           "agent-b",
+			DisplayName:  "Agent B",
+			Command:      "agent-b",
+			Availability: domain.AgentAvailabilityPlanned,
+		})
+	}()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("AddUserProfile() error = %v", err)
+		}
+	}
+
+	verify, _ := DefaultRegistry()
+	verify.SetUserConfigPath(path)
+	if err := verify.LoadUserConfig(path); err != nil {
+		t.Fatalf("LoadUserConfig() error = %v", err)
+	}
+	if _, ok := verify.Get("agent-a"); !ok {
+		t.Fatal("agent-a missing after concurrent add")
+	}
+	if _, ok := verify.Get("agent-b"); !ok {
+		t.Fatal("agent-b missing after concurrent add")
 	}
 }

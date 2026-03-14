@@ -275,6 +275,9 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	if err := d.runner.ReloadUserConfig(); err != nil {
+		return fmt.Errorf("reload user agent config: %w", err)
+	}
 
 	req.Status = queue.StatusRunning
 	req.Error = ""

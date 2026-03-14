@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -178,12 +180,25 @@ func (m *Manager) CapturePatch(ctx context.Context, prepared Prepared) ([]byte, 
 	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
 		return nil, fmt.Errorf("workspace patch capture requires git_worktree provider")
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", prepared.EffectiveDir, "diff", "--binary")
-	output, err := cmd.Output()
+	tracked, err := gitOutput(ctx, prepared.EffectiveDir, "diff", "--binary")
 	if err != nil {
 		return nil, fmt.Errorf("git diff --binary: %w", err)
 	}
-	return output, nil
+	untracked, err := gitPathList(ctx, prepared.EffectiveDir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others --exclude-standard: %w", err)
+	}
+
+	var patch bytes.Buffer
+	patch.Write(tracked)
+	for _, path := range untracked {
+		diff, err := gitNoIndexPatch(ctx, prepared.EffectiveDir, path)
+		if err != nil {
+			return nil, err
+		}
+		patch.Write(diff)
+	}
+	return patch.Bytes(), nil
 }
 
 // ChangedPaths returns the currently modified paths inside an isolated worktree.
@@ -191,19 +206,17 @@ func (m *Manager) ChangedPaths(ctx context.Context, prepared Prepared) ([]string
 	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
 		return nil, fmt.Errorf("workspace changed paths require git_worktree provider")
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", prepared.EffectiveDir, "diff", "--name-only")
-	output, err := cmd.Output()
+	tracked, err := gitPathList(ctx, prepared.EffectiveDir, "diff", "--name-only", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("git diff --name-only: %w", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			out = append(out, filepath.Clean(strings.ReplaceAll(line, "\\", "/")))
-		}
+	untracked, err := gitPathList(ctx, prepared.EffectiveDir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others --exclude-standard: %w", err)
 	}
+	out := append(tracked, untracked...)
+	slices.Sort(out)
+	out = slices.Compact(out)
 	return out, nil
 }
 
@@ -509,6 +522,45 @@ func sanitizeFallback(err error) string {
 		return "git_worktree_failed"
 	}
 	return text
+}
+
+func gitOutput(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+func gitPathList(ctx context.Context, dir string, args ...string) ([]string, error) {
+	output, err := gitOutput(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	raw := bytes.Split(output, []byte{0})
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		path := strings.TrimSpace(string(item))
+		if path == "" {
+			continue
+		}
+		out = append(out, filepath.Clean(strings.ReplaceAll(path, "\\", "/")))
+	}
+	return out, nil
+}
+
+func gitNoIndexPatch(ctx context.Context, dir, path string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--binary", "--no-index", "--", "/dev/null", path)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return output, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return output, nil
+	}
+	return nil, fmt.Errorf("git diff --binary --no-index %s: %w (%s)", path, err, strings.TrimSpace(string(output)))
 }
 
 func buildConflictContext(patch string, conflictPaths []string) []ConflictSnippet {

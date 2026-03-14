@@ -347,7 +347,7 @@ func RecommendCuria(req Request, participantCount int) CuriaRecommendation {
 		"billing",
 		"refactor core",
 	} {
-		if strings.Contains(lowered, token) {
+		if promptContainsPositiveIntent(lowered, token) {
 			reasons = append(reasons, "high_risk_change")
 			break
 		}
@@ -552,7 +552,7 @@ func detectProtectedPaths(req Request) []string {
 	lowered := strings.ToLower(req.Prompt)
 	out := make([]string, 0, len(protected))
 	for _, token := range protected {
-		if strings.Contains(lowered, token) && !slices.Contains(out, token) {
+		if promptContainsPositiveIntent(lowered, token) && !slices.Contains(out, token) {
 			out = append(out, token)
 		}
 	}
@@ -565,6 +565,54 @@ func detectProtectedPaths(req Request) []string {
 		}
 	}
 	return out
+}
+
+func promptContainsPositiveIntent(prompt, token string) bool {
+	for _, segment := range promptIntentSegments(prompt) {
+		if !strings.Contains(segment, token) {
+			continue
+		}
+		if segmentContainsAvoidance(segment) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func promptIntentSegments(prompt string) []string {
+	return strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool {
+		switch r {
+		case '\n', '\r', '.', ';':
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func segmentContainsAvoidance(segment string) bool {
+	for _, marker := range []string{
+		"do not",
+		"don't",
+		"avoid",
+		"must not",
+		"should not",
+		"without touching",
+		"without changing",
+		"without modifying",
+		"not touch",
+		"not modify",
+		"not change",
+		"leave ",
+		"skip ",
+		"forbidden",
+	} {
+		if strings.Contains(segment, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchesPath(pattern, path string) bool {

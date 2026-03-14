@@ -183,6 +183,19 @@ func TestRecommendCuriaForProtectedScope(t *testing.T) {
 	}
 }
 
+func TestRecommendCuriaIgnoresAvoidanceLanguage(t *testing.T) {
+	t.Parallel()
+
+	rec := RecommendCuria(Request{
+		Prompt:       "Build a TODO app and do not touch auth, billing, or migrations. Avoid .github/ paths.",
+		WorkingDir:   t.TempDir(),
+		EffectiveDir: t.TempDir(),
+	}, 3)
+	if rec.Upgrade {
+		t.Fatalf("upgrade = true, want false (%#v)", rec)
+	}
+}
+
 func TestClassifyOutputChunk(t *testing.T) {
 	t.Parallel()
 

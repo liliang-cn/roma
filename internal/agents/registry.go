@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/romapath"
@@ -74,6 +75,7 @@ func (r *Registry) LoadUserConfig(path string) error {
 	r.users = make(map[string]domain.AgentProfile, len(profiles))
 	r.userOrder = make([]string, 0, len(profiles))
 	for _, p := range profiles {
+		p = normalizeProfile(p)
 		if err := domain.ValidateAgentProfile(p); err != nil {
 			return fmt.Errorf("validate agent %s: %w", p.ID, err)
 		}
@@ -108,6 +110,16 @@ func (r *Registry) SaveUserConfig() error {
 		return fmt.Errorf("no config path set")
 	}
 
+	return withUserConfigLock(r.path, func() error {
+		return r.saveUserConfigUnlocked()
+	})
+}
+
+func (r *Registry) saveUserConfigUnlocked() error {
+	if r.path == "" {
+		return fmt.Errorf("no config path set")
+	}
+
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
@@ -128,6 +140,77 @@ func (r *Registry) SaveUserConfig() error {
 	return nil
 }
 
+// AddUserProfile performs an atomic read-modify-write update against the user config.
+func (r *Registry) AddUserProfile(profile domain.AgentProfile) error {
+	profile = normalizeProfile(profile)
+	if err := domain.ValidateAgentProfile(profile); err != nil {
+		return err
+	}
+	return r.mutateUserConfig(func() error {
+		if _, exists := r.users[profile.ID]; !exists {
+			r.userOrder = append(r.userOrder, profile.ID)
+		}
+		r.users[profile.ID] = profile
+		return nil
+	})
+}
+
+// RemoveUserProfile performs an atomic read-modify-write removal against the user config.
+func (r *Registry) RemoveUserProfile(id string) error {
+	return r.mutateUserConfig(func() error {
+		if _, exists := r.users[id]; !exists {
+			return fmt.Errorf("agent %s not found", id)
+		}
+		delete(r.users, id)
+		for i, item := range r.userOrder {
+			if item == id {
+				r.userOrder = append(r.userOrder[:i], r.userOrder[i+1:]...)
+				break
+			}
+		}
+		return nil
+	})
+}
+
+func (r *Registry) mutateUserConfig(mutate func() error) error {
+	if r == nil {
+		return fmt.Errorf("registry is nil")
+	}
+	if r.path == "" {
+		return fmt.Errorf("no config path set")
+	}
+	return withUserConfigLock(r.path, func() error {
+		if err := r.LoadUserConfig(r.path); err != nil {
+			return err
+		}
+		if err := mutate(); err != nil {
+			return err
+		}
+		return r.saveUserConfigUnlocked()
+	})
+}
+
+func withUserConfigLock(path string, fn func() error) error {
+	lockPath := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := os.Mkdir(lockPath, 0o755); err == nil {
+			break
+		} else if !os.IsExist(err) {
+			return fmt.Errorf("acquire user config lock: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("acquire user config lock: timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer os.RemoveAll(lockPath)
+	return fn()
+}
+
 // Register is kept for compatibility but adds to builtins.
 func (r *Registry) Register(profile domain.AgentProfile) error {
 	if err := domain.ValidateAgentProfile(profile); err != nil {
@@ -142,6 +225,7 @@ func (r *Registry) Register(profile domain.AgentProfile) error {
 
 // Add adds a user-defined profile.
 func (r *Registry) Add(profile domain.AgentProfile) error {
+	profile = normalizeProfile(profile)
 	if err := domain.ValidateAgentProfile(profile); err != nil {
 		return err
 	}
@@ -227,4 +311,30 @@ func matchesProfile(profile domain.AgentProfile, needle string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeProfile(profile domain.AgentProfile) domain.AgentProfile {
+	command := strings.ToLower(filepath.Base(strings.TrimSpace(profile.Command)))
+	if len(profile.HealthcheckArgs) == 0 {
+		profile.HealthcheckArgs = []string{"--help"}
+	}
+	if len(profile.Args) > 0 || command == "" {
+		return profile
+	}
+
+	switch command {
+	case "codex":
+		profile.Args = []string{"exec", "--full-auto", "--skip-git-repo-check", "--ephemeral", "-C", "{cwd}", "{prompt}"}
+		profile.UsePTY = true
+	case "gemini":
+		profile.Args = []string{"-p", "{prompt}", "--approval-mode", "auto_edit"}
+		profile.UsePTY = true
+	case "copilot":
+		profile.Args = []string{"-p", "{prompt}", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "-s"}
+		profile.UsePTY = true
+	case "claude":
+		profile.Args = []string{"-p", "{prompt}", "--permission-mode", "acceptEdits"}
+		profile.UsePTY = true
+	}
+	return profile
 }

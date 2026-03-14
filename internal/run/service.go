@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,6 +66,18 @@ func NewService(registry *agents.Registry) *Service {
 		supervisor: runtime.DefaultSupervisor(),
 		tasks:      nil,
 	}
+}
+
+// ReloadUserConfig refreshes the runner registry from the configured user agent config path.
+func (s *Service) ReloadUserConfig() error {
+	if s == nil || s.registry == nil {
+		return nil
+	}
+	path := strings.TrimSpace(s.registry.UserConfigPath())
+	if path == "" {
+		return nil
+	}
+	return s.registry.LoadUserConfig(path)
 }
 
 // SetControlDir sets the persisted ROMA control-plane directory.
@@ -635,7 +648,7 @@ func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []do
 	lines := []string{
 		fmt.Sprintf("You are the coordinating starter agent (%s).", starter.DisplayName),
 		"First produce a shared bootstrap plan for the rest of the agents.",
-		"Inspect the delegate agents' configured commands/args and infer which auto-run, YOLO, approval-bypass, or autopilot modes they support.",
+		"Use the known delegate profile summary below instead of probing CLI help, config files, or runtime capabilities yourself.",
 		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
 	}
 	if len(delegates) > 0 {
@@ -644,8 +657,35 @@ func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []do
 			names = append(names, fmt.Sprintf("%s (%s)", delegate.DisplayName, delegate.ID))
 		}
 		lines = append(lines, "Delegate agents: "+strings.Join(names, ", "))
+		lines = append(lines, "Known delegate profiles:")
+		for _, delegate := range delegates {
+			lines = append(lines, "- "+delegateAutomationSummary(delegate))
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func delegateAutomationSummary(profile domain.AgentProfile) string {
+	parts := []string{fmt.Sprintf("%s (%s)", profile.DisplayName, profile.ID)}
+	if profile.Command != "" {
+		parts = append(parts, "command="+filepath.Base(profile.Command))
+	}
+	if len(profile.Capabilities) > 0 {
+		parts = append(parts, "capabilities="+strings.Join(profile.Capabilities, ","))
+	}
+	if len(profile.Args) > 0 {
+		parts = append(parts, "args="+strings.Join(profile.Args, " "))
+	}
+	if profile.UsePTY {
+		parts = append(parts, "pty=true")
+	}
+	if profile.SupportsMCP {
+		parts = append(parts, "mcp=true")
+	}
+	if profile.SupportsJSONOutput {
+		parts = append(parts, "json=true")
+	}
+	return strings.Join(parts, " | ")
 }
 
 func (s *Service) controlRoot(workDir string) string {

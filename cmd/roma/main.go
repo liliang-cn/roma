@@ -206,10 +206,7 @@ func runAgents(ctx context.Context, registry *agents.Registry, args []string) er
 				return fmt.Errorf("unknown argument %q", args[i])
 			}
 		}
-		if err := registry.Add(profile); err != nil {
-			return err
-		}
-		if err := registry.SaveUserConfig(); err != nil {
+		if err := registry.AddUserProfile(profile); err != nil {
 			return err
 		}
 		fmt.Printf("agent %s added to %s\n", profile.ID, registry.UserConfigPath())
@@ -219,10 +216,7 @@ func runAgents(ctx context.Context, registry *agents.Registry, args []string) er
 		if len(args) < 2 {
 			return fmt.Errorf("usage: roma agent remove <id>")
 		}
-		if err := registry.Remove(args[1]); err != nil {
-			return err
-		}
-		if err := registry.SaveUserConfig(); err != nil {
+		if err := registry.RemoveUserProfile(args[1]); err != nil {
 			return err
 		}
 		fmt.Printf("agent %s removed from %s\n", args[1], registry.UserConfigPath())

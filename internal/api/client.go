@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -812,7 +811,7 @@ func candidateMetaPaths(workDir string) []string {
 		if root == "" {
 			return
 		}
-		addPath(filepath.Join(root, "run", "api.json"))
+		addPath(romapath.Join(root, "run", "api.json"))
 	}
 	if override := daemonHomeOverride(); override != "" {
 		addStateRoot(override)

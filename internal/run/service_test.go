@@ -205,8 +205,11 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 			t.Fatalf("delegate %s reviewer = %q, want starter", assignment.Node.ID, assignment.SemanticReviewer.ID)
 		}
 	}
-	if !strings.Contains(assignments[0].PromptHint, "YOLO") && !strings.Contains(assignments[0].PromptHint, "auto-run") {
-		t.Fatalf("bootstrap prompt hint = %q, want automation guidance", assignments[0].PromptHint)
+	if strings.Contains(strings.ToLower(assignments[0].PromptHint), "inspect the delegate agents") {
+		t.Fatalf("bootstrap prompt hint = %q, want no runtime delegate inspection directive", assignments[0].PromptHint)
+	}
+	if !strings.Contains(assignments[0].PromptHint, "Known delegate profiles") {
+		t.Fatalf("bootstrap prompt hint = %q, want embedded delegate summary", assignments[0].PromptHint)
 	}
 }
 
@@ -251,6 +254,40 @@ func TestMaybePromoteOrchestratedToCuriaForProtectedScope(t *testing.T) {
 	}
 	if len(reasons) == 0 {
 		t.Fatal("reasons = empty, want auto-curia reasons")
+	}
+}
+
+func TestMaybePromoteOrchestratedToCuriaIgnoresAvoidanceConstraints(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "my-claude", DisplayName: "My Claude", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	assignments, reasons := svc.maybePromoteOrchestratedToCuria(
+		context.Background(),
+		"Build a TODO app. Do not touch auth, billing, or migrations. Avoid .github/ paths.",
+		t.TempDir(),
+		"task_1",
+		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+		[]domain.AgentProfile{
+			{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+			{ID: "my-claude", DisplayName: "My Claude", Command: "sh", Availability: domain.AgentAvailabilityAvailable},
+		},
+		true,
+		4,
+	)
+	if len(assignments) != 0 {
+		t.Fatalf("assignment count = %d, want 0", len(assignments))
+	}
+	if len(reasons) != 0 {
+		t.Fatalf("reasons = %#v, want none", reasons)
 	}
 }
 

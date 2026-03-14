@@ -196,6 +196,59 @@ func TestManagerCapturePatchAndMergeBack(t *testing.T) {
 	}
 }
 
+func TestManagerCapturePatchAndMergeBackIncludesUntrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	manager := NewManager(root, store.NewMemoryStore())
+	prepared, err := manager.Prepare(context.Background(), "sess_merge_new", "task_merge_new", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+
+	newPath := filepath.Join(prepared.EffectiveDir, "docs", "note.txt")
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(newPath, []byte("new file\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	patch, err := manager.CapturePatch(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("CapturePatch() error = %v", err)
+	}
+	if !strings.Contains(string(patch), "note.txt") {
+		t.Fatalf("patch = %q, want new file path", string(patch))
+	}
+
+	paths, err := manager.ChangedPaths(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("ChangedPaths() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != filepath.Clean("docs/note.txt") {
+		t.Fatalf("paths = %#v, want [docs/note.txt]", paths)
+	}
+
+	if err := manager.MergeBack(context.Background(), prepared); err != nil {
+		t.Fatalf("MergeBack() error = %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "docs", "note.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "new file" {
+		t.Fatalf("merged content = %q, want new file", strings.TrimSpace(string(content)))
+	}
+
+	if err := manager.RollbackMerge(context.Background(), prepared); err != nil {
+		t.Fatalf("RollbackMerge() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected merged new file removed on rollback, stat err = %v", err)
+	}
+}
+
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	runGitCommand(t, dir, "init")

@@ -959,6 +959,75 @@ func TestServerWorkspaceMerge(t *testing.T) {
 	}
 }
 
+func TestServerWorkspaceMergeIncludesUntrackedFiles(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initAPIGitRepo(t, workDir)
+	queueStore := queue.NewStore(workDir)
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	server := NewServer(workDir, queueStore, sessionStore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			t.Skipf("local listeners unavailable in this environment: %v", err)
+		}
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := newTestClient(t, workDir)
+	deadline := time.Now().Add(2 * time.Second)
+	for !client.Available() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_merge_untracked",
+		TaskID:     "task_merge_untracked",
+		Prompt:     "workspace merge untracked",
+		Starter:    "my-codex",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save session error = %v", err)
+	}
+
+	manager := workspacepkg.NewManager(workDir, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_merge_untracked", "task_merge_untracked", workDir, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	target := filepath.Join(prepared.EffectiveDir, "docs", "note.txt")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte("new file via api\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	merged, err := client.WorkspaceMerge(context.Background(), "sess_merge_untracked", "task_merge_untracked")
+	if err != nil {
+		t.Fatalf("WorkspaceMerge() error = %v", err)
+	}
+	if merged.Status != "merged" {
+		t.Fatalf("status = %q, want merged", merged.Status)
+	}
+	content, err := os.ReadFile(filepath.Join(workDir, "docs", "note.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "new file via api" {
+		t.Fatalf("base docs/note.txt = %q, want new file via api", strings.TrimSpace(string(content)))
+	}
+}
+
 func TestServerSessionInspectIncludesWorkspaces(t *testing.T) {
 	t.Parallel()
 
