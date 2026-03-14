@@ -70,6 +70,30 @@ func TestBuildDelegationPrompt(t *testing.T) {
 	}
 }
 
+func TestEnsurePTYEnvAddsTerminalDefaults(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("echo", "hello")
+	cmd.Env = []string{"PATH=/usr/bin"}
+	ensurePTYEnv(cmd)
+	if !hasEnvKey(cmd.Env, "TERM") {
+		t.Fatal("TERM not injected")
+	}
+	if !hasEnvKey(cmd.Env, "COLORTERM") {
+		t.Fatal("COLORTERM not injected")
+	}
+}
+
+func TestEnsureCapturedInputInjectsReader(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("echo", "hello")
+	ensureCapturedInput(cmd)
+	if cmd.Stdin == nil {
+		t.Fatal("Stdin = nil, want injected reader")
+	}
+}
+
 type continuousFakeAdapter struct{}
 
 func (continuousFakeAdapter) Supports(domain.AgentProfile) bool { return true }

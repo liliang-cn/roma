@@ -213,6 +213,7 @@ func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (R
 		}
 		command.Dir = req.WorkingDir
 	}
+	ensureCapturedInput(command)
 
 	stdoutPipe, err := command.StdoutPipe()
 	if err != nil {
@@ -544,6 +545,7 @@ func (s *Supervisor) shouldUsePTY(adapter Adapter, profile domain.AgentProfile) 
 }
 
 func (s *Supervisor) runAttachedPTY(req StartRequest, execID string, command *exec.Cmd) error {
+	ensurePTYEnv(command)
 	session, err := s.pty.Start(command)
 	if err != nil {
 		return fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)
@@ -579,6 +581,7 @@ func (s *Supervisor) runAttachedPTY(req StartRequest, execID string, command *ex
 }
 
 func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *exec.Cmd) (Result, error) {
+	ensurePTYEnv(command)
 	session, err := s.pty.Start(command)
 	if err != nil {
 		return Result{}, fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)
@@ -684,6 +687,40 @@ func buildContinuousPrompt(originalPrompt, previousOutput string, round int) str
 		b.WriteString(previousOutput)
 	}
 	return b.String()
+}
+
+func ensurePTYEnv(command *exec.Cmd) {
+	if command == nil {
+		return
+	}
+	env := command.Env
+	if len(env) == 0 {
+		env = os.Environ()
+	}
+	if !hasEnvKey(env, "TERM") {
+		env = append(env, "TERM=xterm-256color")
+	}
+	if !hasEnvKey(env, "COLORTERM") {
+		env = append(env, "COLORTERM=truecolor")
+	}
+	command.Env = env
+}
+
+func ensureCapturedInput(command *exec.Cmd) {
+	if command == nil || command.Stdin != nil {
+		return
+	}
+	command.Stdin = strings.NewReader("")
+}
+
+func hasEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendRoundOutput(dst *strings.Builder, round int, output string) {
