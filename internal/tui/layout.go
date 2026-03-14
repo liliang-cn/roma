@@ -92,20 +92,43 @@ func (m *model) syncViewports() {
 	m.resizeViewports()
 	m.syncCommandList()
 	content := m.renderMain()
-	if content == m.mainContent {
+	if content == m.mainContent && m.detailViewport.YOffset > 0 {
+		// Content unchanged but user has scrolled - preserve position
+		m.detailViewport.YOffset = clampOffset(m.detailViewport.YOffset, m.detailViewport.TotalLineCount(), m.detailViewport.Height)
 		return
 	}
-	offset := m.detailViewport.YOffset
+	oldOffset := m.detailViewport.YOffset
 	m.detailViewport.SetContent(content)
 	m.mainContent = content
-	maxOffset := max(0, m.detailViewport.TotalLineCount()-m.detailViewport.Height)
+
+	// Only auto-scroll to bottom on new content if user was already near bottom
+	oldTotal := m.detailViewport.TotalLineCount() + m.detailViewport.Height
+	wasNearBottom := oldOffset >= oldTotal-5
+
+	newTotal := m.detailViewport.TotalLineCount()
+	newMaxOffset := max(0, newTotal-m.detailViewport.Height)
+
+	if wasNearBottom && newMaxOffset > 0 {
+		// User was near bottom, auto-scroll to show new content
+		m.detailViewport.SetYOffset(newMaxOffset)
+	} else {
+		// Preserve scroll position or clamp to valid range
+		m.detailViewport.SetYOffset(clampOffset(oldOffset, newTotal, m.detailViewport.Height))
+	}
+}
+
+func clampOffset(offset, total, height int) int {
+	if total <= height {
+		return 0
+	}
+	maxOffset := total - height
 	if offset > maxOffset {
-		offset = maxOffset
+		return maxOffset
 	}
 	if offset < 0 {
-		offset = 0
+		return 0
 	}
-	m.detailViewport.SetYOffset(offset)
+	return offset
 }
 
 func (m *model) syncJobList() {

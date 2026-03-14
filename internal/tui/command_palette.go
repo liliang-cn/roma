@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -59,11 +60,38 @@ func filterCommandItems(query string) []list.Item {
 	query = strings.ToLower(strings.TrimSpace(query))
 	items := make([]list.Item, 0, len(commandCatalog))
 	for _, item := range commandCatalog {
-		if query == "" ||
-			strings.Contains(strings.ToLower(item.title), query) ||
-			strings.Contains(strings.ToLower(item.description), query) {
+		title := strings.ToLower(item.title)
+		desc := strings.ToLower(item.description)
+		insert := strings.ToLower(item.insert)
+		if query == "" {
+			items = append(items, item)
+			continue
+		}
+		// Exact prefix match gets highest priority
+		if strings.HasPrefix(title, query) || strings.HasPrefix(insert, query) {
+			items = append(items, item)
+			continue
+		}
+		// Contains match
+		if strings.Contains(title, query) || strings.Contains(insert, query) || strings.Contains(desc, query) {
 			items = append(items, item)
 		}
+	}
+	// Re-sort to put prefix matches first
+	if query != "" {
+		slices.SortFunc(items, func(a, b list.Item) int {
+			ai := a.(commandItem)
+			bi := b.(commandItem)
+			aiPref := strings.HasPrefix(strings.ToLower(ai.insert), query)
+			biPref := strings.HasPrefix(strings.ToLower(bi.insert), query)
+			if aiPref && !biPref {
+				return -1
+			}
+			if !aiPref && biPref {
+				return 1
+			}
+			return strings.Compare(ai.insert, bi.insert)
+		})
 	}
 	return items
 }

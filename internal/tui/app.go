@@ -122,7 +122,10 @@ func Run(ctx context.Context, opts Options) error {
 		themeName: "light",
 	}
 	m.refreshTheme()
-	m.detailViewport.MouseWheelEnabled = true
+
+	// Adjust viewport settings based on terminal environment
+	isVTE := runningInVTE()
+	m.detailViewport.MouseWheelEnabled = !isVTE // Disable mouse wheel in VTE for stability
 	m.detailViewport.MouseWheelDelta = 3
 	if len(profiles) > 0 {
 		m.selectedAgent = profiles[0].ID
