@@ -222,6 +222,15 @@ func (m *Manager) ChangedPaths(ctx context.Context, prepared Prepared) ([]string
 
 // MergeBack applies a captured worktree patch into the base repository and marks the workspace merged.
 func (m *Manager) MergeBack(ctx context.Context, prepared Prepared) error {
+	return m.mergeBack(ctx, prepared, events.ActorTypeHuman)
+}
+
+// MergeBackAs applies a captured worktree patch and records the supplied actor type.
+func (m *Manager) MergeBackAs(ctx context.Context, prepared Prepared, actor events.ActorType) error {
+	return m.mergeBack(ctx, prepared, actor)
+}
+
+func (m *Manager) mergeBack(ctx context.Context, prepared Prepared, actor events.ActorType) error {
 	if prepared.Provider != "git_worktree" || prepared.EffectiveDir == "" {
 		return fmt.Errorf("workspace merge requires git_worktree provider")
 	}
@@ -254,7 +263,7 @@ func (m *Manager) MergeBack(ctx context.Context, prepared Prepared) error {
 			SessionID:  prepared.SessionID,
 			TaskID:     prepared.TaskID,
 			Type:       events.TypeWorkspaceReleased,
-			ActorType:  events.ActorTypeHuman,
+			ActorType:  actor,
 			OccurredAt: prepared.MergedAt,
 			ReasonCode: "merged",
 			Payload: map[string]any{

@@ -47,6 +47,42 @@ func TestBuildReport(t *testing.T) {
 	}
 }
 
+func TestBuildReportParsesMergeBackRequest(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	envelope, err := svc.BuildReport(context.Background(), BuildReportRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_1",
+		RunID:     "run_merge",
+		Agent: domain.AgentProfile{
+			ID:          "codex-cli",
+			DisplayName: "Codex CLI",
+		},
+		Result: "success",
+		Output: "ROMA_MERGE_BACK: direct_merge | ready to merge\nROMA_MERGE_FILE: examples/demo.txt\nROMA_MERGE_FILE: internal/demo.go\n",
+	})
+	if err != nil {
+		t.Fatalf("BuildReport() error = %v", err)
+	}
+	request, ok := MergeBackRequestFromEnvelope(envelope)
+	if !ok {
+		t.Fatal("MergeBackRequestFromEnvelope() = false")
+	}
+	if request.RecommendedMode != MergeBackModeDirectMerge {
+		t.Fatalf("mode = %q, want direct_merge", request.RecommendedMode)
+	}
+	if request.WorkspaceSessionID != "sess_1" || request.WorkspaceTaskID != "task_1" {
+		t.Fatalf("workspace ids = %#v, want sess_1/task_1", request)
+	}
+	if len(request.ChangedFiles) != 2 {
+		t.Fatalf("changed files = %#v, want 2 entries", request.ChangedFiles)
+	}
+	if request.Reason != "ready to merge" {
+		t.Fatalf("reason = %q, want ready to merge", request.Reason)
+	}
+}
+
 func TestBuildCuriaArtifacts(t *testing.T) {
 	t.Parallel()
 

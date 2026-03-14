@@ -224,6 +224,7 @@ func (s *Service) RunGraphWithResult(ctx context.Context, req GraphRequest, stdo
 			}
 		}
 	}
+	s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
 
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
 	record.UpdatedAt = time.Now().UTC()

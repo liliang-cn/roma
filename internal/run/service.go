@@ -21,6 +21,7 @@ import (
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/store"
 	"github.com/liliang-cn/roma/internal/taskstore"
+	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
 // Request describes a user-triggered run.
@@ -272,6 +273,7 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 			}
 		}
 	}
+	s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
 	record.Status = "succeeded"
 	record.UpdatedAt = time.Now().UTC()
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
@@ -375,6 +377,7 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 			}
 		}
 	}
+	s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
 	writeRelayResult(stdout, fullAssignments, execResult)
 
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
@@ -686,6 +689,100 @@ func delegateAutomationSummary(profile domain.AgentProfile) string {
 		parts = append(parts, "json=true")
 	}
 	return strings.Join(parts, " | ")
+}
+
+func (s *Service) handleMergeBackRequests(ctx context.Context, workDir string, items []domain.ArtifactEnvelope) {
+	if strings.TrimSpace(workDir) == "" {
+		return
+	}
+	manager := workspacepkg.NewManager(workDir, s.events)
+	for _, envelope := range items {
+		request, ok := artifacts.MergeBackRequestFromEnvelope(envelope)
+		if !ok {
+			continue
+		}
+		sessionID := request.WorkspaceSessionID
+		if strings.TrimSpace(sessionID) == "" {
+			sessionID = envelope.SessionID
+		}
+		taskID := request.WorkspaceTaskID
+		if strings.TrimSpace(taskID) == "" {
+			taskID = envelope.TaskID
+		}
+		s.appendEvent(ctx, events.Record{
+			ID:         fmt.Sprintf("evt_%s_%s_merge_back_requested", sessionID, taskID),
+			SessionID:  sessionID,
+			TaskID:     taskID,
+			Type:       events.TypeMergeBackRequested,
+			ActorType:  events.ActorTypeSystem,
+			OccurredAt: time.Now().UTC(),
+			ReasonCode: string(request.RecommendedMode),
+			Payload: map[string]any{
+				"source_artifact_id":      envelope.ID,
+				"source_agent_id":         envelope.Producer.AgentID,
+				"recommended_mode":        request.RecommendedMode,
+				"reason":                  request.Reason,
+				"requested_changed_files": request.ChangedFiles,
+			},
+		})
+		if request.RecommendedMode != artifacts.MergeBackModeDirectMerge {
+			continue
+		}
+		prepared, err := manager.Get(ctx, sessionID, taskID)
+		if err != nil {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "workspace_not_found", request, nil, err)
+			continue
+		}
+		changedPaths, err := manager.ChangedPaths(ctx, prepared)
+		if err != nil {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "changed_paths_error", request, nil, err)
+			continue
+		}
+		if len(changedPaths) == 0 {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "no_changed_files", request, nil, nil)
+			continue
+		}
+		decision := policy.EvaluatePathAction(policy.ActionPlanApply, changedPaths, false, "")
+		if decision.Kind == policy.DecisionBlock {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, decision.Reason, request, changedPaths, nil)
+			continue
+		}
+		preview, err := manager.PreviewMerge(ctx, prepared)
+		if err != nil {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "preview_error", request, changedPaths, err)
+			continue
+		}
+		if !preview.CanApply || preview.Conflict {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "merge_conflict", request, changedPaths, nil)
+			continue
+		}
+		if err := manager.MergeBackAs(ctx, prepared, events.ActorTypeSystem); err != nil {
+			s.appendMergeBackRejected(ctx, sessionID, taskID, "merge_back_failed", request, changedPaths, err)
+			continue
+		}
+	}
+}
+
+func (s *Service) appendMergeBackRejected(ctx context.Context, sessionID, taskID, reason string, request artifacts.MergeBackRequest, changed []string, err error) {
+	payload := map[string]any{
+		"recommended_mode":        request.RecommendedMode,
+		"reason":                  request.Reason,
+		"requested_changed_files": request.ChangedFiles,
+		"actual_changed_files":    changed,
+	}
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	s.appendEvent(ctx, events.Record{
+		ID:         fmt.Sprintf("evt_%s_%s_merge_back_rejected_%d", sessionID, taskID, time.Now().UTC().UnixNano()),
+		SessionID:  sessionID,
+		TaskID:     taskID,
+		Type:       events.TypeMergeBackRejected,
+		ActorType:  events.ActorTypeSystem,
+		OccurredAt: time.Now().UTC(),
+		ReasonCode: reason,
+		Payload:    payload,
+	})
 }
 
 func (s *Service) controlRoot(workDir string) string {

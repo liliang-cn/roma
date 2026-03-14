@@ -21,6 +21,14 @@ const (
 	FinalAnswerPayloadSchema = "roma/final_answer/v1"
 )
 
+type MergeBackMode string
+
+const (
+	MergeBackModeDirectMerge     MergeBackMode = "direct_merge"
+	MergeBackModeRequireVote     MergeBackMode = "require_vote"
+	MergeBackModeRequireApproval MergeBackMode = "require_approval"
+)
+
 // ReportPayload is the minimal structured handoff payload used by the current orchestrator.
 type ReportPayload struct {
 	ReportID         string            `json:"report_id"`
@@ -29,9 +37,19 @@ type ReportPayload struct {
 	Highlights       []string          `json:"highlights,omitempty"`
 	OpenIssues       []string          `json:"open_issues,omitempty"`
 	FollowUpRequests []FollowUpRequest `json:"follow_up_requests,omitempty"`
+	MergeBackRequest *MergeBackRequest `json:"merge_back_request,omitempty"`
 	RawOutput        string            `json:"raw_output,omitempty"`
 	SourceAgentID    string            `json:"source_agent_id"`
 	SourceAgentName  string            `json:"source_agent_name"`
+}
+
+// MergeBackRequest captures an agent request for ROMA to evaluate and merge a workspace back.
+type MergeBackRequest struct {
+	WorkspaceSessionID string        `json:"workspace_session_id"`
+	WorkspaceTaskID    string        `json:"workspace_task_id"`
+	ChangedFiles       []string      `json:"changed_files,omitempty"`
+	Reason             string        `json:"reason,omitempty"`
+	RecommendedMode    MergeBackMode `json:"recommended_mode"`
 }
 
 // SemanticReportPayload is the structured interpretation emitted by a classifier agent.
@@ -145,6 +163,7 @@ func (s *Service) BuildReport(ctx context.Context, req BuildReportRequest) (doma
 		SourceAgentID:    req.Agent.ID,
 		SourceAgentName:  req.Agent.DisplayName,
 	}
+	payload.MergeBackRequest = parseMergeBackRequest(mergeOutput(req.Output, req.Stderr), req.SessionID, req.TaskID)
 
 	envelope := domain.ArtifactEnvelope{
 		ID:            "art_" + req.RunID,
@@ -460,6 +479,71 @@ func parseFollowUpRequests(output string) []FollowUpRequest {
 				Instruction: instruction,
 			})
 		}
+	}
+	return out
+}
+
+func parseMergeBackRequest(output, sessionID, taskID string) *MergeBackRequest {
+	lines := strings.Split(output, "\n")
+	request := &MergeBackRequest{
+		WorkspaceSessionID: sessionID,
+		WorkspaceTaskID:    taskID,
+	}
+	for _, line := range lines {
+		line = trimLine(line)
+		switch {
+		case strings.HasPrefix(line, "ROMA_MERGE_BACK:"):
+			body := trimLine(strings.TrimPrefix(line, "ROMA_MERGE_BACK:"))
+			parts := strings.SplitN(body, "|", 2)
+			mode := MergeBackMode(trimLine(parts[0]))
+			switch mode {
+			case MergeBackModeDirectMerge, MergeBackModeRequireVote, MergeBackModeRequireApproval:
+				request.RecommendedMode = mode
+			default:
+				continue
+			}
+			if len(parts) == 2 {
+				request.Reason = trimLine(parts[1])
+			}
+		case strings.HasPrefix(line, "ROMA_MERGE_FILE:"):
+			path := trimLine(strings.TrimPrefix(line, "ROMA_MERGE_FILE:"))
+			if path != "" {
+				request.ChangedFiles = append(request.ChangedFiles, path)
+			}
+		}
+	}
+	if request.RecommendedMode == "" {
+		return nil
+	}
+	request.ChangedFiles = uniqueStrings(request.ChangedFiles)
+	return request
+}
+
+// MergeBackRequestFromEnvelope extracts a merge-back request from a report envelope.
+func MergeBackRequestFromEnvelope(envelope domain.ArtifactEnvelope) (MergeBackRequest, bool) {
+	report, ok := reportFromEnvelope(envelope)
+	if !ok || report.MergeBackRequest == nil {
+		return MergeBackRequest{}, false
+	}
+	return *report.MergeBackRequest, true
+}
+
+func uniqueStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = trimLine(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
 	}
 	return out
 }

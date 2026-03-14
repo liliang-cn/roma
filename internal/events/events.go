@@ -31,6 +31,8 @@ const (
 	TypeWorkspacePrepared           Type = "WorkspacePrepared"
 	TypeWorkspaceReleased           Type = "WorkspaceReleased"
 	TypeWorkspaceReclaimed          Type = "WorkspaceReclaimed"
+	TypeMergeBackRequested          Type = "MergeBackRequested"
+	TypeMergeBackRejected           Type = "MergeBackRejected"
 	TypePlanApplied                 Type = "PlanApplied"
 	TypePlanRolledBack              Type = "PlanRolledBack"
 	TypePlanApplyRejected           Type = "PlanApplyRejected"

@@ -2,6 +2,9 @@ package run
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +15,7 @@ import (
 	"github.com/liliang-cn/roma/internal/runtime"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/taskstore"
+	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
 func TestRunRejectsUnknownAgent(t *testing.T) {
@@ -327,5 +331,120 @@ func TestMaybePromoteGraphAssignmentsToCuria(t *testing.T) {
 	}
 	if len(reasons) != 1 {
 		t.Fatalf("reasons = %#v, want one promotion reason", reasons)
+	}
+}
+
+func TestRunDirectAutoMergeBackRequest(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initRunGitRepo(t, workDir)
+	registry, err := agents.NewRegistry(domain.AgentProfile{
+		ID:          "auto-merge",
+		DisplayName: "Auto Merge",
+		Command:     "sh",
+		Args: []string{
+			"-lc",
+			"mkdir -p examples/todo-webapp && printf 'auto merge\\n' > examples/todo-webapp/auto-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: examples/todo-webapp/auto-merge.txt\\n'",
+		},
+		Availability: domain.AgentAvailabilityAvailable,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "auto merge probe",
+		StarterAgent: "auto-merge",
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+
+	manager := workspacepkg.NewManager(workDir, nil)
+	prepared, err := manager.Get(context.Background(), result.SessionID, result.TaskID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if prepared.Status != "merged" {
+		t.Fatalf("workspace status = %q, want merged", prepared.Status)
+	}
+	content, err := os.ReadFile(filepath.Join(workDir, "examples", "todo-webapp", "auto-merge.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "auto merge" {
+		t.Fatalf("content = %q, want auto merge", strings.TrimSpace(string(content)))
+	}
+}
+
+func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initRunGitRepo(t, workDir)
+	registry, err := agents.NewRegistry(domain.AgentProfile{
+		ID:          "vote-merge",
+		DisplayName: "Vote Merge",
+		Command:     "sh",
+		Args: []string{
+			"-lc",
+			"mkdir -p examples/todo-webapp && printf 'vote merge\\n' > examples/todo-webapp/vote-merge.txt && printf 'ROMA_MERGE_BACK: require_vote | let Curia decide\\nROMA_MERGE_FILE: examples/todo-webapp/vote-merge.txt\\n'",
+		},
+		Availability: domain.AgentAvailabilityAvailable,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "vote merge probe",
+		StarterAgent: "vote-merge",
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+
+	manager := workspacepkg.NewManager(workDir, nil)
+	prepared, err := manager.Get(context.Background(), result.SessionID, result.TaskID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if prepared.Status != "released" {
+		t.Fatalf("workspace status = %q, want released", prepared.Status)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "examples", "todo-webapp", "vote-merge.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected base file absent before ROMA merge, stat err = %v", err)
+	}
+}
+
+func initRunGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runGitCommand(t, dir, "init")
+	runGitCommand(t, dir, "config", "user.email", "roma@example.com")
+	runGitCommand(t, dir, "config", "user.name", "ROMA")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("roma\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runGitCommand(t, dir, "add", "README.md")
+	runGitCommand(t, dir, "commit", "-m", "init")
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s error = %v (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 }
