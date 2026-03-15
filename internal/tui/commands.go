@@ -65,6 +65,19 @@ func (m model) commandCmd(line string) tea.Cmd {
 		return func() tea.Msg {
 			return commandMsg{text: fmt.Sprintf("queue=%d sessions=%d artifacts=%d events=%d", m.status.QueueItems, m.status.Sessions, m.status.Artifacts, m.status.Events)}
 		}
+	case "jobs":
+		if len(m.queue) == 0 {
+			return func() tea.Msg { return commandMsg{text: "no jobs"} }
+		}
+		var lines []string
+		for i, item := range m.queue {
+			if i >= 10 {
+				break
+			}
+			summary := compactQueueSummary(item)
+			lines = append(lines, fmt.Sprintf("%s %s %s", item.Status, item.ID, summary))
+		}
+		return func() tea.Msg { return commandMsg{text: strings.Join(lines, "\n")} }
 	case "theme":
 		if len(cmd.args) == 0 {
 			return func() tea.Msg { return commandMsg{text: "theme is " + m.themeName} }

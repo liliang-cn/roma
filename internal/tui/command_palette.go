@@ -27,6 +27,7 @@ func (i commandItem) FilterValue() string { return i.title + " " + i.description
 var commandCatalog = []commandItem{
 	{title: "/help", description: "show command reference", insert: "/help"},
 	{title: "/status", description: "show control-plane summary", insert: "/status"},
+	{title: "/jobs", description: "show recent jobs", insert: "/jobs"},
 	{title: "/theme light", description: "switch to light theme", insert: "/theme light"},
 	{title: "/theme dark", description: "switch to dark theme", insert: "/theme dark"},
 	{title: "/agent list", description: "list configured agents", insert: "/agent list"},
