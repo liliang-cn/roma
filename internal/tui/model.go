@@ -34,7 +34,6 @@ type model struct {
 	registry   *agents.Registry
 
 	input       textinput.Model
-	jobList     list.Model
 	commandList list.Model
 
 	selectedAgent string
@@ -53,10 +52,11 @@ type model struct {
 	detailViewport viewport.Model
 	help           help.Model
 	themeName      string
-	focus          focusTarget
 
-	messages []string
-	helpText []string
+	transcript []transcriptEntry
+	stream     streamState
+	messages   []string
+	helpText   []string
 
 	mainContent string
 
@@ -86,23 +86,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "i":
-			if !m.input.Focused() {
-				m.focusInput("")
-				return m, nil
-			}
-		case "/":
-			if !m.input.Focused() {
-				m.focusInput("/")
-				return m, nil
-			}
+		case "pgup":
+			m.detailViewport.HalfViewUp()
+			return m, nil
+		case "pgdown":
+			m.detailViewport.HalfViewDown()
+			return m, nil
 		case "esc":
-			if m.input.Focused() {
-				m.blurInput()
+			if m.commandMenuVisible() {
+				m.input.SetValue("")
+				m.syncCommandList()
+				m.syncViewports()
+				return m, nil
 			}
 			return m, nil
 		}
 
+		if !m.input.Focused() {
+			m.input.Focus()
+		}
 		if m.input.Focused() {
 			switch msg.String() {
 			case "up", "ctrl+p":
@@ -131,8 +133,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if line == "" {
 					return m, nil
 				}
+				m.appendUser(line)
 				m.input.SetValue("")
-				m.blurInput()
+				m.input.Focus()
+				m.syncCommandList()
+				m.syncViewports()
 				return m, m.commandCmd(line)
 			}
 			var cmd tea.Cmd
@@ -169,23 +174,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasMessage("embedded romad ready") {
 			m.appendMessage("embedded romad ready")
 		}
+		if !m.hasTranscript(transcriptSystem, "ROMA", "embedded romad ready") {
+			m.appendSystem("embedded romad ready")
+		}
 		m.status = msg.snapshot.status
 		m.queue = msg.snapshot.queue
-		if m.selectedJobID == "" {
-			m.selectedJobID = preferredJobID(m.queue)
-		}
 		if m.selectedJobID != "" && msg.snapshot.resp != nil && msg.snapshot.resp.Job.ID == m.selectedJobID {
 			m.inspect = msg.snapshot.resp
-		}
-		if m.selectedJobID == "" && len(m.queue) > 0 {
-			m.selectedJobID = m.queue[0].ID
+			m.consumeInspect(msg.snapshot.resp)
 		}
 		m.syncViewports()
 		return m, nil
 
 	case commandMsg:
 		if msg.err != nil {
-			m.appendMessage("error: " + msg.err.Error())
+			if m.ready {
+				m.appendSystem("error: " + msg.err.Error())
+			} else {
+				m.appendMessage("error: " + msg.err.Error())
+			}
 			return m, nil
 		}
 		if msg.agentID != "" {
@@ -201,12 +208,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.text != "" {
 			if !m.ready {
 				m.boot = msg.text
+				m.appendMessage(msg.text)
+			} else {
+				m.appendSystem(msg.text)
 			}
-			m.appendMessage(msg.text)
 			m.syncViewports()
 		}
 		if msg.selectJob && msg.jobID != "" {
-			m.selectedJobID = msg.jobID
+			if m.selectedJobID != msg.jobID {
+				m.resetStream(msg.jobID)
+			}
 			m.syncViewports()
 			return m, tea.Batch(m.refreshCmd())
 		}
@@ -249,7 +260,6 @@ func (m model) View() string {
 }
 
 func (m *model) focusInput(initial string) {
-	m.focus = focusInput
 	m.input.Focus()
 	if initial != "" && strings.TrimSpace(m.input.Value()) == "" {
 		m.input.SetValue(initial)
@@ -259,7 +269,6 @@ func (m *model) focusInput(initial string) {
 }
 
 func (m *model) blurInput() {
-	m.focus = focusQueue
 	m.input.Blur()
 	m.input.SetValue("")
 	m.commandList.SetItems(nil)
@@ -269,7 +278,7 @@ func (m *model) blurInput() {
 func (m *model) syncCommandList() {
 	ld := m.layoutDims()
 	items := filterCommandItems(m.commandQuery())
-	if !m.input.Focused() || !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+	if !m.input.Focused() || !m.commandMenuActive() {
 		items = nil
 	}
 	m.commandList.SetItems(items)
@@ -285,19 +294,25 @@ func (m *model) syncCommandList() {
 }
 
 func (m model) commandQuery() string {
-	value := strings.TrimSpace(m.input.Value())
-	if !strings.HasPrefix(value, "/") {
+	value := strings.TrimLeft(m.input.Value(), " \t")
+	if !m.commandMenuActive() {
 		return ""
 	}
 	value = strings.TrimPrefix(value, "/")
-	if idx := strings.IndexByte(value, ' '); idx >= 0 {
-		value = value[:idx]
-	}
 	return strings.TrimSpace(value)
 }
 
 func (m model) commandMenuVisible() bool {
-	return m.input.Focused() && len(m.commandList.Items()) > 0 && strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/")
+	return m.input.Focused() && len(m.commandList.Items()) > 0 && m.commandMenuActive()
+}
+
+func (m model) commandMenuActive() bool {
+	value := strings.TrimLeft(m.input.Value(), " \t")
+	if !strings.HasPrefix(value, "/") {
+		return false
+	}
+	value = strings.TrimPrefix(value, "/")
+	return !strings.ContainsAny(value, " \t")
 }
 
 func (m model) selectedCommandSuggestion() (commandItem, bool) {

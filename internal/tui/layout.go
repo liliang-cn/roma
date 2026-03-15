@@ -1,11 +1,5 @@
 package tui
 
-import (
-	"strings"
-
-	"github.com/charmbracelet/bubbles/list"
-)
-
 // Layout constants.
 //
 // lipgloss Width() sets inner size (content + padding), border is added on top:
@@ -19,10 +13,8 @@ const (
 	// appPadH is the horizontal padding of appStyle (Padding(0,1) = left+right = 2).
 	appPadH = 2
 
-	// inputContentRows: title(1) + hint(1) + blank(1) + input-field(1) = 4
-	inputContentRows = 4
-	// baseInputPanelRows: inputContentRows + rounded border overhead
-	baseInputPanelRows = inputContentRows + 2
+	inputContentRows   = 3
+	baseInputPanelRows = inputContentRows
 	// footerRows: one line of key hints
 	footerRows = 1
 )
@@ -73,7 +65,7 @@ func (m model) layoutDims() layoutDims {
 
 func (m model) inputPanelRows() int {
 	rows := baseInputPanelRows
-	if m.input.Focused() && strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+	if m.commandMenuVisible() {
 		rows += min(6, len(filterCommandItems(m.commandQuery()))) + 1
 	}
 	return rows
@@ -129,31 +121,4 @@ func clampOffset(offset, total, height int) int {
 		return 0
 	}
 	return offset
-}
-
-func (m *model) syncJobList() {
-	ld := m.layoutDims()
-	titleMax := max(16, ld.mainW-8)
-	descMax := max(24, ld.mainW-8)
-
-	items := make([]list.Item, 0, len(m.queue))
-	selectedIndex := 0
-	for i, item := range m.queue {
-		items = append(items, jobItem{
-			id:          item.ID,
-			title:       trimLine(item.ID, titleMax),
-			description: trimLine(compactQueueSummary(item), descMax),
-		})
-		if item.ID == m.selectedJobID {
-			selectedIndex = i
-		}
-	}
-	m.jobList.SetItems(items)
-	if len(items) == 0 {
-		return
-	}
-	if selectedIndex >= len(items) {
-		selectedIndex = 0
-	}
-	m.jobList.Select(selectedIndex)
 }

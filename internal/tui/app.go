@@ -68,18 +68,9 @@ func Run(ctx context.Context, opts Options) error {
 	input := textinput.New()
 	input.Placeholder = "/help"
 	input.Prompt = "> "
-	input.Blur()
+	input.Focus()
 	input.CharLimit = 0
 	input.Width = 80
-
-	delegate := newJobListDelegate(lightPalette)
-	jobList := list.New(nil, delegate, 0, 0)
-	jobList.Title = "Queue"
-	jobList.SetShowStatusBar(false)
-	jobList.SetShowHelp(false)
-	jobList.SetFilteringEnabled(false)
-	jobList.SetShowPagination(false)
-	jobList.DisableQuitKeybindings()
 
 	commandList := list.New(nil, newCommandListDelegate(lightPalette), 0, 0)
 	commandList.Title = "Command"
@@ -94,7 +85,6 @@ func Run(ctx context.Context, opts Options) error {
 		client:         client,
 		registry:       registry,
 		input:          input,
-		jobList:        jobList,
 		commandList:    commandList,
 		detailViewport: viewport.New(0, 0),
 		help:           help.New(),
@@ -118,7 +108,6 @@ func Run(ctx context.Context, opts Options) error {
 			"/quit",
 		},
 		boot:      bootMessage,
-		focus:     focusQueue,
 		themeName: "light",
 	}
 	m.refreshTheme()
@@ -130,7 +119,7 @@ func Run(ctx context.Context, opts Options) error {
 	if len(profiles) > 0 {
 		m.selectedAgent = profiles[0].ID
 	} else {
-		m.messages = append(m.messages, "No agents configured. Use /agent add <id> <path> to get started.")
+		m.appendSystem("No agents configured. Use /agent add <id> <path> to get started.")
 	}
 
 	p := tea.NewProgram(m, tuiProgramOptions()...)

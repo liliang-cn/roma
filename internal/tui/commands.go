@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/liliang-cn/roma/internal/api"
+	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
 )
 
@@ -39,12 +40,9 @@ func (m model) refreshCmd() tea.Cmd {
 			return commandMsg{err: err}
 		}
 		sortQueue(items)
-		if selectedJobID == "" {
-			selectedJobID = preferredJobID(items)
-		}
 		var resp *api.QueueInspectResponse
 		if selectedJobID != "" {
-			inspect, err := client.QueueInspect(ctx, selectedJobID, false)
+			inspect, err := client.QueueInspect(ctx, selectedJobID, true)
 			if err == nil {
 				resp = &inspect
 			}
@@ -234,6 +232,13 @@ func (m model) resultCmd(sessionID string) tea.Cmd {
 		}
 		if resp.Pending {
 			return commandMsg{text: fmt.Sprintf("session %s: %s", sessionID, resp.Message)}
+		}
+		if payload, ok := artifacts.FinalAnswerFromEnvelope(resp.Artifact); ok {
+			text := fmt.Sprintf("session %s: %s", sessionID, payload.Summary)
+			if strings.TrimSpace(payload.Answer) != "" {
+				text += "\n" + strings.TrimSpace(payload.Answer)
+			}
+			return commandMsg{text: text}
 		}
 		return commandMsg{text: fmt.Sprintf("session %s: %s", sessionID, resp.Artifact.Kind)}
 	}

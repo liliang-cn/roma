@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/liliang-cn/roma/internal/api"
+	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/queue"
 )
 
@@ -110,38 +111,35 @@ func TestRunningInVTE(t *testing.T) {
 	}
 }
 
-func TestFocusInputShortcuts(t *testing.T) {
+func TestEnterAppendsUserPrompt(t *testing.T) {
 	t.Parallel()
 
 	input := textinput.New()
-	jobList := list.New(nil, newJobListDelegate(lightPalette), 0, 0)
+	input.Focus()
 	commandList := list.New(nil, newCommandListDelegate(lightPalette), 0, 0)
 	m := model{
 		input:          input,
-		jobList:        jobList,
 		commandList:    commandList,
 		detailViewport: viewport.New(0, 0),
 		help:           help.New(),
 		themeName:      "light",
+		selectedAgent:  "codex",
 	}
-	if m.input.Focused() {
-		t.Fatal("input should start blurred in zero-value model")
-	}
+	m.input.SetValue("build a feature")
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := next.(model)
-	if !got.input.Focused() {
-		t.Fatal("input not focused after pressing i")
+	if len(got.transcript) == 0 {
+		t.Fatal("transcript should contain user prompt")
 	}
-
-	got.blurInput()
-	next, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	got = next.(model)
-	if !got.input.Focused() {
-		t.Fatal("input not focused after pressing /")
+	if got.transcript[0].kind != transcriptUser || got.transcript[0].text != "build a feature" {
+		t.Fatalf("transcript[0] = %#v, want user prompt", got.transcript[0])
 	}
-	if got.input.Value() != "/" {
-		t.Fatalf("input value = %q, want /", got.input.Value())
+	if !got.input.Focused() {
+		t.Fatal("input should stay focused after enter")
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input value = %q, want empty", got.input.Value())
 	}
 }
 
@@ -166,12 +164,63 @@ func TestCommandPaletteFiltersSlashCommands(t *testing.T) {
 	}
 }
 
+func TestCommandMenuHidesAfterCommandArgumentsStart(t *testing.T) {
+	t.Parallel()
+
+	input := textinput.New()
+	input.Focus()
+	commandList := list.New(nil, newCommandListDelegate(lightPalette), 0, 0)
+	m := model{
+		input:          input,
+		commandList:    commandList,
+		detailViewport: viewport.New(0, 0),
+		help:           help.New(),
+		themeName:      "light",
+		width:          100,
+		height:         30,
+	}
+
+	m.input.SetValue("/run ")
+	m.syncCommandList()
+	if m.commandMenuVisible() {
+		t.Fatal("command menu should hide once command arguments start")
+	}
+}
+
+func TestConsumeInspectAppendsNewOutputOnce(t *testing.T) {
+	t.Parallel()
+
+	m := model{}
+	resp := &api.QueueInspectResponse{
+		Job: queue.Request{ID: "job_1", Status: queue.StatusRunning},
+		Events: []events.Record{
+			{
+				ID:   "evt_1",
+				Type: events.TypeRuntimeStdoutCaptured,
+				Payload: map[string]any{
+					"agent":  "codex",
+					"stdout": "planning\n",
+				},
+			},
+		},
+	}
+
+	m.consumeInspect(resp)
+	m.consumeInspect(resp)
+	if len(m.transcript) != 1 {
+		t.Fatalf("transcript len = %d, want 1", len(m.transcript))
+	}
+	if got := m.transcript[0]; got.kind != transcriptOutput || got.label != "codex" || got.text != "planning" {
+		t.Fatalf("transcript[0] = %#v, want codex output", got)
+	}
+}
+
 func TestSyncViewportsPreservesAndClampsScrollOffset(t *testing.T) {
 	t.Parallel()
 
 	m := model{
 		width:         120,
-		height:        30,
+		height:        12,
 		themeName:     "light",
 		status:        api.StatusResponse{QueueItems: 1, Sessions: 1, Artifacts: 2, Events: 18},
 		queue:         []queue.Request{{ID: "job_1", Status: queue.StatusRunning, StarterAgent: "my-codex"}},
@@ -180,24 +229,31 @@ func TestSyncViewportsPreservesAndClampsScrollOffset(t *testing.T) {
 			Job: queue.Request{ID: "job_1", Status: queue.StatusRunning},
 		},
 		input:          textinput.New(),
-		jobList:        list.New(nil, newJobListDelegate(lightPalette), 0, 0),
 		commandList:    list.New(nil, newCommandListDelegate(lightPalette), 0, 0),
 		detailViewport: viewport.New(0, 0),
 		help:           help.New(),
-		messages: []string{
-			"line 1", "line 2", "line 3", "line 4", "line 5",
-			"line 6", "line 7", "line 8", "line 9", "line 10",
+		transcript: []transcriptEntry{
+			{kind: transcriptOutput, label: "codex", text: "line 1"},
+			{kind: transcriptOutput, label: "codex", text: "line 2"},
+			{kind: transcriptOutput, label: "codex", text: "line 3"},
+			{kind: transcriptOutput, label: "codex", text: "line 4"},
+			{kind: transcriptOutput, label: "codex", text: "line 5"},
+			{kind: transcriptOutput, label: "codex", text: "line 6"},
+			{kind: transcriptOutput, label: "codex", text: "line 7"},
+			{kind: transcriptOutput, label: "codex", text: "line 8"},
+			{kind: transcriptOutput, label: "codex", text: "line 9"},
+			{kind: transcriptOutput, label: "codex", text: "line 10"},
 		},
 	}
 	m.refreshTheme()
 	m.syncViewports()
-	m.detailViewport.SetYOffset(5)
+	m.detailViewport.SetYOffset(2)
 	m.syncViewports()
-	if m.detailViewport.YOffset != 5 {
-		t.Fatalf("detail viewport offset = %d, want 5", m.detailViewport.YOffset)
+	if m.detailViewport.YOffset != 2 {
+		t.Fatalf("detail viewport offset = %d, want 2", m.detailViewport.YOffset)
 	}
 
-	m.messages = nil
+	m.transcript = nil
 	m.inspect = nil
 	m.syncViewports()
 	if m.detailViewport.YOffset < 0 {
