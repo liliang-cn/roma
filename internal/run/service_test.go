@@ -237,25 +237,19 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	}
 
 	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3)
-	if len(assignments) != 4 {
-		t.Fatalf("assignment count = %d, want 4", len(assignments))
+	if len(assignments) != 3 {
+		t.Fatalf("assignment count = %d, want 3", len(assignments))
 	}
 	if assignments[0].Node.ID != "task_1_starter_bootstrap" {
 		t.Fatalf("bootstrap node id = %q, want task_1_starter_bootstrap", assignments[0].Node.ID)
 	}
-	if assignments[1].Node.ID != "task_1_starter" {
-		t.Fatalf("starter worker node id = %q, want task_1_starter", assignments[1].Node.ID)
+	if assignments[0].Node.Title != "Starter Caesar coordination" {
+		t.Fatalf("bootstrap title = %q, want Starter Caesar coordination", assignments[0].Node.Title)
 	}
 	if assignments[0].SemanticReviewer.ID != "starter" {
 		t.Fatalf("bootstrap reviewer = %q, want starter", assignments[0].SemanticReviewer.ID)
 	}
-	if assignments[1].SemanticReviewer.ID != "starter" {
-		t.Fatalf("starter reviewer = %q, want starter", assignments[1].SemanticReviewer.ID)
-	}
-	if got := assignments[1].Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
-		t.Fatalf("starter worker dependencies = %#v, want [task_1_starter_bootstrap]", got)
-	}
-	for _, assignment := range assignments[2:] {
+	for _, assignment := range assignments[1:] {
 		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
 			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_bootstrap]", assignment.Node.ID, got)
 		}
@@ -268,6 +262,14 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	}
 	if !strings.Contains(assignments[0].PromptHint, "Known delegate profiles") {
 		t.Fatalf("bootstrap prompt hint = %q, want embedded delegate summary", assignments[0].PromptHint)
+	}
+	if !strings.Contains(assignments[0].PromptHint, "You do not implement the task yourself.") {
+		t.Fatalf("bootstrap prompt hint = %q, want Caesar-only coordination directive", assignments[0].PromptHint)
+	}
+	for _, assignment := range assignments[1:] {
+		if strings.Contains(strings.ToLower(assignment.PromptHint), "active contributor") {
+			t.Fatalf("delegate prompt hint = %q, want no starter worker language", assignment.PromptHint)
+		}
 	}
 }
 
@@ -479,6 +481,103 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "examples", "todo-webapp", "vote-merge.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expected base file absent before ROMA merge, stat err = %v", err)
+	}
+}
+
+func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initRunGitRepo(t, workDir)
+
+	starterScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -Eq "Starter Caesar coordination|Caesar review round"; then`,
+		`  if printf '%s' "$prompt" | grep -q "Upstream artifact summaries:"; then`,
+		`    if printf '%s' "$prompt" | grep -q "second pass complete"; then`,
+		`      printf 'ROMA_DONE: all work is complete\n'`,
+		`    else`,
+		`      printf 'ROMA_FOLLOWUP: delegate worker | second pass\n'`,
+		`    fi`,
+		`  else`,
+		`    printf 'bootstrap ready\n'`,
+		`  fi`,
+		`else`,
+		`  printf 'unexpected Caesar prompt\n'`,
+		`fi`,
+	}, "\n")
+	workerScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "second pass"; then`,
+		`  printf 'second\n' > second.txt`,
+		`  printf 'second pass complete\nROMA_MERGE_BACK: direct_merge | second pass ready\nROMA_MERGE_FILE: second.txt\n'`,
+		`else`,
+		`  printf 'first\n' > first.txt`,
+		`  printf 'first pass complete\nROMA_MERGE_BACK: direct_merge | first pass ready\nROMA_MERGE_FILE: first.txt\n'`,
+		`fi`,
+	}, "\n")
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{
+			ID:           "caesar",
+			DisplayName:  "Caesar",
+			Command:      "sh",
+			Args:         []string{"-lc", starterScript, "starter", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+		domain.AgentProfile{
+			ID:           "worker",
+			DisplayName:  "Worker",
+			Command:      "sh",
+			Args:         []string{"-lc", workerScript, "worker", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "coordinate a low-risk sample file update",
+		StarterAgent: "caesar",
+		Delegates:    []string{"worker"},
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+
+	firstContent, err := os.ReadFile(filepath.Join(workDir, "first.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(first.txt) error = %v", err)
+	}
+	if strings.TrimSpace(string(firstContent)) != "first" {
+		t.Fatalf("first.txt = %q, want first", strings.TrimSpace(string(firstContent)))
+	}
+	secondContent, err := os.ReadFile(filepath.Join(workDir, "second.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(second.txt) error = %v", err)
+	}
+	if strings.TrimSpace(string(secondContent)) != "second" {
+		t.Fatalf("second.txt = %q, want second", strings.TrimSpace(string(secondContent)))
+	}
+
+	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	tasks, err := taskStore.ListTasksBySession(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("ListTasksBySession() error = %v", err)
+	}
+	for _, task := range tasks {
+		if task.Title == "Starter contribution" {
+			t.Fatalf("unexpected starter worker task present: %#v", task)
+		}
 	}
 }
 

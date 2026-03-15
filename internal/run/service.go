@@ -211,6 +211,16 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
+	if err == nil && len(delegates) > 0 {
+		if updatedAssignments, updatedResult, caesarErr := s.continueCaesarCoordination(ctx, req, sessionID, taskID, starter, assignments, execResult, dispatcher); caesarErr != nil {
+			assignments = updatedAssignments
+			execResult = updatedResult
+			err = caesarErr
+		} else {
+			assignments = updatedAssignments
+			execResult = updatedResult
+		}
+	}
 	writeRelayResult(w, assignments, execResult)
 	if s.store != nil {
 		for _, nodeID := range execResult.Order {
@@ -549,7 +559,7 @@ func assignmentsOrchestrated(delegates []domain.AgentProfile) int {
 	if len(delegates) == 0 {
 		return 1
 	}
-	return 2 + len(delegates)
+	return 1 + len(delegates)
 }
 
 func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, delegates []domain.AgentProfile, continuous bool, maxRounds int) []scheduler.NodeAssignment {
@@ -568,13 +578,12 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		}}
 	}
 
-	assignments := make([]scheduler.NodeAssignment, 0, 2+len(delegates))
+	assignments := make([]scheduler.NodeAssignment, 0, 1+len(delegates))
 	bootstrapNodeID := taskID + "_starter_bootstrap"
-	starterWorkerNodeID := taskID + "_starter"
 	assignments = append(assignments, scheduler.NodeAssignment{
 		Node: domain.TaskNodeSpec{
 			ID:            bootstrapNodeID,
-			Title:         "Starter bootstrap",
+			Title:         "Starter Caesar coordination",
 			Strategy:      domain.TaskStrategyDirect,
 			SchemaVersion: "v1",
 		},
@@ -583,20 +592,6 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		Continuous:       continuous,
 		MaxRounds:        maxRounds,
 		PromptHint:       buildStarterBootstrapPromptHint(starter, delegates),
-	})
-	assignments = append(assignments, scheduler.NodeAssignment{
-		Node: domain.TaskNodeSpec{
-			ID:            starterWorkerNodeID,
-			Title:         "Starter contribution",
-			Strategy:      domain.TaskStrategyRelay,
-			Dependencies:  []string{bootstrapNodeID},
-			SchemaVersion: "v1",
-		},
-		Profile:          starter,
-		SemanticReviewer: starter,
-		Continuous:       continuous,
-		MaxRounds:        maxRounds,
-		PromptHint:       "Act as both coordinator and worker. Use the starter bootstrap output as shared context, then contribute your own concrete implementation in parallel with the delegate agents.",
 	})
 	for i, delegate := range delegates {
 		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
@@ -612,7 +607,7 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 			SemanticReviewer: starter,
 			Continuous:       continuous,
 			MaxRounds:        maxRounds,
-			PromptHint:       fmt.Sprintf("The starter agent %s produced the bootstrap plan and remains an active contributor. Use the shared bootstrap context, focus on your own contribution, and avoid duplicating other agents' work.", starter.DisplayName),
+			PromptHint:       buildCaesarDelegatePromptHint(starter, ""),
 		})
 	}
 	return assignments
@@ -620,10 +615,12 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 
 func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile) string {
 	lines := []string{
-		fmt.Sprintf("You are the coordinating starter agent (%s).", starter.DisplayName),
-		"First produce a shared bootstrap plan for the rest of the agents.",
+		fmt.Sprintf("You are Caesar, the coordinating starter agent (%s).", starter.DisplayName),
+		"You do not implement the task yourself.",
+		"Your job is to produce the shared bootstrap plan for the delegate agents and coordinate their work.",
 		"Use the known delegate profile summary below instead of probing CLI help, config files, or runtime capabilities yourself.",
 		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
+		"Keep ownership of coordination, progress tracking, and follow-up questions; delegate concrete implementation.",
 	}
 	if len(delegates) > 0 {
 		names := make([]string, 0, len(delegates))
