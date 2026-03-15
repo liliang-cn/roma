@@ -173,6 +173,60 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 	}
 }
 
+func TestRunWithDelegatesPropagatesExecutionFailure(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{
+			ID:           "claude",
+			DisplayName:  "Claude",
+			Command:      "sh",
+			Args:         []string{"-c", "printf 'starter ok\\n'"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+		domain.AgentProfile{
+			ID:           "codex",
+			DisplayName:  "Codex",
+			Command:      "sh",
+			Args:         []string{"-c", "printf 'codex failed\\n' >&2; exit 7"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	workDir := t.TempDir()
+	svc := NewService(registry)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "refactor the CLI",
+		StarterAgent: "claude",
+		WorkingDir:   workDir,
+		Delegates:    []string{"codex"},
+	})
+	if err == nil {
+		t.Fatal("RunWithResult() error = nil, want delegate failure")
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %s, want failed", result.Status)
+	}
+
+	sessionStore, err := history.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	record, err := sessionStore.Get(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if record.Status != "failed" {
+		t.Fatalf("record status = %s, want failed", record.Status)
+	}
+	if record.FinalArtifactID == "" {
+		t.Fatal("final artifact id = empty, want failure final answer artifact")
+	}
+}
+
 func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	t.Parallel()
 

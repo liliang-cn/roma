@@ -211,81 +211,52 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
-	if err != nil {
-		var approvalErr *scheduler.ApprovalPendingError
-		if errors.As(err, &approvalErr) {
-			record.Status = "awaiting_approval"
-		} else {
-			record.Status = "failed"
-		}
-		record.UpdatedAt = time.Now().UTC()
-		record.ArtifactIDs = collectRelayArtifactIDs(execResult)
-		if s.store != nil {
-			for _, nodeID := range execResult.Order {
-				if artifact := execResult.Artifacts[nodeID]; artifact.ID != "" {
-					_ = s.store.Save(ctx, artifact)
-					s.appendArtifactStoredEvent(ctx, artifact)
-				}
-				for _, related := range execResult.RelatedArtifacts[nodeID] {
-					if related.ID == "" {
-						continue
-					}
-					_ = s.store.Save(ctx, related)
-					s.appendArtifactStoredEvent(ctx, related)
-				}
-			}
-		}
-		if s.history != nil {
-			_ = s.history.Save(ctx, record)
-		}
-		if finalID, finalErr := s.persistFinalAnswer(ctx, record, starter.ID, req.Prompt, collectRelayArtifacts(execResult), nil); finalErr == nil {
-			record.FinalArtifactID = finalID
-			if finalID != "" {
-				record.ArtifactIDs = append(record.ArtifactIDs, finalID)
-				if s.history != nil {
-					_ = s.history.Save(ctx, record)
-				}
-			}
-		}
-		s.appendSessionStateEvent(ctx, record)
-		writeRelayResult(w, assignments, execResult)
-		return Result{
-			SessionID:   sessionID,
-			TaskID:      taskID,
-			Status:      record.Status,
-			ArtifactIDs: record.ArtifactIDs,
-		}, nil
-	}
-
 	writeRelayResult(w, assignments, execResult)
 	if s.store != nil {
 		for _, nodeID := range execResult.Order {
 			artifact := execResult.Artifacts[nodeID]
-			if err := s.store.Save(ctx, artifact); err != nil {
-				return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, err)
+			if artifact.ID != "" {
+				if saveErr := s.store.Save(ctx, artifact); saveErr != nil {
+					return Result{}, fmt.Errorf("save artifact %s: %w", artifact.ID, saveErr)
+				}
+				s.appendArtifactStoredEvent(ctx, artifact)
 			}
-			s.appendArtifactStoredEvent(ctx, artifact)
 			for _, related := range execResult.RelatedArtifacts[nodeID] {
-				if err := s.store.Save(ctx, related); err != nil {
-					return Result{}, fmt.Errorf("save artifact %s: %w", related.ID, err)
+				if related.ID == "" {
+					continue
+				}
+				if saveErr := s.store.Save(ctx, related); saveErr != nil {
+					return Result{}, fmt.Errorf("save artifact %s: %w", related.ID, saveErr)
 				}
 				s.appendArtifactStoredEvent(ctx, related)
 			}
 		}
 	}
-	s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
-	record.Status = "succeeded"
+
+	runErr := err
+	if err != nil {
+		var approvalErr *scheduler.ApprovalPendingError
+		if errors.As(err, &approvalErr) {
+			record.Status = "awaiting_approval"
+			runErr = nil
+		} else {
+			record.Status = "failed"
+		}
+	} else {
+		s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
+		record.Status = "succeeded"
+	}
 	record.UpdatedAt = time.Now().UTC()
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
-	if finalID, err := s.persistFinalAnswer(ctx, record, starter.ID, req.Prompt, collectRelayArtifacts(execResult), nil); err != nil {
-		return Result{}, err
+	if finalID, finalErr := s.persistFinalAnswer(ctx, record, starter.ID, req.Prompt, collectRelayArtifacts(execResult), runErr); finalErr != nil {
+		return Result{}, finalErr
 	} else if finalID != "" {
 		record.FinalArtifactID = finalID
 		record.ArtifactIDs = append(record.ArtifactIDs, finalID)
 	}
 	if s.history != nil {
-		if err := s.history.Save(ctx, record); err != nil {
-			return Result{}, fmt.Errorf("save completed session: %w", err)
+		if saveErr := s.history.Save(ctx, record); saveErr != nil {
+			return Result{}, fmt.Errorf("save completed session: %w", saveErr)
 		}
 	}
 	s.appendSessionStateEvent(ctx, record)
@@ -295,7 +266,7 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 		TaskID:      taskID,
 		Status:      record.Status,
 		ArtifactIDs: record.ArtifactIDs,
-	}, nil
+	}, runErr
 }
 
 func (s *Service) runDirect(ctx context.Context, req Request, profile domain.AgentProfile, stdout, stderr io.Writer) (Result, error) {

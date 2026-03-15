@@ -9,6 +9,7 @@ import (
 
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/run"
 )
 
 func TestDaemonReloadsUserAgentConfigBeforeProcessingQueueItem(t *testing.T) {
@@ -65,6 +66,66 @@ func TestDaemonReloadsUserAgentConfigBeforeProcessingQueueItem(t *testing.T) {
 	}
 	if got.Status != queue.StatusSucceeded {
 		t.Fatalf("status = %s, want %s (error=%q)", got.Status, queue.StatusSucceeded, got.Error)
+	}
+}
+
+func TestFinalizeQueueRequestUsesRunResultStatusFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		runStatus  string
+		runErr     error
+		canceled   bool
+		wantStatus queue.Status
+		wantError  string
+	}{
+		{
+			name:       "failed result without error",
+			runStatus:  "failed",
+			wantStatus: queue.StatusFailed,
+			wantError:  "run failed",
+		},
+		{
+			name:       "awaiting approval",
+			runStatus:  "awaiting_approval",
+			wantStatus: queue.StatusAwaitingApproval,
+			wantError:  "approval required",
+		},
+		{
+			name:       "success result",
+			runStatus:  "succeeded",
+			wantStatus: queue.StatusSucceeded,
+			wantError:  "",
+		},
+		{
+			name:       "cancelled overrides result",
+			runStatus:  "failed",
+			canceled:   true,
+			wantStatus: queue.StatusCancelled,
+			wantError:  "cancelled by user",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := queue.Request{
+				ID:                  "job_1",
+				Status:              queue.StatusRunning,
+				PolicyOverride:      true,
+				PolicyOverrideActor: "tester",
+			}
+			finalizeQueueRequest(&req, run.Result{Status: tt.runStatus}, tt.runErr, tt.canceled)
+			if req.Status != tt.wantStatus {
+				t.Fatalf("status = %s, want %s", req.Status, tt.wantStatus)
+			}
+			if req.Error != tt.wantError {
+				t.Fatalf("error = %q, want %q", req.Error, tt.wantError)
+			}
+		})
 	}
 }
 

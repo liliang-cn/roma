@@ -372,24 +372,9 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 	req.TaskID = runResult.TaskID
 	req.ArtifactIDs = runResult.ArtifactIDs
 	wasCanceled := d.consumeCanceled(req.ID)
+	finalizeQueueRequest(&req, runResult, runErr, wasCanceled)
 	if wasCanceled {
-		req.Status = queue.StatusCancelled
-		req.Error = "cancelled by user"
-		req.PolicyOverride = false
-		req.PolicyOverrideActor = ""
 		d.syncCancelledState(context.Background(), req)
-	} else if runErr != nil {
-		req.Status = queue.StatusFailed
-		req.Error = runErr.Error()
-		req.PolicyOverride = false
-	} else if runResult.Status == "awaiting_approval" {
-		req.Status = queue.StatusAwaitingApproval
-		req.Error = "approval required"
-	} else {
-		req.Status = queue.StatusSucceeded
-		req.Error = ""
-		req.PolicyOverride = false
-		req.PolicyOverrideActor = ""
 	}
 	if err := d.queue.Update(ctx, req); err != nil {
 		return fmt.Errorf("finalize queue request: %w", err)
@@ -397,6 +382,46 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 	log.Printf("romad finalized job id=%s status=%s session=%s task=%s", req.ID, req.Status, req.SessionID, req.TaskID)
 	d.deliverQueueNotification(ctx, req)
 	return nil
+}
+
+func finalizeQueueRequest(req *queue.Request, runResult run.Result, runErr error, wasCanceled bool) {
+	if req == nil {
+		return
+	}
+	if wasCanceled {
+		req.Status = queue.StatusCancelled
+		req.Error = "cancelled by user"
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+		return
+	}
+	if runErr != nil {
+		req.Status = queue.StatusFailed
+		req.Error = runErr.Error()
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+		return
+	}
+	switch runResult.Status {
+	case "awaiting_approval":
+		req.Status = queue.StatusAwaitingApproval
+		req.Error = "approval required"
+	case "failed":
+		req.Status = queue.StatusFailed
+		req.Error = "run failed"
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+	case "cancelled":
+		req.Status = queue.StatusCancelled
+		req.Error = "cancelled"
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+	default:
+		req.Status = queue.StatusSucceeded
+		req.Error = ""
+		req.PolicyOverride = false
+		req.PolicyOverrideActor = ""
+	}
 }
 
 // CancelQueueJob interrupts a queued or currently running job.
