@@ -1,0 +1,14 @@
+{
+  "prompt": "创建一个简单的 Go TODO web app。需要: 1) 一个 Go HTTP server 提供 REST API (GET/POST/DELETE /todos), 2) 一个简单的 HTML 前端页面显示和操作 TODO 列表。完成后回复一句话描述你创建了什么。",
+  "working_dir": "examples/todo-webapp",
+  "nodes": [
+    {
+      "id": "curia_todo",
+      "title": "Curia TODO app design",
+      "agent": "my-claude",
+      "strategy": "curia",
+      "senators": ["my-claude", "claude-1", "claude-2", "claude-3"],
+      "quorum": 3
+    }
+  ]
+}

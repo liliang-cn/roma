@@ -1,0 +1,14 @@
+{
+  "prompt": "回复一句话描述这个测试",
+  "working_dir": "examples",
+  "nodes": [
+    {
+      "id": "curia_test",
+      "title": "Curia test",
+      "agent": "my-claude",
+      "strategy": "curia",
+      "senators": ["my-claude", "claude-1"],
+      "quorum": 2
+    }
+  ]
+}
