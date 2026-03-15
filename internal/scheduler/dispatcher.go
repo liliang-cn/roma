@@ -217,9 +217,6 @@ func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt
 				}
 			}
 			results, err := d.executeBatch(ctx, sessionID, workDir, basePrompt, artifactsByNode, batch, workspaceByNode)
-			if err != nil {
-				return DispatchResult{Artifacts: artifactsByNode, RelatedArtifacts: relatedArtifacts, Order: order}, err
-			}
 			for _, item := range results {
 				artifactsByNode[item.assignment.Node.ID] = item.report
 				if len(item.related) > 0 {
@@ -227,9 +224,9 @@ func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt
 				}
 				order = append(order, item.assignment.Node.ID)
 				completedOrder = append(completedOrder, item.assignment.Node.ID)
-				if item.runErr != nil {
-					return DispatchResult{Artifacts: artifactsByNode, RelatedArtifacts: relatedArtifacts, Order: order}, item.runErr
-				}
+			}
+			if err != nil {
+				return DispatchResult{Artifacts: artifactsByNode, RelatedArtifacts: relatedArtifacts, Order: order}, err
 			}
 			progressed = true
 		}
@@ -283,6 +280,13 @@ type dispatchBatchResult struct {
 	reportErr  error
 }
 
+func (r dispatchBatchResult) err() error {
+	if r.reportErr != nil {
+		return r.reportErr
+	}
+	return r.runErr
+}
+
 func (d *Dispatcher) executeBatch(
 	ctx context.Context,
 	sessionID, workDir, basePrompt string,
@@ -290,19 +294,23 @@ func (d *Dispatcher) executeBatch(
 	batch []NodeAssignment,
 	workspaceByNode map[string]workspacepkg.Prepared,
 ) ([]dispatchBatchResult, error) {
-	results := make([]dispatchBatchResult, len(batch))
+	batchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make([]dispatchBatchResult, 0, len(batch))
+	resultsCh := make(chan dispatchBatchResult, len(batch))
 	var wg sync.WaitGroup
-	for i, assignment := range batch {
+	for _, assignment := range batch {
 		wg.Add(1)
-		go func(i int, assignment NodeAssignment) {
+		go func(assignment NodeAssignment) {
 			defer wg.Done()
 			if d.lifecycle != nil {
-				_ = d.lifecycle.MarkRunning(ctx, sessionID, assignment.Node.ID)
+				_ = d.lifecycle.MarkRunning(batchCtx, sessionID, assignment.Node.ID)
 			}
 
 			prompt := buildNodePrompt(basePrompt, assignment, artifactsByNode)
 			workspace := workspaceByNode[assignment.Node.ID]
-			_ = d.events.AppendEvent(ctx, events.Record{
+			_ = d.events.AppendEvent(batchCtx, events.Record{
 				ID:         fmt.Sprintf("evt_%s_started", assignment.Node.ID),
 				SessionID:  sessionID,
 				TaskID:     assignment.Node.ID,
@@ -326,7 +334,7 @@ func (d *Dispatcher) executeBatch(
 				if len(senators) == 0 {
 					senators = []domain.AgentProfile{assignment.Profile}
 				}
-				curiaResult, err := curia.NewExecutor(workspace.BaseDir, d.supervisor, d.artifacts).Execute(ctx, curia.ExecuteRequest{
+				curiaResult, err := curia.NewExecutor(workspace.BaseDir, d.supervisor, d.artifacts).Execute(batchCtx, curia.ExecuteRequest{
 					SessionID:         sessionID,
 					TaskID:            assignment.Node.ID,
 					BasePrompt:        prompt,
@@ -345,19 +353,19 @@ func (d *Dispatcher) executeBatch(
 					related = curiaResult.RelatedArtifacts
 				}
 			} else {
-				runResult, err := d.supervisor.RunCaptured(ctx, runtime.StartRequest{
-					ExecutionID: "exec_" + assignment.Node.ID,
-					SessionID:   sessionID,
-					TaskID:      assignment.Node.ID,
-					Profile:     assignment.Profile,
+				runResult, err := d.supervisor.RunCaptured(batchCtx, runtime.StartRequest{
+					ExecutionID:      "exec_" + assignment.Node.ID,
+					SessionID:        sessionID,
+					TaskID:           assignment.Node.ID,
+					Profile:          assignment.Profile,
 					SemanticReviewer: chooseSemanticReviewer(assignment),
-					Prompt:      prompt,
-					WorkingDir:  workspace.EffectiveDir,
-					Continuous:  assignment.Continuous,
-					MaxRounds:   assignment.MaxRounds,
+					Prompt:           prompt,
+					WorkingDir:       workspace.EffectiveDir,
+					Continuous:       assignment.Continuous,
+					MaxRounds:        assignment.MaxRounds,
 				})
 				runErr = err
-				report, reportErr = d.artifacts.BuildReport(ctx, artifacts.BuildReportRequest{
+				report, reportErr = d.artifacts.BuildReport(batchCtx, artifacts.BuildReportRequest{
 					SessionID: sessionID,
 					TaskID:    assignment.Node.ID,
 					RunID:     assignment.Node.ID,
@@ -367,7 +375,7 @@ func (d *Dispatcher) executeBatch(
 					Stderr:    runResult.Stderr,
 				})
 			}
-			results[i] = dispatchBatchResult{
+			resultsCh <- dispatchBatchResult{
 				assignment: assignment,
 				workspace:  workspace,
 				report:     report,
@@ -375,19 +383,26 @@ func (d *Dispatcher) executeBatch(
 				runErr:     runErr,
 				reportErr:  reportErr,
 			}
-		}(i, assignment)
+		}(assignment)
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
 
-	for _, item := range results {
-		if item.reportErr != nil {
-			return nil, item.reportErr
+	var firstErr error
+	for item := range resultsCh {
+		results = append(results, item)
+		terminalErr := item.err()
+		if terminalErr != nil && firstErr == nil {
+			firstErr = terminalErr
+			cancel()
 		}
 		if d.lifecycle != nil {
-			_ = d.lifecycle.MarkFinished(ctx, sessionID, item.assignment.Node.ID, item.report.ID, item.runErr)
+			_ = d.lifecycle.MarkFinished(ctx, sessionID, item.assignment.Node.ID, item.report.ID, terminalErr)
 		}
 		if d.workspaces != nil {
-			_ = d.workspaces.Release(ctx, item.workspace, label(item.runErr))
+			_ = d.workspaces.Release(ctx, item.workspace, label(terminalErr))
 		}
 		_ = d.events.AppendEvent(ctx, events.Record{
 			ID:         fmt.Sprintf("evt_%s_completed", item.assignment.Node.ID),
@@ -396,7 +411,7 @@ func (d *Dispatcher) executeBatch(
 			Type:       events.TypeRelayNodeCompleted,
 			ActorType:  events.ActorTypeScheduler,
 			OccurredAt: d.now(),
-			ReasonCode: label(item.runErr),
+			ReasonCode: label(terminalErr),
 			Payload: map[string]any{
 				"node_id":     item.assignment.Node.ID,
 				"artifact_id": item.report.ID,
@@ -404,7 +419,7 @@ func (d *Dispatcher) executeBatch(
 			},
 		})
 	}
-	return results, nil
+	return results, firstErr
 }
 
 func buildNodePrompt(basePrompt string, assignment NodeAssignment, artifactsByNode map[string]domain.ArtifactEnvelope) string {

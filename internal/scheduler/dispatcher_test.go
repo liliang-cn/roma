@@ -34,6 +34,17 @@ func (dispatcherSlowAdapter) BuildCommand(ctx context.Context, req runtime.Start
 	return exec.CommandContext(ctx, "python3", "-c", "import sys,time; time.sleep(float(sys.argv[1])); print(sys.argv[2])", "0.2", req.Prompt), nil
 }
 
+type dispatcherFailFastAdapter struct{}
+
+func (dispatcherFailFastAdapter) Supports(domain.AgentProfile) bool { return true }
+
+func (dispatcherFailFastAdapter) BuildCommand(ctx context.Context, req runtime.StartRequest) (*exec.Cmd, error) {
+	if req.Profile.ID == "fail-fast" {
+		return exec.CommandContext(ctx, "python3", "-c", "import sys; print('boom', file=sys.stderr); sys.exit(7)"), nil
+	}
+	return exec.CommandContext(ctx, "python3", "-c", "import time; time.sleep(10); print('slow ok')"), nil
+}
+
 type dispatcherCuriaAdapter struct{}
 
 func (dispatcherCuriaAdapter) Supports(domain.AgentProfile) bool { return true }
@@ -104,6 +115,49 @@ func TestDispatcherRunsReadyBatchConcurrently(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed >= 350*time.Millisecond {
 		t.Fatalf("elapsed = %v, want concurrent batch under 350ms", elapsed)
+	}
+}
+
+func TestDispatcherCancelsSiblingNodesAfterFirstFailure(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	initDispatcherGitRepo(t, workDir)
+
+	mem := store.NewMemoryStore()
+	dispatcher := NewDispatcher(workDir, runtime.NewSupervisor(dispatcherFailFastAdapter{}), mem, mem)
+	started := time.Now()
+	_, err := dispatcher.Execute(context.Background(), "sess_failfast", workDir, "parallel batch", []NodeAssignment{
+		{
+			Node:    domain.TaskNodeSpec{ID: "task_fail", Title: "Fail", Strategy: domain.TaskStrategyDirect},
+			Profile: domain.AgentProfile{ID: "fail-fast", DisplayName: "Fail Fast", Command: "python3"},
+		},
+		{
+			Node:    domain.TaskNodeSpec{ID: "task_slow", Title: "Slow", Strategy: domain.TaskStrategyDirect},
+			Profile: domain.AgentProfile{ID: "slow", DisplayName: "Slow", Command: "python3"},
+		},
+	})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want failure")
+	}
+	if elapsed := time.Since(started); elapsed >= 4*time.Second {
+		t.Fatalf("elapsed = %v, want sibling cancellation before 4s", elapsed)
+	}
+
+	failTask, getErr := mem.GetTask(context.Background(), "sess_failfast__task_fail")
+	if getErr != nil {
+		t.Fatalf("GetTask(task_fail) error = %v", getErr)
+	}
+	if failTask.State != domain.TaskStateFailedTerminal {
+		t.Fatalf("task_fail state = %s, want %s", failTask.State, domain.TaskStateFailedTerminal)
+	}
+
+	slowTask, getErr := mem.GetTask(context.Background(), "sess_failfast__task_slow")
+	if getErr != nil {
+		t.Fatalf("GetTask(task_slow) error = %v", getErr)
+	}
+	if slowTask.State == domain.TaskStateRunning {
+		t.Fatalf("task_slow state = %s, want non-running terminal state", slowTask.State)
 	}
 }
 
