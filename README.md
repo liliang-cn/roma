@@ -13,11 +13,12 @@ ROMA treats multi-agent coding like a Roman state, not a chat room.
 - Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
 - Each task runs in an isolated workspace when possible. Agents work there first, then ROMA decides whether a plan can be merged back.
 
-ROMA currently supports three execution styles:
+ROMA currently supports four execution styles:
 
 - `Direct`: one agent executes one task.
 - `Relay`: multiple agents run as a pipeline, passing artifacts forward.
-- `Curia`: multiple agents act as a senate. Senators produce proposals, review each other anonymously, and ROMA builds a `DecisionPack` plus an `ExecutionPlan`.
+- `Curia`: multiple agents act as a senate. Senators produce proposals, review each other anonymously (with timeout handling), and ROMA builds a `DecisionPack` plus an `ExecutionPlan`.
+- `Graph`: DAG-based execution with dependencies between nodes, supports mixing strategies.
 
 In the Curia metaphor:
 
@@ -28,11 +29,17 @@ In the Curia metaphor:
 
 The intended user flow is:
 
-1. `roma run ...` or `roma submit ...`
+1. `roma run --agent <agent> --with <delegates> <prompt>` or `roma submit ...`
 2. `romad` schedules agents and records everything under the ROMA state root
 3. inspect with `roma queue ...` or `roma debug ...`
 4. approve or reject when policy or plan gates require it
 5. preview, apply, or roll back the resulting execution plan
+
+For Graph mode (DAG execution):
+
+```bash
+roma debug graph run --file examples/curia-test.json
+```
 
 ## TUI Mode
 
