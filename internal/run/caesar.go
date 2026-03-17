@@ -148,20 +148,18 @@ func buildCaesarReviewPromptHint(round int, dependencies []string, assignments [
 		"You are still only the coordinator. Do not edit files or implement the task yourself.",
 		"Review the delegate outputs above and ask one question only: is the main task done?",
 		"If more implementation work is needed, emit one or more lines in this exact format:",
-		"ROMA_FOLLOWUP: delegate <agent_id> | <instruction>",
+		"ROMA_FOLLOWUP: delegate <target_id> | <instruction>",
 		"If the task is complete, emit ROMA_DONE: <brief summary> and do not emit any follow-up lines.",
 		"Only delegate concrete implementation work to the agents; keep all coordination with Caesar.",
 	}
 	targets := caesarDelegateTargets(dependencies, assignments)
 	if len(targets) > 0 {
 		lines = append(lines, "")
-		lines = append(lines, "CRITICAL — use ONLY these exact agent IDs in ROMA_FOLLOWUP lines:")
+		lines = append(lines, "CRITICAL — use ONLY these exact target IDs in ROMA_FOLLOWUP lines:")
 		for _, id := range targets {
 			lines = append(lines, fmt.Sprintf("  ROMA_FOLLOWUP: delegate %s | <your instruction here>", id))
 		}
-		lines = append(lines, "")
-		lines = append(lines, "DO NOT use node IDs (like delegate_1, delegate_2) or positional names.")
-		lines = append(lines, "The agent_id field must be one of: "+strings.Join(targets, ", "))
+		lines = append(lines, "The target_id field must be one of: "+strings.Join(targets, ", "))
 	}
 	if conflicts.HasConflicts() {
 		lines = append(lines, "Main workspace currently has unresolved git conflicts. Do not emit ROMA_DONE until all of them are resolved.")
@@ -225,10 +223,6 @@ func (s *Service) resolveCaesarDelegateTarget(ctx context.Context, assignments [
 	if raw == "" {
 		return domain.AgentProfile{}, false
 	}
-	// Exact agent ID match.
-	if profile, ok := s.registry.Resolve(ctx, raw); ok {
-		return profile, true
-	}
 	// Exact node ID match.
 	for _, assignment := range assignments {
 		if assignment.Node.ID == raw {
@@ -254,6 +248,10 @@ func (s *Service) resolveCaesarDelegateTarget(ctx context.Context, assignments [
 		}
 		return assignment.Profile, true
 	}
+	// Exact agent ID match fallback.
+	if profile, ok := s.registry.Resolve(ctx, raw); ok {
+		return profile, true
+	}
 	return domain.AgentProfile{}, false
 }
 
@@ -265,15 +263,11 @@ func caesarDelegateTargets(dependencies []string, assignments []scheduler.NodeAs
 			if assignment.Node.ID != dep {
 				continue
 			}
-			agentID := strings.TrimSpace(assignment.Profile.ID)
-			if agentID == "" {
+			if _, ok := seen[assignment.Node.ID]; ok {
 				continue
 			}
-			if _, ok := seen[agentID]; ok {
-				continue
-			}
-			seen[agentID] = struct{}{}
-			out = append(out, agentID)
+			seen[assignment.Node.ID] = struct{}{}
+			out = append(out, assignment.Node.ID)
 		}
 	}
 	return out
