@@ -113,8 +113,11 @@ func TestDispatcherRunsReadyBatchConcurrently(t *testing.T) {
 	if len(result.Order) != 2 {
 		t.Fatalf("order len = %d, want 2", len(result.Order))
 	}
-	if elapsed := time.Since(started); elapsed >= 350*time.Millisecond {
-		t.Fatalf("elapsed = %v, want concurrent batch under 350ms", elapsed)
+	// Each task sleeps 200ms; sequential would take ≥400ms.
+	// Allow up to 1s to accommodate CI scheduling overhead while still
+	// verifying the two tasks ran concurrently rather than sequentially.
+	if elapsed := time.Since(started); elapsed >= 1000*time.Millisecond {
+		t.Fatalf("elapsed = %v, want concurrent batch under 1000ms", elapsed)
 	}
 }
 

@@ -482,7 +482,7 @@ func TestRunDirectAutoMergeBackRequest(t *testing.T) {
 		DisplayName: "Auto Merge",
 		Command:     "sh",
 		Args: []string{
-			"-lc",
+			"-c",
 			"mkdir -p examples/todo-webapp && printf 'auto merge\\n' > examples/todo-webapp/auto-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: examples/todo-webapp/auto-merge.txt\\n'",
 		},
 		Availability: domain.AgentAvailabilityAvailable,
@@ -531,7 +531,7 @@ func TestRunDirectAutoMergeBackRequestUsesControlRootWorkspaceMetadata(t *testin
 		DisplayName: "Auto Merge",
 		Command:     "sh",
 		Args: []string{
-			"-lc",
+			"-c",
 			"printf 'control root merge\\n' > control-root-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: control-root-merge.txt\\n'",
 		},
 		Availability: domain.AgentAvailabilityAvailable,
@@ -573,7 +573,7 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 		DisplayName: "Vote Merge",
 		Command:     "sh",
 		Args: []string{
-			"-lc",
+			"-c",
 			"mkdir -p examples/todo-webapp && printf 'vote merge\\n' > examples/todo-webapp/vote-merge.txt && printf 'ROMA_MERGE_BACK: require_vote | let Curia decide\\nROMA_MERGE_FILE: examples/todo-webapp/vote-merge.txt\\n'",
 		},
 		Availability: domain.AgentAvailabilityAvailable,
@@ -648,14 +648,14 @@ func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 			ID:           "caesar",
 			DisplayName:  "Caesar",
 			Command:      "sh",
-			Args:         []string{"-lc", starterScript, "starter", "{prompt}"},
+			Args:         []string{"-c", starterScript, "starter", "{prompt}"},
 			Availability: domain.AgentAvailabilityAvailable,
 		},
 		domain.AgentProfile{
 			ID:           "worker",
 			DisplayName:  "Worker",
 			Command:      "sh",
-			Args:         []string{"-lc", workerScript, "worker", "{prompt}"},
+			Args:         []string{"-c", workerScript, "worker", "{prompt}"},
 			Availability: domain.AgentAvailabilityAvailable,
 		},
 	)
