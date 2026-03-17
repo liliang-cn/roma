@@ -73,6 +73,7 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 	mux.HandleFunc("/queue", server.handleQueueList)
 	mux.HandleFunc("/queue/", server.handleQueueShow)
 	mux.HandleFunc("/queue-inspect/", server.handleQueueInspect)
+	mux.HandleFunc("/queue-events/", server.handleQueueEventStream)
 	mux.HandleFunc("/recovery", server.handleRecoveryList)
 	mux.HandleFunc("/results/", server.handleResultShow)
 	mux.HandleFunc("/plans/", server.handlePlanShow)
@@ -1238,6 +1239,74 @@ func (s *Server) handleQueueInspect(w http.ResponseWriter, r *http.Request) {
 		resp.Live = EnrichRuntimeLive(SummarizeRuntimeLive(sessionStatus, resp.Tasks, eventItems, resp.Workspaces, resp.Lease, job.UpdatedAt), job.StarterAgent, job.Delegates)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleQueueEventStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/queue-events/")
+	if id == "" {
+		http.Error(w, "missing job id", http.StatusBadRequest)
+		return
+	}
+	job, err := s.queueStore.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if job.SessionID == "" {
+		http.Error(w, "job has no session", http.StatusNotFound)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	workDir := s.workDir
+	sessionID := job.SessionID
+	seen := map[string]struct{}{}
+	lastHeartbeat := time.Now()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			eventStore := preferredEventStore(workDir)
+			items, err := eventStore.ListEvents(ctx, store.EventFilter{SessionID: sessionID})
+			if err != nil {
+				return
+			}
+			for _, item := range items {
+				if _, ok := seen[item.ID]; ok {
+					continue
+				}
+				seen[item.ID] = struct{}{}
+				raw, err := json.Marshal(item)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", raw)
+			}
+			if time.Since(lastHeartbeat) >= 15*time.Second {
+				fmt.Fprintf(w, ": heartbeat\n\n")
+				lastHeartbeat = time.Now()
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) handleResultShow(w http.ResponseWriter, r *http.Request) {

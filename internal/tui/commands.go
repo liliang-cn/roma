@@ -12,6 +12,7 @@ import (
 	"github.com/liliang-cn/roma/internal/api"
 	"github.com/liliang-cn/roma/internal/artifacts"
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/events"
 )
 
 func (m model) tickCmd() tea.Cmd {
@@ -218,6 +219,31 @@ func (m model) cancelCmd(jobID string) tea.Cmd {
 			return commandMsg{err: err}
 		}
 		return commandMsg{text: fmt.Sprintf("cancelled %s -> %s", jobID, item.Status), jobID: jobID, selectJob: true}
+	}
+}
+
+// streamNextEventCmd waits for the next event from ch and returns a streamEventMsg or streamDoneMsg.
+func streamNextEventCmd(ch <-chan events.Record, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		record, ok := <-ch
+		if !ok {
+			return streamDoneMsg{jobID: jobID}
+		}
+		return streamEventMsg{jobID: jobID, record: record}
+	}
+}
+
+// beginStreamCmd starts the StreamJobEvents goroutine and waits for the first event.
+func (m model) beginStreamCmd(jobID string) tea.Cmd {
+	ch := m.stream.ch
+	ctx := m.stream.ctx
+	client := m.client
+	return func() tea.Msg {
+		go func() {
+			defer close(ch)
+			_ = client.StreamJobEvents(ctx, jobID, ch)
+		}()
+		return streamNextEventCmd(ch, jobID)()
 	}
 }
 

@@ -215,16 +215,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewports()
 		}
 		if msg.selectJob && msg.jobID != "" {
-			if m.selectedJobID != msg.jobID {
+			isNewJob := m.selectedJobID != msg.jobID
+			if isNewJob {
 				m.resetStream(msg.jobID)
 			}
 			m.syncViewports()
+			if isNewJob {
+				return m, tea.Batch(m.refreshCmd(), m.beginStreamCmd(msg.jobID))
+			}
 			return m, tea.Batch(m.refreshCmd())
 		}
 		if msg.quit {
 			return m, tea.Quit
 		}
 		m.syncViewports()
+		return m, nil
+
+	case streamEventMsg:
+		if msg.jobID != m.selectedJobID {
+			return m, nil
+		}
+		m.consumeStreamEvent(msg.record)
+		m.syncViewports()
+		return m, streamNextEventCmd(m.stream.ch, m.selectedJobID)
+
+	case streamDoneMsg:
 		return m, nil
 	}
 	var cmd tea.Cmd

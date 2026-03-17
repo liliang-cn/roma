@@ -236,7 +236,7 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 		{ID: "copilot", DisplayName: "Copilot"},
 	}
 
-	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3)
+	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3, nil)
 	if len(assignments) != 3 {
 		t.Fatalf("assignment count = %d, want 3", len(assignments))
 	}
@@ -439,6 +439,48 @@ func TestRunDirectAutoMergeBackRequest(t *testing.T) {
 	}
 }
 
+func TestRunDirectAutoMergeBackRequestUsesControlRootWorkspaceMetadata(t *testing.T) {
+	workDir := t.TempDir()
+	controlDir := t.TempDir()
+	t.Setenv("ROMA_HOME", controlDir)
+	initRunGitRepo(t, workDir)
+	registry, err := agents.NewRegistry(domain.AgentProfile{
+		ID:          "auto-merge",
+		DisplayName: "Auto Merge",
+		Command:     "sh",
+		Args: []string{
+			"-lc",
+			"printf 'control root merge\\n' > control-root-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: control-root-merge.txt\\n'",
+		},
+		Availability: domain.AgentAvailabilityAvailable,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	svc.SetControlDir(controlDir)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "auto merge probe",
+		StarterAgent: "auto-merge",
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+
+	content, err := os.ReadFile(filepath.Join(workDir, "control-root-merge.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "control root merge" {
+		t.Fatalf("content = %q, want control root merge", strings.TrimSpace(string(content)))
+	}
+}
+
 func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 	t.Parallel()
 
@@ -485,9 +527,9 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 }
 
 func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
-	t.Parallel()
-
 	workDir := t.TempDir()
+	controlDir := t.TempDir()
+	t.Setenv("ROMA_HOME", controlDir)
 	initRunGitRepo(t, workDir)
 
 	starterScript := strings.Join([]string{
@@ -497,7 +539,9 @@ func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 		`    if printf '%s' "$prompt" | grep -q "second pass complete"; then`,
 		`      printf 'ROMA_DONE: all work is complete\n'`,
 		`    else`,
-		`      printf 'ROMA_FOLLOWUP: delegate worker | second pass\n'`,
+		`      target=$(printf '%s\n' "$prompt" | sed -n 's/^- \([^:]*delegate_1\):.*/\1/p' | head -n1)`,
+		`      if [ -z "$target" ]; then target=worker; fi`,
+		`      printf 'ROMA_FOLLOWUP: delegate %s | second pass\n' "$target"`,
 		`    fi`,
 		`  else`,
 		`    printf 'bootstrap ready\n'`,
@@ -538,6 +582,7 @@ func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 	}
 
 	svc := NewService(registry)
+	svc.SetControlDir(controlDir)
 	result, err := svc.RunWithResult(context.Background(), Request{
 		Prompt:       "coordinate a low-risk sample file update",
 		StarterAgent: "caesar",

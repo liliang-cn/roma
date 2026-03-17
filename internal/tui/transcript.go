@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,8 +19,35 @@ func newStreamState(jobID string) streamState {
 }
 
 func (m *model) resetStream(jobID string) {
+	if m.stream.cancel != nil {
+		m.stream.cancel()
+	}
+	ch := make(chan events.Record, 64)
+	ctx, cancel := context.WithCancel(context.Background())
 	m.selectedJobID = strings.TrimSpace(jobID)
-	m.stream = newStreamState(jobID)
+	m.stream = streamState{
+		jobID:        strings.TrimSpace(jobID),
+		seenEventIDs: map[string]struct{}{},
+		ch:           ch,
+		cancel:       cancel,
+		ctx:          ctx,
+	}
+}
+
+// consumeStreamEvent processes a single streamed event record, deduplicating against seenEventIDs.
+func (m *model) consumeStreamEvent(record events.Record) {
+	if _, ok := m.stream.seenEventIDs[record.ID]; ok {
+		return
+	}
+	m.stream.seenEventIDs[record.ID] = struct{}{}
+	for _, entry := range formatEventEntries(record) {
+		switch entry.kind {
+		case transcriptOutput:
+			m.appendOutput(entry.label, entry.text)
+		default:
+			m.appendTranscript(entry.kind, entry.label, entry.text)
+		}
+	}
 }
 
 func (m *model) appendSystem(text string) {

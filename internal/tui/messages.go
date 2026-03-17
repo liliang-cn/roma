@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	"github.com/liliang-cn/roma/internal/api"
+	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/queue"
 )
 
@@ -25,6 +27,18 @@ type streamState struct {
 	jobID        string
 	seenEventIDs map[string]struct{}
 	lastStatus   queue.Status
+	ch           chan events.Record
+	cancel       context.CancelFunc
+	ctx          context.Context
+}
+
+type streamEventMsg struct {
+	jobID  string
+	record events.Record
+}
+
+type streamDoneMsg struct {
+	jobID string
 }
 
 type snapshot struct {

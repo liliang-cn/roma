@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -769,6 +770,104 @@ func (c *Client) EventGet(ctx context.Context, id string) (events.Record, error)
 		return events.Record{}, fmt.Errorf("decode event get response: %w", err)
 	}
 	return out, nil
+}
+
+// StreamJobEvents streams SSE events for a queue job, sending each events.Record to out.
+// It returns when ctx is cancelled or the server closes the connection.
+func (c *Client) StreamJobEvents(ctx context.Context, jobID string, out chan<- events.Record) error {
+	httpClient, baseURL, err := c.streamHTTPClient()
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/queue-events/"+jobID, nil)
+	if err != nil {
+		return fmt.Errorf("create stream request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("stream request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stream request returned %s", resp.Status)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		var record events.Record
+		if err := json.Unmarshal([]byte(data), &record); err != nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- record:
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("stream scan: %w", err)
+	}
+	return nil
+}
+
+// streamHTTPClient returns an http.Client without a timeout, suitable for SSE streaming.
+func (c *Client) streamHTTPClient() (*http.Client, string, error) {
+	var errs []error
+	for _, metaPath := range c.metaPaths {
+		httpClient, baseURL, err := streamClientFromMeta(metaPath)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := healthCheckFn(httpClient, baseURL); err != nil {
+			errs = append(errs, fmt.Errorf("health check %s: %w", metaPath, err))
+			continue
+		}
+		return httpClient, baseURL, nil
+	}
+	if len(errs) == 0 {
+		return nil, "", fmt.Errorf("no daemon metadata paths configured")
+	}
+	return nil, "", errors.Join(errs...)
+}
+
+func streamClientFromMeta(metaPath string) (*http.Client, string, error) {
+	raw, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("read api metadata %s: %w", metaPath, err)
+	}
+	var meta struct {
+		Network string `json:"network"`
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, "", fmt.Errorf("unmarshal api metadata %s: %w", metaPath, err)
+	}
+	switch meta.Network {
+	case "unix":
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				dialer := net.Dialer{}
+				return dialer.DialContext(ctx, "unix", meta.Address)
+			},
+		}
+		return &http.Client{Transport: transport}, "http://romad", nil
+	case "tcp":
+		return &http.Client{}, "http://" + meta.Address, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported api network %q in %s", meta.Network, metaPath)
+	}
 }
 
 func (c *Client) httpClient() (*http.Client, string, error) {

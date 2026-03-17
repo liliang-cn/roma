@@ -1,11 +1,13 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -191,7 +193,11 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 			"delegates": req.Delegates,
 		},
 	})
-	assignments := buildOrchestratedAssignments(taskID, starter, delegates, req.Continuous, req.MaxRounds)
+	helpOutputs := make(map[string]string, len(delegates))
+	for _, d := range delegates {
+		helpOutputs[d.ID] = probeAgentHelp(ctx, d)
+	}
+	assignments := buildOrchestratedAssignments(taskID, starter, delegates, req.Continuous, req.MaxRounds, helpOutputs)
 	if upgraded, reasons := s.maybePromoteOrchestratedToCuria(ctx, req.Prompt, req.WorkingDir, taskID, starter, delegates, req.Continuous, req.MaxRounds); len(upgraded) > 0 {
 		assignments = upgraded
 		s.appendEvent(ctx, events.Record{
@@ -562,7 +568,7 @@ func assignmentsOrchestrated(delegates []domain.AgentProfile) int {
 	return 1 + len(delegates)
 }
 
-func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, delegates []domain.AgentProfile, continuous bool, maxRounds int) []scheduler.NodeAssignment {
+func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, delegates []domain.AgentProfile, continuous bool, maxRounds int, helpOutputs map[string]string) []scheduler.NodeAssignment {
 	if len(delegates) == 0 {
 		return []scheduler.NodeAssignment{{
 			Node: domain.TaskNodeSpec{
@@ -591,7 +597,7 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		SemanticReviewer: starter,
 		Continuous:       continuous,
 		MaxRounds:        maxRounds,
-		PromptHint:       buildStarterBootstrapPromptHint(starter, delegates),
+		PromptHint:       buildStarterBootstrapPromptHint(starter, delegates, helpOutputs),
 	})
 	for i, delegate := range delegates {
 		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
@@ -613,14 +619,14 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 	return assignments
 }
 
-func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile) string {
+func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile, helpOutputs map[string]string) string {
 	lines := []string{
 		fmt.Sprintf("You are Caesar, the coordinating starter agent (%s).", starter.DisplayName),
 		"You do not implement the task yourself.",
 		"Your job is to produce the shared bootstrap plan for the delegate agents and coordinate their work.",
-		"Use the known delegate profile summary below instead of probing CLI help, config files, or runtime capabilities yourself.",
 		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
 		"Keep ownership of coordination, progress tracking, and follow-up questions; delegate concrete implementation.",
+		"You may run `<command> --help` (or any healthcheck command) yourself if you need more detail about an agent's capabilities.",
 	}
 	if len(delegates) > 0 {
 		names := make([]string, 0, len(delegates))
@@ -630,10 +636,43 @@ func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []do
 		lines = append(lines, "Delegate agents: "+strings.Join(names, ", "))
 		lines = append(lines, "Known delegate profiles:")
 		for _, delegate := range delegates {
-			lines = append(lines, "- "+delegateAutomationSummary(delegate))
+			summary := "- " + delegateAutomationSummary(delegate)
+			if out := strings.TrimSpace(helpOutputs[delegate.ID]); out != "" {
+				summary += "\n  capability probe output:\n"
+				for _, hl := range strings.Split(out, "\n") {
+					summary += "    " + hl + "\n"
+				}
+			}
+			lines = append(lines, summary)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// probeAgentHelp runs the agent's healthcheck command and returns the first 30
+// lines of combined stdout/stderr output. Returns empty string on any error or
+// when no healthcheck args are configured. The probe runs with a 5-second timeout.
+func probeAgentHelp(ctx context.Context, profile domain.AgentProfile) string {
+	if profile.Command == "" || len(profile.HealthcheckArgs) == 0 {
+		return ""
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, profile.Command, profile.HealthcheckArgs...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	_ = cmd.Run()
+	raw := strings.TrimSpace(buf.String())
+	if raw == "" {
+		return ""
+	}
+	// Return at most 30 lines to keep the prompt concise.
+	allLines := strings.Split(raw, "\n")
+	if len(allLines) > 30 {
+		allLines = allLines[:30]
+	}
+	return strings.Join(allLines, "\n")
 }
 
 func delegateAutomationSummary(profile domain.AgentProfile) string {
@@ -663,7 +702,7 @@ func (s *Service) handleMergeBackRequests(ctx context.Context, workDir string, i
 	if strings.TrimSpace(workDir) == "" {
 		return
 	}
-	manager := workspacepkg.NewManager(workDir, s.events)
+	manager := workspacepkg.NewManager(s.controlRoot(workDir), s.events)
 	for _, envelope := range items {
 		request, ok := artifacts.MergeBackRequestFromEnvelope(envelope)
 		if !ok {
