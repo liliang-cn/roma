@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os/signal"
 	"syscall"
@@ -10,10 +11,13 @@ import (
 )
 
 func main() {
+	acpPort := flag.Int("acp-port", 0, "TCP port for the ACP HTTP listener (0 disables ACP)")
+	flag.Parse()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	daemon, err := app.NewDaemon()
+	daemon, err := app.NewDaemonWithOptions(app.DaemonOptions{ACPPort: *acpPort})
 	if err != nil {
 		log.Fatalf("create daemon: %v", err)
 	}

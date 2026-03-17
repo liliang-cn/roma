@@ -264,3 +264,10 @@ type PlanDecisionRequest struct {
 }
 
 type PlanApplyResponse = plans.ApplyResult
+
+// ACPStatusResponse is returned from the /acp/status endpoint.
+type ACPStatusResponse struct {
+	Enabled bool `json:"enabled"`
+	Port    int  `json:"port"`
+}
+

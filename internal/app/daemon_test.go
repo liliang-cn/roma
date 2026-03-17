@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/liliang-cn/roma/internal/acpserver"
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/queue"
 	"github.com/liliang-cn/roma/internal/run"
@@ -127,6 +128,57 @@ func TestFinalizeQueueRequestUsesRunResultStatusFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDaemonStartACPServerWhenConfigured(t *testing.T) {
+	homeDir := t.TempDir()
+	workDir := t.TempDir()
+	t.Setenv("ROMA_HOME", homeDir)
+
+	started := false
+	gotPort := 0
+	daemon, err := NewDaemonWithOptions(DaemonOptions{
+		WorkingDir: workDir,
+		ACPPort:    8090,
+		newACPServer: func(cfg acpserver.Config) (acpService, error) {
+			gotPort = cfg.Port
+			return fakeACPService{
+				port: cfg.Port,
+				start: func(context.Context) error {
+					started = true
+					return nil
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDaemonWithOptions() error = %v", err)
+	}
+	if gotPort != 8090 {
+		t.Fatalf("ACP port = %d, want %d", gotPort, 8090)
+	}
+	if err := daemon.startACP(context.Background()); err != nil {
+		t.Fatalf("startACP() error = %v", err)
+	}
+	if !started {
+		t.Fatal("startACP() did not start the ACP server")
+	}
+}
+
+type fakeACPService struct {
+	port  int
+	start func(context.Context) error
+}
+
+func (f fakeACPService) Start(ctx context.Context) error {
+	if f.start == nil {
+		return nil
+	}
+	return f.start(ctx)
+}
+
+func (f fakeACPService) Port() int {
+	return f.port
 }
 
 func writeAgentConfig(t *testing.T, path string, profiles []domain.AgentProfile) {

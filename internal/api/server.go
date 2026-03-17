@@ -48,6 +48,7 @@ type Server struct {
 	queueStore   queue.Backend
 	sessionStore history.Backend
 	canceler     QueueCanceler
+	acpPort      int
 }
 
 // NewServer constructs the API server.
@@ -64,6 +65,7 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.handleHealth)
 	mux.HandleFunc("/status", server.handleStatus)
+	mux.HandleFunc("/acp/status", server.handleAcpStatus)
 	mux.HandleFunc("/submit", server.handleSubmit)
 	mux.HandleFunc("/artifacts", server.handleArtifactList)
 	mux.HandleFunc("/artifacts/", server.handleArtifactShow)
@@ -98,6 +100,11 @@ func NewServer(workDir string, queueStore queue.Backend, sessionStore history.Ba
 // SetQueueCanceler attaches an optional daemon-owned queue canceler.
 func (s *Server) SetQueueCanceler(canceler QueueCanceler) {
 	s.canceler = canceler
+}
+
+// SetACPPort attaches the configured ACP port.
+func (s *Server) SetACPPort(port int) {
+	s.acpPort = port
 }
 
 // Start begins serving on the Unix domain socket.
@@ -146,6 +153,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleAcpStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, ACPStatusResponse{
+		Enabled: s.acpPort > 0,
+		Port:    s.acpPort,
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

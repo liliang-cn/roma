@@ -772,6 +772,32 @@ func (c *Client) EventGet(ctx context.Context, id string) (events.Record, error)
 	return out, nil
 }
 
+// AcpStatus returns whether the ACP server is enabled.
+func (c *Client) AcpStatus(ctx context.Context) (ACPStatusResponse, error) {
+	httpClient, baseURL, err := c.httpClient()
+	if err != nil {
+		return ACPStatusResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/acp/status", nil)
+	if err != nil {
+		return ACPStatusResponse{}, fmt.Errorf("create acp status request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return ACPStatusResponse{}, fmt.Errorf("acp status request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ACPStatusResponse{}, fmt.Errorf("acp status request returned %s", resp.Status)
+	}
+	var out ACPStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return ACPStatusResponse{}, fmt.Errorf("decode acp status response: %w", err)
+	}
+	return out, nil
+}
+
 // StreamJobEvents streams SSE events for a queue job, sending each events.Record to out.
 // It returns when ctx is cancelled or the server closes the connection.
 func (c *Client) StreamJobEvents(ctx context.Context, jobID string, out chan<- events.Record) error {

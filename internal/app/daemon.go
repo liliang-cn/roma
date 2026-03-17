@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liliang-cn/roma/internal/acpserver"
 	"github.com/liliang-cn/roma/internal/agents"
 	"github.com/liliang-cn/roma/internal/api"
 	"github.com/liliang-cn/roma/internal/artifacts"
@@ -29,9 +30,32 @@ import (
 	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
+// acpService is the minimal interface for the ACP server lifecycle.
+type acpService interface {
+	Start(ctx context.Context) error
+	Port() int
+}
+
+// DaemonOptions configures a Daemon instance.
+type DaemonOptions struct {
+	WorkingDir   string
+	ACPPort      int
+	newACPServer func(acpserver.Config) (acpService, error)
+}
+
+func (o DaemonOptions) acpFactory() func(acpserver.Config) (acpService, error) {
+	if o.newACPServer != nil {
+		return o.newACPServer
+	}
+	return func(cfg acpserver.Config) (acpService, error) {
+		return acpserver.NewServerFromConfig(cfg), nil
+	}
+}
+
 // Daemon is the bootstrap romad process.
 type Daemon struct {
 	api       *api.Server
+	acp       acpService
 	store     *store.MemoryStore
 	gateway   *gateway.Service
 	history   history.Backend
@@ -50,13 +74,18 @@ func NewDaemon() (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
-	return NewDaemonForWorkingDir(wd)
+	return NewDaemonWithOptions(DaemonOptions{WorkingDir: wd})
 }
 
 // NewDaemonForWorkingDir constructs the bootstrap daemon for one target working directory.
 func NewDaemonForWorkingDir(workingDir string) (*Daemon, error) {
+	return NewDaemonWithOptions(DaemonOptions{WorkingDir: workingDir})
+}
+
+// NewDaemonWithOptions constructs the bootstrap daemon with optional listeners.
+func NewDaemonWithOptions(opts DaemonOptions) (*Daemon, error) {
 	mem := store.NewMemoryStore()
-	wd := strings.TrimSpace(workingDir)
+	wd := strings.TrimSpace(opts.WorkingDir)
 	if wd == "" {
 		var err error
 		wd, err = os.Getwd()
@@ -80,8 +109,21 @@ func NewDaemonForWorkingDir(workingDir string) (*Daemon, error) {
 	artifactBackend := newArtifactBackend(controlDir)
 	planService := plans.NewService(artifactBackend, workspacepkg.NewManager(wd, mem), mem)
 	server := api.NewServer(controlDir, queueBackend, historyBackend)
+	var acp acpService
+	if opts.ACPPort > 0 {
+		acp, err = opts.acpFactory()(acpserver.Config{
+			Port:       opts.ACPPort,
+			WorkingDir: wd,
+			Registry:   registry,
+			Queue:      queueBackend,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create acp server: %w", err)
+		}
+	}
 	daemon := &Daemon{
 		api:       server,
+		acp:       acp,
 		store:     mem,
 		gateway:   gateway.NewService(mem, planService, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
 		history:   historyBackend,
@@ -153,6 +195,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else {
 			return fmt.Errorf("start daemon api: %w", err)
 		}
+	}
+	if err := d.startACP(ctx); err != nil {
+		return fmt.Errorf("start acp server: %w", err)
 	}
 	if err := d.history.RecoverInterrupted(ctx); err != nil {
 		return fmt.Errorf("recover interrupted sessions: %w", err)
@@ -265,6 +310,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (d *Daemon) startACP(ctx context.Context) error {
+	if d.acp == nil {
+		return nil
+	}
+	if err := d.acp.Start(ctx); err != nil {
+		return err
+	}
+	log.Printf("romad acp listening on port %d", d.acp.Port())
+	return nil
 }
 
 func (d *Daemon) processNextQueueItem(ctx context.Context) error {

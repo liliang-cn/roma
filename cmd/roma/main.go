@@ -94,9 +94,11 @@ func run(ctx context.Context, args []string) error {
 		return runRecover(ctx, args[1:])
 	case "reject":
 		return runQueueDecision(ctx, false, args[1:])
+	case "acp":
+		return runAcp(ctx, args[1:])
 	case "status":
 		return runStatus(ctx)
-	case "submit":
+	case "submit", "tell", "ask":
 		return runSubmit(ctx, args[1:])
 	case "tui":
 		return runTUI(ctx, args[1:])
@@ -1804,6 +1806,37 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 			fmt.Printf("reputation[%s]=weight:%d reviews:%d aligned:%d vetoes:%d arbitrations:%d\n", item.ReviewerID, item.EffectiveWeight, item.ReviewCount, item.AlignmentCount, item.VetoCount, item.ArbitrationCount)
 		}
 	}
+}
+
+func runAcp(ctx context.Context, args []string) error {
+	if len(args) < 1 || args[0] != "status" {
+		return fmt.Errorf("usage: roma acp status")
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	client := api.NewClient(wd)
+	if !client.Available() {
+		// Daemon not running, so ACP is not enabled.
+		fmt.Println(`{"enabled": false, "port": 0}`)
+		return nil
+	}
+
+	status, err := client.AcpStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("get acp status: %w", err)
+	}
+
+	raw, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal acp status: %w", err)
+	}
+
+	fmt.Println(string(raw))
+	return nil
 }
 
 func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope) *api.CuriaSummary {
