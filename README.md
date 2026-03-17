@@ -1,196 +1,245 @@
 # ROMA: Runtime Orchestrator for Multi-Agents
 
-> “It just fires up all the coding agents at once and points them at the same problem.” — someone
+> "It just fires up all the coding agents at once and points them at the same problem." — someone
 
-> “It not only does nothing, it also burns a lot of tokens.” — someone else
+> "It not only does nothing, it also burns a lot of tokens." — someone else
 
-## How ROMA Works
+## What is ROMA
 
 ROMA treats multi-agent coding like a Roman state, not a chat room.
 
-- `romad` is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
-- `roma` is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
+- **`romad`** is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
+- **`roma`** is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
 - Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
-- Each task runs in an isolated workspace when possible. Agents work there first, then ROMA decides whether a plan can be merged back.
+- Each task runs in an isolated git worktree workspace. Agents work there first, then ROMA merges changes back automatically.
 
-ROMA currently supports four execution styles:
+ROMA supports four execution modes:
 
-- `Direct`: one agent executes one task.
-- `Relay`: multiple agents run as a pipeline, passing artifacts forward.
-- `Curia`: multiple agents act as a senate. Senators produce proposals, review each other anonymously (with timeout handling), and ROMA builds a `DecisionPack` plus an `ExecutionPlan`.
-- `Graph`: DAG-based execution with dependencies between nodes, supports mixing strategies.
+| Mode | Description |
+|------|-------------|
+| **Direct** | One agent executes one task |
+| **Relay** | Multiple agents as a pipeline; Caesar (starter) coordinates, delegates implement |
+| **Curia** | Multi-agent senate; senators propose and review anonymously, ROMA builds a `DecisionPack` + `ExecutionPlan` |
+| **Graph** | DAG-based execution with dependencies, supports mixing all strategies |
 
-In the Curia metaphor:
+---
 
-- **Senators** are the proposing and reviewing agents.
-- **DebateLog** is the court record of proposals, ballots, disputes, and tradeoffs.
-- **Augustus** is the higher-weight arbitrator agent used when the senate cannot converge cleanly.
-- **ExecutionPlan** is the only thing that should reach real apply/rollback flow.
+## Install
 
-The intended user flow is:
+### One-liner (Linux & macOS)
 
-1. `roma run --agent <agent> --with <delegates> <prompt>` or `roma submit ...`
-2. `romad` schedules agents and records everything under the ROMA state root
-3. inspect with `roma queue ...` or `roma debug ...`
-4. approve or reject when policy or plan gates require it
-5. preview, apply, or roll back the resulting execution plan
+```sh
+curl -fsSL https://raw.githubusercontent.com/liliang-cn/roma/main/install.sh | sh
+```
 
-For Graph mode (DAG execution):
+Custom install directory:
 
-```bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/liliang-cn/roma/main/install.sh | INSTALL_DIR=/usr/local/bin sh
+```
+
+The installer:
+- Detects your OS and architecture (linux/darwin × amd64/arm64)
+- Uses `go install` if Go ≥ 1.22 is available, otherwise downloads a prebuilt binary from GitHub Releases
+- Creates `~/.roma/` (ROMA home directory)
+- Verifies the binaries actually run after installation
+- Warns if the install directory is not in `PATH`
+
+If `~/.local/bin` is not in your PATH, add it:
+
+```sh
+# zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+### Build from source
+
+Requires Go ≥ 1.22 and git.
+
+```sh
+git clone https://github.com/liliang-cn/roma.git
+cd roma
+make install        # installs to ~/.local/bin
+```
+
+---
+
+## Quick Start
+
+### 1. Register agents
+
+ROMA has no built-in agents. Register whichever CLI coding tools you have installed.
+For `claude`, `codex`, and `gemini`, command arguments are filled in automatically:
+
+```sh
+roma agent add claude "Claude" $(which claude)
+roma agent add codex  "Codex"  $(which codex)
+roma agent add gemini "Gemini" $(which gemini)
+
+# confirm
+roma agent list
+```
+
+### 2. Start the daemon
+
+```sh
+roma start
+# romad started (pid=12345, log=~/.roma/romad.log)
+```
+
+### 3. Run a task
+
+```sh
+# single agent — direct mode
+roma run --agent claude "add input validation to the user registration handler"
+
+# multi-agent — claude coordinates, codex implements
+roma run --agent claude --with codex "refactor the payment module and add unit tests"
+
+# async — submit and get a job ID immediately
+roma submit --agent claude "write API documentation for all public endpoints"
+```
+
+### 4. Inspect progress
+
+```sh
+roma status                        # daemon state + queue summary
+roma queue list                    # all jobs
+roma queue attach <job_id>         # stream live output
+roma result show <session_id>      # final result summary
+```
+
+### 5. Stop the daemon
+
+```sh
+roma stop
+```
+
+---
+
+## Usage Reference
+
+### Daemon management
+
+```sh
+roma start [--acp-port <port>]   # start romad in background
+roma stop                         # stop romad (SIGTERM, fallback SIGKILL after 10s)
+roma status                       # daemon state, queue counts, sqlite stats
+```
+
+Logs are written to `~/.roma/romad.log`. PID is stored in `~/.roma/romad.pid`.
+
+### Running tasks
+
+```sh
+roma run    --agent <id> [--with <id,...>] "<prompt>"   # run and wait
+roma submit --agent <id> [--with <id,...>] "<prompt>"   # submit async, print job_id
+```
+
+### Queue management
+
+```sh
+roma queue list [--status <status>]   # list jobs
+roma queue show <job_id>              # job details as JSON
+roma queue attach <job_id>            # stream output in real time
+roma approve <job_id>                 # approve a pending job
+roma reject  <job_id>                 # reject a pending job
+roma cancel  <job_id>                 # cancel a running job
+```
+
+### Agent management
+
+```sh
+roma agent list
+roma agent add <id> <name> <path> [--arg <arg>] [--alias <a>] [--pty] [--mcp] [--json]
+roma agent remove <id>
+roma agent inspect <id>
+```
+
+### Results and history
+
+```sh
+roma result show <session_id>
+roma debug session list
+roma debug session show <session_id>
+roma debug task list --session <session_id>
+roma debug event list --session <session_id>
+roma debug artifact list --session <session_id>
+roma debug artifact show <artifact_id>
+```
+
+### Graph (DAG) mode
+
+```sh
 roma debug graph run --file examples/curia-test.json
 ```
 
+---
+
 ## TUI Mode
 
-ROMA also supports a Bubble Tea TUI for the "single terminal, full control" workflow.
+Launch the interactive terminal UI:
 
-- `roma`
-- `roma tui`
-- `romatui`
-
-`roma` now defaults to the TUI. In TUI mode, ROMA starts an embedded `romad` when the TUI launches and stops it when the TUI exits. The TUI stays daemon-first and talks to the same local API; it does not bypass the control plane.
-
-Current slash commands:
-
-- `/help`
-- `/status`
-- `/agent <id>`
-- `/with <a,b>`
-- `/run <prompt>`
-- `/submit <prompt>`
-- `/open <job_id>`
-- `/cancel [job_id]`
-- `/result [session_id]`
-
-## Build
-
-Build the binaries:
-
-```bash
-make build
+```sh
+roma          # defaults to TUI
+roma tui
+romatui
 ```
 
-This produces:
+The TUI starts an embedded `romad` automatically and stops it on exit. Available slash commands:
 
-```text
-bin/roma
-bin/romad
+```
+/help                 show help
+/status               daemon and queue status
+/agent <id>           set active agent
+/with <a,b,...>       set delegate agents
+/run <prompt>         run task and stream output
+/submit <prompt>      submit task asynchronously
+/open <job_id>        open job output
+/cancel [job_id]      cancel a job
+/result [session_id]  show session result
 ```
 
-Install them to `~/.local/bin`:
+---
 
-```bash
-make install
+## How Merge-Back Works
+
+Agents run in isolated git worktrees under `~/.roma/workspaces/`. When an agent finishes and emits:
+
+```
+ROMA_MERGE_BACK: direct_merge | <reason>
+ROMA_MERGE_FILE: path/to/changed/file
 ```
 
-## Test
+ROMA automatically applies the patch back to the main repository using `git apply --3way`. If there are conflicts or policy blocks, the merge is held for manual review.
 
-Run the full test suite:
+---
 
-```bash
-make test
+## Development
+
+```sh
+make build    # build to bin/
+make test     # run full test suite with -race
+make install  # install to ~/.local/bin
 ```
 
-## Run `romad`
+CI runs on every push and pull request to `main` (Linux + macOS).
+Releases are published automatically when a `v*.*.*` tag is pushed:
 
-`romad` keeps its own control-plane state under `$HOME/.roma`.
-There are two separate paths to think about:
-
-- binary path: where `romad` is installed, for example `~/.local/bin/romad`
-- ROMA home: `$HOME/.roma`
-- repository path: the target project directory ROMA inspects and executes against through isolated worktrees
-
-Run it directly:
-
-```bash
-./bin/romad
+```sh
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Check daemon state:
+This triggers the release workflow which builds binaries for all four platforms and publishes them to GitHub Releases.
 
-```bash
-./bin/roma status
-```
-
-## Linux
-
-A `systemd --user` unit template is included at [`deploy/systemd/romad.service`](./deploy/systemd/romad.service).
-
-Install it:
-
-```bash
-make install
-mkdir -p ~/.roma
-mkdir -p ~/.config/systemd/user
-cp deploy/systemd/romad.service ~/.config/systemd/user/romad.service
-systemctl --user daemon-reload
-systemctl --user enable --now romad
-```
-
-Useful commands:
-
-```bash
-systemctl --user status romad
-journalctl --user -u romad -f
-systemctl --user restart romad
-systemctl --user stop romad
-```
-
-The unit assumes:
-
-- binary path: `$HOME/.local/bin/romad`
-- ROMA home: `$HOME/.roma`
-- repository work is still targeted by `roma run --cwd <repo>` or by invoking `roma` from that repository
-
-## macOS
-
-A `launchd` LaunchAgent template is included at [`deploy/launchd/com.roma.romad.plist`](./deploy/launchd/com.roma.romad.plist).
-
-Install it:
-
-```bash
-make install
-mkdir -p ~/Library/LaunchAgents
-cp deploy/launchd/com.roma.romad.plist ~/Library/LaunchAgents/com.roma.romad.plist
-launchctl bootout "gui/$(id -u)/com.roma.romad" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.roma.romad.plist
-launchctl enable "gui/$(id -u)/com.roma.romad"
-launchctl kickstart -k "gui/$(id -u)/com.roma.romad"
-```
-
-Useful commands:
-
-```bash
-launchctl print "gui/$(id -u)/com.roma.romad"
-launchctl kickstart -k "gui/$(id -u)/com.roma.romad"
-launchctl bootout "gui/$(id -u)/com.roma.romad"
-```
-
-The LaunchAgent assumes:
-
-- binary path: `$HOME/.local/bin/romad`
-- ROMA home: `$HOME/.roma`
-
-## Windows
-
-The simplest default is to run `romad.exe` from a normal terminal:
-
-```powershell
-go build -o bin/romad.exe ./cmd/romad
-Set-Location C:\path\to\ROMA
-.\bin\romad.exe
-```
-
-For background execution, use Task Scheduler first:
-
-- Program: `C:\path\to\ROMA\bin\romad.exe`
-- Start in: `C:\path\to\ROMA`
-- Trigger: `At log on`
-- Restart on failure: enabled
-
-If you specifically need a Windows service, wrap `romad.exe` with a service manager such as `nssm`.
+---
 
 ## More
 
-Platform-specific runtime notes also live in [`docs/running-romad.md`](./docs/running-romad.md).
+- Architecture and design notes: [`DESIGN.md`](./DESIGN.md)
+- Agent configuration reference: [`AGENTS.md`](./AGENTS.md)
+- Platform runtime notes: [`docs/running-romad.md`](./docs/running-romad.md)

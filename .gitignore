@@ -9,3 +9,8 @@ romad.log
 bin/
 
 refs/
+
+# build artifacts in project root
+/roma
+/romad
+/romatui

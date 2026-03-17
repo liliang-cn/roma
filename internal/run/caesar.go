@@ -171,6 +171,19 @@ func buildCaesarReviewPromptHint(round int, dependencies []string, assignments [
 	return strings.Join(lines, "\n")
 }
 
+// buildDirectRunPromptHint returns the prompt hint for a single-agent direct run.
+// It tells the agent to emit ROMA_MERGE_BACK so the workspace is automatically
+// merged back after the task completes.
+func buildDirectRunPromptHint() string {
+	return strings.Join([]string{
+		"You are the sole executor for this task.",
+		"When your workspace changes are complete and ready to land, emit:",
+		"ROMA_MERGE_BACK: direct_merge | <brief reason>",
+		"Optionally list each changed file with:",
+		"ROMA_MERGE_FILE: <relative/path/to/file>",
+	}, "\n")
+}
+
 func buildCaesarDelegatePromptHint(starter domain.AgentProfile, instruction string) string {
 	lines := []string{
 		fmt.Sprintf("The starter agent %s is Caesar only and will not implement code.", starter.DisplayName),

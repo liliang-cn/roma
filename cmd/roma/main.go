@@ -96,6 +96,10 @@ func run(ctx context.Context, args []string) error {
 		return runQueueDecision(ctx, false, args[1:])
 	case "acp":
 		return runAcp(ctx, args[1:])
+	case "start":
+		return runStart(args[1:])
+	case "stop":
+		return runStop()
 	case "status":
 		return runStatus(ctx)
 	case "submit", "tell", "ask":
@@ -2222,6 +2226,9 @@ func runStatus(ctx context.Context) error {
 		}
 	}
 
+	daemonRunning, daemonPID := daemonStatus()
+	fmt.Printf("daemon_running=%t\n", daemonRunning)
+	fmt.Printf("daemon_pid=%d\n", daemonPID)
 	fmt.Printf("mode=%s\n", daemonMode)
 	fmt.Printf("queue_items=%d\n", queueCount)
 	fmt.Printf("sessions=%d\n", sessionCount)
@@ -3111,6 +3118,8 @@ func printUsage() {
 	fmt.Println("  roma tui [--cwd <dir>]")
 	fmt.Println(`  roma run --agent codex --with gemini,copilot "build a feature"`)
 	fmt.Println(`  roma submit --agent codex --with gemini,copilot "build a feature"`)
+	fmt.Println("  roma start [--acp-port <port>]")
+	fmt.Println("  roma stop")
 	fmt.Println("  roma status")
 	fmt.Println("  roma cancel <job_id>")
 	fmt.Println("  roma result show <session_id>")

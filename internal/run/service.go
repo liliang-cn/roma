@@ -332,6 +332,7 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 		SemanticReviewer: profile,
 		Continuous:       req.Continuous,
 		MaxRounds:        req.MaxRounds,
+		PromptHint:       buildDirectRunPromptHint(),
 	}}
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
