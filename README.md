@@ -6,21 +6,30 @@
 
 ## What is ROMA
 
-ROMA treats multi-agent coding like a Roman state, not a chat room.
+ROMA runs **multiple coding agents simultaneously** — Claude, Codex, Gemini, Copilot, OpenCode, or any CLI-driven agent — and orchestrates them into a single coherent result.
 
-- **`romad`** is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
-- **`roma`** is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
-- Agents do not share free-form conversation as system truth. ROMA turns their outputs into structured artifacts and event records.
-- Each task runs in an isolated git worktree workspace. Agents work there first, then ROMA merges changes back automatically.
+Instead of asking one agent for the answer, ROMA can:
+
+- **Parallelize**: run the same problem across multiple agents at the same time
+- **Coordinate**: let a Caesar (coordinator) agent break down the task, dispatch subtasks to delegate agents, and synthesize the results
+- **Vote**: agents propose solutions independently, ROMA collects their outputs and runs anonymous peer review — the best proposal wins
+- **Merge safely**: each agent works in an isolated `git worktree`; ROMA merges the winning implementation back to your main branch automatically via `git apply --3way`
+
+The result is not just "what one agent said" — it's the outcome of a structured deliberation process backed by structured artifacts, event records, and policy gates.
+
+---
+
+**`romad`** is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
+**`roma`** is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
 
 ROMA supports four execution modes:
 
 | Mode | Description |
 |------|-------------|
-| **Direct** | One agent executes one task |
-| **Relay** | Multiple agents as a pipeline; Caesar (starter) coordinates, delegates implement |
-| **Curia** | Multi-agent senate; senators propose and review anonymously, ROMA builds a `DecisionPack` + `ExecutionPlan` |
-| **Graph** | DAG-based execution with dependencies, supports mixing all strategies |
+| **Direct** | One agent, one task — fast and simple |
+| **Relay** | Caesar coordinates; delegate agents implement in parallel, Caesar reviews and merges |
+| **Curia** | Multi-agent senate: agents propose independently, anonymous peer voting produces a `DecisionPack` + `ExecutionPlan` |
+| **Graph** | DAG-based execution with explicit dependencies; any node can use any mode |
 
 ---
 
