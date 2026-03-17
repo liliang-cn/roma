@@ -226,16 +226,6 @@ make test     # run full test suite with -race
 make install  # install to ~/.local/bin
 ```
 
-CI runs on every push and pull request to `main` (Linux + macOS).
-Releases are published automatically when a `v*.*.*` tag is pushed:
-
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This triggers the release workflow which builds binaries for all four platforms and publishes them to GitHub Releases.
-
 ---
 
 ## More
