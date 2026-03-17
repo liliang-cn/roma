@@ -584,13 +584,30 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		}}
 	}
 
-	assignments := make([]scheduler.NodeAssignment, 0, 1+len(delegates))
+	assignments := make([]scheduler.NodeAssignment, 0, 2+len(delegates))
+
+	clarifyNodeID := taskID + "_starter_clarify"
+	assignments = append(assignments, scheduler.NodeAssignment{
+		Node: domain.TaskNodeSpec{
+			ID:            clarifyNodeID,
+			Title:         "Starter prompt clarification",
+			Strategy:      domain.TaskStrategyDirect,
+			SchemaVersion: "v1",
+		},
+		Profile:          starter,
+		SemanticReviewer: starter,
+		Continuous:       continuous,
+		MaxRounds:        maxRounds,
+		PromptHint:       buildStarterClarifyPromptHint(starter, delegates, helpOutputs),
+	})
+
 	bootstrapNodeID := taskID + "_starter_bootstrap"
 	assignments = append(assignments, scheduler.NodeAssignment{
 		Node: domain.TaskNodeSpec{
 			ID:            bootstrapNodeID,
 			Title:         "Starter Caesar coordination",
 			Strategy:      domain.TaskStrategyDirect,
+			Dependencies:  []string{clarifyNodeID},
 			SchemaVersion: "v1",
 		},
 		Profile:          starter,
@@ -619,10 +636,41 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 	return assignments
 }
 
+func buildStarterClarifyPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile, helpOutputs map[string]string) string {
+	lines := []string{
+		fmt.Sprintf("You are %s, the coordinating starter agent.", starter.DisplayName),
+		"Your task is to rewrite the user input into a clear, structured task specification.",
+		"Do not implement the task yourself. Only produce the enhanced specification.",
+		"",
+		"Output a markdown document with the following sections:",
+		"1. **Objective** – a concise statement of the overall goal",
+		"2. **Constraints** – any explicit or implicit constraints (languages, frameworks, style, etc.)",
+		"3. **Scope per delegate** – for each delegate agent, describe their specific area of responsibility",
+		"4. **Expected deliverables** – what each delegate should produce",
+		"",
+		"Keep the specification clear and unambiguous so the delegate agents can execute with minimal overlap.",
+	}
+	if len(delegates) > 0 {
+		lines = append(lines, "", "Available delegate agents:")
+		for _, delegate := range delegates {
+			summary := "- " + delegateAutomationSummary(delegate)
+			if out := strings.TrimSpace(helpOutputs[delegate.ID]); out != "" {
+				summary += "\n  capability probe output:\n"
+				for _, hl := range strings.Split(out, "\n") {
+					summary += "    " + hl + "\n"
+				}
+			}
+			lines = append(lines, summary)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile, helpOutputs map[string]string) string {
 	lines := []string{
 		fmt.Sprintf("You are Caesar, the coordinating starter agent (%s).", starter.DisplayName),
 		"You do not implement the task yourself.",
+		"The upstream clarify node has already produced a structured task specification; use it as the basis for your work assignment plan.",
 		"Your job is to produce the shared bootstrap plan for the delegate agents and coordinate their work.",
 		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
 		"Keep ownership of coordination, progress tracking, and follow-up questions; delegate concrete implementation.",

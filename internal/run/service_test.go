@@ -237,19 +237,32 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	}
 
 	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3, nil)
-	if len(assignments) != 3 {
-		t.Fatalf("assignment count = %d, want 3", len(assignments))
+	// clarify + bootstrap + 2 delegates = 4
+	if len(assignments) != 4 {
+		t.Fatalf("assignment count = %d, want 4", len(assignments))
 	}
-	if assignments[0].Node.ID != "task_1_starter_bootstrap" {
-		t.Fatalf("bootstrap node id = %q, want task_1_starter_bootstrap", assignments[0].Node.ID)
+
+	clarify := assignments[0]
+	bootstrap := assignments[1]
+
+	if clarify.Node.ID != "task_1_starter_clarify" {
+		t.Fatalf("clarify node id = %q, want task_1_starter_clarify", clarify.Node.ID)
 	}
-	if assignments[0].Node.Title != "Starter Caesar coordination" {
-		t.Fatalf("bootstrap title = %q, want Starter Caesar coordination", assignments[0].Node.Title)
+	if bootstrap.Node.ID != "task_1_starter_bootstrap" {
+		t.Fatalf("bootstrap node id = %q, want task_1_starter_bootstrap", bootstrap.Node.ID)
 	}
-	if assignments[0].SemanticReviewer.ID != "starter" {
-		t.Fatalf("bootstrap reviewer = %q, want starter", assignments[0].SemanticReviewer.ID)
+	if bootstrap.Node.Title != "Starter Caesar coordination" {
+		t.Fatalf("bootstrap title = %q, want Starter Caesar coordination", bootstrap.Node.Title)
 	}
-	for _, assignment := range assignments[1:] {
+	if bootstrap.SemanticReviewer.ID != "starter" {
+		t.Fatalf("bootstrap reviewer = %q, want starter", bootstrap.SemanticReviewer.ID)
+	}
+	// bootstrap depends on clarify
+	if got := bootstrap.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_clarify" {
+		t.Fatalf("bootstrap dependencies = %#v, want [task_1_starter_clarify]", got)
+	}
+	// delegates depend on bootstrap
+	for _, assignment := range assignments[2:] {
 		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
 			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_bootstrap]", assignment.Node.ID, got)
 		}
@@ -257,19 +270,88 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 			t.Fatalf("delegate %s reviewer = %q, want starter", assignment.Node.ID, assignment.SemanticReviewer.ID)
 		}
 	}
-	if strings.Contains(strings.ToLower(assignments[0].PromptHint), "inspect the delegate agents") {
-		t.Fatalf("bootstrap prompt hint = %q, want no runtime delegate inspection directive", assignments[0].PromptHint)
+	if strings.Contains(strings.ToLower(bootstrap.PromptHint), "inspect the delegate agents") {
+		t.Fatalf("bootstrap prompt hint = %q, want no runtime delegate inspection directive", bootstrap.PromptHint)
 	}
-	if !strings.Contains(assignments[0].PromptHint, "Known delegate profiles") {
-		t.Fatalf("bootstrap prompt hint = %q, want embedded delegate summary", assignments[0].PromptHint)
+	if !strings.Contains(bootstrap.PromptHint, "Known delegate profiles") {
+		t.Fatalf("bootstrap prompt hint = %q, want embedded delegate summary", bootstrap.PromptHint)
 	}
-	if !strings.Contains(assignments[0].PromptHint, "You do not implement the task yourself.") {
-		t.Fatalf("bootstrap prompt hint = %q, want Caesar-only coordination directive", assignments[0].PromptHint)
+	if !strings.Contains(bootstrap.PromptHint, "You do not implement the task yourself.") {
+		t.Fatalf("bootstrap prompt hint = %q, want Caesar-only coordination directive", bootstrap.PromptHint)
 	}
-	for _, assignment := range assignments[1:] {
+	for _, assignment := range assignments[2:] {
 		if strings.Contains(strings.ToLower(assignment.PromptHint), "active contributor") {
 			t.Fatalf("delegate prompt hint = %q, want no starter worker language", assignment.PromptHint)
 		}
+	}
+}
+
+func TestBuildOrchestratedAssignmentsIncludesClarifyNode(t *testing.T) {
+	t.Parallel()
+
+	starter := domain.AgentProfile{ID: "starter", DisplayName: "Starter"}
+	delegates := []domain.AgentProfile{
+		{ID: "agent-a", DisplayName: "Agent A"},
+	}
+
+	assignments := buildOrchestratedAssignments("task_x", starter, delegates, false, 1, nil)
+	if len(assignments) != 3 {
+		t.Fatalf("assignment count = %d, want 3 (clarify + bootstrap + 1 delegate)", len(assignments))
+	}
+
+	clarify := assignments[0]
+	bootstrap := assignments[1]
+	delegate := assignments[2]
+
+	if clarify.Node.ID != "task_x_starter_clarify" {
+		t.Fatalf("clarify node id = %q, want task_x_starter_clarify", clarify.Node.ID)
+	}
+	if clarify.Node.Title != "Starter prompt clarification" {
+		t.Fatalf("clarify node title = %q, want Starter prompt clarification", clarify.Node.Title)
+	}
+	if len(clarify.Node.Dependencies) != 0 {
+		t.Fatalf("clarify dependencies = %#v, want none", clarify.Node.Dependencies)
+	}
+	if clarify.Profile.ID != "starter" {
+		t.Fatalf("clarify profile = %q, want starter", clarify.Profile.ID)
+	}
+
+	// bootstrap depends on clarify
+	if got := bootstrap.Node.Dependencies; len(got) != 1 || got[0] != "task_x_starter_clarify" {
+		t.Fatalf("bootstrap dependencies = %#v, want [task_x_starter_clarify]", got)
+	}
+
+	// delegate depends on bootstrap
+	if got := delegate.Node.Dependencies; len(got) != 1 || got[0] != "task_x_starter_bootstrap" {
+		t.Fatalf("delegate dependencies = %#v, want [task_x_starter_bootstrap]", got)
+	}
+}
+
+func TestBuildStarterClarifyPromptHintMentionsDelegates(t *testing.T) {
+	t.Parallel()
+
+	starter := domain.AgentProfile{ID: "starter", DisplayName: "My Starter"}
+	delegates := []domain.AgentProfile{
+		{ID: "agent-1", DisplayName: "Agent One", Capabilities: []string{"go", "python"}},
+		{ID: "agent-2", DisplayName: "Agent Two", Capabilities: []string{"frontend"}},
+	}
+
+	hint := buildStarterClarifyPromptHint(starter, delegates, nil)
+
+	if !strings.Contains(hint, "Agent One") {
+		t.Fatalf("prompt hint missing delegate name Agent One: %q", hint)
+	}
+	if !strings.Contains(hint, "Agent Two") {
+		t.Fatalf("prompt hint missing delegate name Agent Two: %q", hint)
+	}
+	if !strings.Contains(hint, "structured task specification") {
+		t.Fatalf("prompt hint missing core instruction: %q", hint)
+	}
+	if !strings.Contains(hint, "Do not implement the task yourself") {
+		t.Fatalf("prompt hint missing no-implementation directive: %q", hint)
+	}
+	if strings.Contains(hint, "bootstrap") {
+		t.Fatalf("clarify prompt hint should not reference bootstrap: %q", hint)
 	}
 }
 
