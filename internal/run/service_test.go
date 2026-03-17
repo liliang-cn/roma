@@ -102,7 +102,7 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 	registry, err := agents.NewRegistry(domain.AgentProfile{
 		ID:           "codex-cli",
 		DisplayName:  "Codex CLI",
-		Command:      "codex",
+		Command:      "sh",
 		Aliases:      []string{"codex"},
 		Availability: domain.AgentAvailabilityAvailable,
 	})
