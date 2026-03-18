@@ -483,7 +483,7 @@ func TestRunDirectAutoMergeBackRequest(t *testing.T) {
 		Command:     "sh",
 		Args: []string{
 			"-c",
-			"mkdir -p examples/todo-webapp && printf 'auto merge\\n' > examples/todo-webapp/auto-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: examples/todo-webapp/auto-merge.txt\\n'",
+			"printf 'auto merge\\n' > auto-merge.txt && printf 'ROMA_MERGE_BACK: direct_merge | ready to merge\\nROMA_MERGE_FILE: auto-merge.txt\\n'",
 		},
 		Availability: domain.AgentAvailabilityAvailable,
 	})
@@ -512,7 +512,7 @@ func TestRunDirectAutoMergeBackRequest(t *testing.T) {
 	if prepared.Status != "merged" {
 		t.Fatalf("workspace status = %q, want merged", prepared.Status)
 	}
-	content, err := os.ReadFile(filepath.Join(workDir, "examples", "todo-webapp", "auto-merge.txt"))
+	content, err := os.ReadFile(filepath.Join(workDir, "auto-merge.txt"))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
@@ -574,7 +574,7 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 		Command:     "sh",
 		Args: []string{
 			"-c",
-			"mkdir -p examples/todo-webapp && printf 'vote merge\\n' > examples/todo-webapp/vote-merge.txt && printf 'ROMA_MERGE_BACK: require_vote | let Curia decide\\nROMA_MERGE_FILE: examples/todo-webapp/vote-merge.txt\\n'",
+			"printf 'vote merge\\n' > vote-merge.txt && printf 'ROMA_MERGE_BACK: require_vote | let Curia decide\\nROMA_MERGE_FILE: vote-merge.txt\\n'",
 		},
 		Availability: domain.AgentAvailabilityAvailable,
 	})
@@ -603,7 +603,7 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 	if prepared.Status != "released" {
 		t.Fatalf("workspace status = %q, want released", prepared.Status)
 	}
-	if _, err := os.Stat(filepath.Join(workDir, "examples", "todo-webapp", "vote-merge.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(workDir, "vote-merge.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expected base file absent before ROMA merge, stat err = %v", err)
 	}
 }
