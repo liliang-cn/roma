@@ -16,6 +16,8 @@ import (
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/queue"
+	"github.com/liliang-cn/roma/internal/scheduler"
+	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
 func TestQueueCuriaSuffix(t *testing.T) {
@@ -355,6 +357,92 @@ func TestPrintResultShowPending(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output = %q, missing %q", out, want)
 		}
+	}
+}
+
+func TestRunStatusUsesControlPlaneStateOnly(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".roma-home")
+	repo := t.TempDir()
+	t.Setenv("ROMA_HOME", home)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("Chdir(repo) error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	homeQueue := queue.NewStore(home)
+	if err := homeQueue.Enqueue(context.Background(), queue.Request{
+		ID:           "job_home",
+		Prompt:       "home",
+		StarterAgent: "starter",
+		WorkingDir:   repo,
+	}); err != nil {
+		t.Fatalf("Enqueue(home) error = %v", err)
+	}
+	repoQueue := queue.NewStore(repo)
+	if err := repoQueue.Enqueue(context.Background(), queue.Request{
+		ID:           "job_repo",
+		Prompt:       "repo",
+		StarterAgent: "starter",
+		WorkingDir:   repo,
+	}); err != nil {
+		t.Fatalf("Enqueue(repo) error = %v", err)
+	}
+
+	sessionStore := history.NewStore(home)
+	now := time.Now().UTC()
+	if err := sessionStore.Save(context.Background(), history.SessionRecord{
+		ID:         "sess_status",
+		TaskID:     "task_status",
+		Prompt:     "status",
+		Starter:    "starter",
+		WorkingDir: repo,
+		Status:     "running",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("Save(session) error = %v", err)
+	}
+	leaseStore, err := scheduler.NewLeaseStore(home)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_status", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	manager := workspacepkg.NewManager(repo, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_status", "task_status", repo, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runStatus(context.Background()); err != nil {
+			t.Fatalf("runStatus() error = %v", err)
+		}
+	})
+	for _, want := range []string{
+		"mode=control-plane-local",
+		"queue_items=1",
+		"sessions=1",
+		"released_workspaces=1",
+		"sqlite_path=" + filepath.Clean(filepath.Join(home, ".roma", "roma.db")),
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("runStatus() missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, filepath.Clean(filepath.Join(repo, ".roma", "roma.db"))) {
+		t.Fatalf("runStatus() should not report repo-local sqlite path:\n%s", out)
 	}
 }
 

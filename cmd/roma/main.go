@@ -2125,14 +2125,15 @@ func runStatus(ctx context.Context) error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	_ = syncWorkspace(ctx, wd)
+	controlDir := romapath.HomeDir()
 
 	client := api.NewClient(wd)
-	queueStore := preferredQueueStore(wd)
-	sessionStore := preferredHistoryStore(wd)
-	artifactStore := preferredArtifactStore(wd)
-	eventStore := preferredEventStore(wd)
+	queueStore := preferredQueueStore(controlDir)
+	sessionStore := preferredHistoryStore(controlDir)
+	artifactStore := preferredArtifactStore(controlDir)
+	eventStore := preferredEventStore(controlDir)
 
-	daemonMode := "filesystem-fallback"
+	daemonMode := "control-plane-local"
 	queueCount := 0
 	sessionCount := 0
 	artifactCount := 0
@@ -2146,7 +2147,7 @@ func runStatus(ctx context.Context) error {
 	releasedWorkspaceCount := 0
 	reclaimedWorkspaceCount := 0
 	mergedWorkspaceCount := 0
-	sqlitePath := sqliteutil.DBPath(wd)
+	sqlitePath := sqliteutil.DBPath(controlDir)
 	sqliteBytes := int64(0)
 	sqliteEnabled := false
 
@@ -2189,7 +2190,7 @@ func runStatus(ctx context.Context) error {
 			sqliteEnabled = true
 			sqliteBytes = info.Size()
 		}
-		if leaseStore, err := scheduler.NewLeaseStore(wd); err == nil {
+		if leaseStore, err := scheduler.NewLeaseStore(controlDir); err == nil {
 			if items, err := leaseStore.ListByStatus(ctx, scheduler.LeaseStatusActive); err == nil {
 				activeLeaseCount = len(items)
 				for _, item := range items {
@@ -2206,8 +2207,7 @@ func runStatus(ctx context.Context) error {
 				}
 			}
 		}
-		manager := workspacepkg.NewManager(wd, nil)
-		if items, err := manager.List(ctx); err == nil {
+		if items, err := listControlPlaneWorkspaces(ctx, sessionStore); err == nil {
 			for _, item := range items {
 				switch item.Status {
 				case "prepared":
@@ -2221,7 +2221,7 @@ func runStatus(ctx context.Context) error {
 				}
 			}
 		}
-		if items, err := scheduler.RecoverableSessions(ctx, wd); err == nil {
+		if items, err := scheduler.RecoverableSessions(ctx, controlDir); err == nil {
 			recoverableSessionCount = len(items)
 		}
 	}
@@ -2247,6 +2247,39 @@ func runStatus(ctx context.Context) error {
 	fmt.Printf("sqlite_path=%s\n", filepath.Clean(sqlitePath))
 	fmt.Printf("sqlite_bytes=%d\n", sqliteBytes)
 	return nil
+}
+
+func listControlPlaneWorkspaces(ctx context.Context, sessionStore history.Backend) ([]workspacepkg.Prepared, error) {
+	if sessionStore == nil {
+		return nil, nil
+	}
+	sessions, err := sessionStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roots := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, session := range sessions {
+		root := strings.TrimSpace(session.WorkingDir)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+	}
+	items := make([]workspacepkg.Prepared, 0)
+	for _, root := range roots {
+		manager := workspacepkg.NewManager(root, nil)
+		records, err := manager.List(ctx)
+		if err != nil {
+			continue
+		}
+		items = append(items, records...)
+	}
+	return items, nil
 }
 
 func runReplay(ctx context.Context, args []string) error {
