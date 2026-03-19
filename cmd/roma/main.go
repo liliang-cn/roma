@@ -40,7 +40,8 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return runTUI(ctx, nil)
+		printUsage()
+		return nil
 	}
 
 	registry, err := agents.DefaultRegistry()
@@ -103,7 +104,7 @@ func run(ctx context.Context, args []string) error {
 	case "status":
 		return runStatus(ctx)
 	case "submit", "tell", "ask":
-		return runSubmit(ctx, args[1:])
+		return fmt.Errorf("%q has been removed; use \"roma run\" instead", args[0])
 	case "tui":
 		return runTUI(ctx, args[1:])
 	case "session", "sessions":
@@ -3147,10 +3148,9 @@ func printUsage() {
 	fmt.Println("  roma <command> [subcommand] [flags]")
 	fmt.Println("")
 	fmt.Println("Core:")
-	fmt.Println("  roma                                      (starts TUI)")
+	fmt.Println("  roma --help")
 	fmt.Println("  roma tui [--cwd <dir>]")
 	fmt.Println(`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`)
-	fmt.Println(`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma result show <session_id>")
 	fmt.Println("  roma help <topic>")
@@ -3303,12 +3303,9 @@ func printTopicUsage(topic string) {
 		fmt.Println("  --policy-override    override safety policies")
 		fmt.Println("  --override-actor <n> name of the actor performing the override")
 	case "submit", "tell", "ask":
-		fmt.Println("roma submit usage:")
-		fmt.Println(`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <name>] "<prompt>"`)
-		fmt.Println("")
-		fmt.Println("Aliases: tell, ask")
-		fmt.Println("")
-		fmt.Println("Flags: same as 'roma run'")
+		fmt.Println("roma run usage:")
+		fmt.Println(`  "submit", "tell", and "ask" were removed.`)
+		fmt.Println(`  Use: roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <name>] "<prompt>"`)
 	case "replay":
 		fmt.Println("roma replay usage:")
 		fmt.Println("  roma replay <session_id>")

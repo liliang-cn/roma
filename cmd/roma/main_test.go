@@ -446,12 +446,28 @@ func TestRunStatusUsesControlPlaneStateOnly(t *testing.T) {
 	}
 }
 
+func TestRunWithNoArgsShowsHelp(t *testing.T) {
+	out := captureStdout(t, func() {
+		if err := run(context.Background(), nil); err != nil {
+			t.Fatalf("run(nil) error = %v", err)
+		}
+	})
+	for _, want := range []string{
+		"roma usage:",
+		"  roma --help",
+		"  roma tui [--cwd <dir>]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("run(nil) output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	out := captureStdout(t, printUsage)
 	for _, want := range []string{
-		"  roma                                      (starts TUI)",
+		"  roma --help",
 		`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
-		`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
 		"  roma result show <session_id>",
 		"  roma acp status",
 		"  artifact    inspect stored artifacts",
@@ -463,6 +479,7 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		`roma run --agent <agent_id> --with <delegates> "prompt"`,
+		`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
 		`roma submit --agent <agent_id> --with <delegates> "prompt"`,
 		"debug                    show debugging commands",
 		"debug      low-level inspection of sessions, tasks, artifacts, etc.",
@@ -497,6 +514,16 @@ func TestPrintTopicUsageDebugShowsSubcommands(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("printTopicUsage(debug) missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunSubmitRemoved(t *testing.T) {
+	err := run(context.Background(), []string{"submit", "do something"})
+	if err == nil {
+		t.Fatal("run(submit) error = nil, want removal error")
+	}
+	if !strings.Contains(err.Error(), `use "roma run" instead`) {
+		t.Fatalf("run(submit) error = %q, want migration hint", err)
 	}
 }
 
