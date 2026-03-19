@@ -524,7 +524,6 @@ func TestRunDirectAutoMergeBackRequest(t *testing.T) {
 func TestRunDirectAutoMergeBackRequestUsesControlRootWorkspaceMetadata(t *testing.T) {
 	workDir := t.TempDir()
 	controlDir := t.TempDir()
-	t.Setenv("ROMA_HOME", controlDir)
 	initRunGitRepo(t, workDir)
 	registry, err := agents.NewRegistry(domain.AgentProfile{
 		ID:          "auto-merge",
@@ -611,7 +610,6 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 	workDir := t.TempDir()
 	controlDir := t.TempDir()
-	t.Setenv("ROMA_HOME", controlDir)
 	initRunGitRepo(t, workDir)
 
 	starterScript := strings.Join([]string{

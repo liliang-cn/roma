@@ -46,6 +46,7 @@ type Request struct {
 	Prompt         string
 	WorkingDir     string
 	EffectiveDir   string
+	AllowedRoots   []string
 	PathHints      []string
 	StarterAgent   string
 	Delegates      []string
@@ -171,7 +172,7 @@ func evaluate(req Request) Decision {
 	if strings.HasSuffix(effectiveClean, string(filepath.Separator)+".git") || filepath.Base(effectiveClean) == ".git" {
 		return Decision{Kind: DecisionBlock, Reason: "git_dir_execution_forbidden"}
 	}
-	if !isEffectiveDirAllowed(cleaned, effectiveClean) {
+	if !isEffectiveDirAllowed(cleaned, effectiveClean, req.AllowedRoots) {
 		return Decision{Kind: DecisionBlock, Reason: "effective_dir_outside_workspace_boundary"}
 	}
 
@@ -529,17 +530,25 @@ func dedupeStrings(items []string) []string {
 	return out
 }
 
-func isEffectiveDirAllowed(baseDir, effectiveDir string) bool {
+func isEffectiveDirAllowed(baseDir, effectiveDir string, allowedRoots []string) bool {
 	baseDir = filepath.Clean(baseDir)
 	effectiveDir = filepath.Clean(effectiveDir)
 	if effectiveDir == baseDir {
 		return true
 	}
-	allowedRoots := []string{
+	roots := []string{
 		romapath.Join(baseDir, "workspaces"),
 		romapath.Join(romapath.HomeDir(), "workspaces"),
 	}
-	for _, worktreeRoot := range allowedRoots {
+	for _, root := range allowedRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		roots = append(roots, filepath.Clean(root))
+	}
+	roots = dedupeStrings(roots)
+	for _, worktreeRoot := range roots {
 		if effectiveDir == worktreeRoot || strings.HasPrefix(effectiveDir, worktreeRoot+string(filepath.Separator)) {
 			return true
 		}

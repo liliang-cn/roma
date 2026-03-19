@@ -19,6 +19,7 @@ import (
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/policy"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/runtime"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	"github.com/liliang-cn/roma/internal/store"
@@ -546,6 +547,7 @@ func (s *Service) evaluatePolicy(ctx context.Context, sessionID, taskID, mode, p
 		Prompt:         prompt,
 		WorkingDir:     workingDir,
 		EffectiveDir:   effectiveDir,
+		AllowedRoots:   []string{romapath.Join(s.controlRoot(workingDir), "workspaces")},
 		PathHints:      pathHints,
 		StarterAgent:   starter,
 		Delegates:      delegates,

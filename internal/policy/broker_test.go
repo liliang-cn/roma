@@ -127,6 +127,33 @@ func TestSimpleBrokerAllowsOverrideForApprovedActor(t *testing.T) {
 	}
 }
 
+func TestSimpleBrokerAllowsEffectiveDirUnderExplicitAllowedRoot(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	controlDir := t.TempDir()
+	effectiveDir := filepath.Join(controlDir, ".roma", "workspaces", "sess_1", "task_1")
+	if err := os.MkdirAll(effectiveDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broker := NewSimpleBroker(nil)
+	decision, err := broker.Evaluate(context.Background(), Request{
+		SessionID:    "sess_1",
+		TaskID:       "task_1",
+		Mode:         "node",
+		Prompt:       "build a feature",
+		WorkingDir:   workDir,
+		EffectiveDir: effectiveDir,
+		AllowedRoots: []string{filepath.Join(controlDir, ".roma", "workspaces")},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if decision.Kind != DecisionAllow {
+		t.Fatalf("decision = %#v, want allow", decision)
+	}
+}
+
 func TestSimpleBrokerBlocksOverrideForForbiddenActor(t *testing.T) {
 	t.Setenv("ROMA_POLICY_OVERRIDE_ACTORS", "admin")
 	workDir := t.TempDir()

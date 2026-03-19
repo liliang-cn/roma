@@ -12,6 +12,7 @@ import (
 	"github.com/liliang-cn/roma/internal/domain"
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/policy"
+	"github.com/liliang-cn/roma/internal/romapath"
 	"github.com/liliang-cn/roma/internal/runtime"
 	"github.com/liliang-cn/roma/internal/store"
 	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
@@ -19,14 +20,15 @@ import (
 
 // Dispatcher owns ready-batch dispatch for relay/direct graph execution.
 type Dispatcher struct {
-	supervisor *runtime.Supervisor
-	artifacts  *artifacts.Service
-	events     store.EventStore
-	lifecycle  *GraphLifecycle
-	leases     *LeaseStore
-	workspaces *workspacepkg.Manager
-	ownerID    string
-	now        func() time.Time
+	supervisor    *runtime.Supervisor
+	artifacts     *artifacts.Service
+	events        store.EventStore
+	lifecycle     *GraphLifecycle
+	leases        *LeaseStore
+	workspaces    *workspacepkg.Manager
+	workspaceRoot string
+	ownerID       string
+	now           func() time.Time
 }
 
 // ApprovalPendingError indicates one or more task nodes are waiting for human approval.
@@ -61,14 +63,15 @@ func NewDispatcherWithControlDir(workDir, controlDir string, supervisor *runtime
 		workspaceRoot = workDir
 	}
 	return &Dispatcher{
-		supervisor: supervisor,
-		artifacts:  artifacts.NewService(),
-		events:     eventStore,
-		lifecycle:  lifecycle,
-		leases:     leases,
-		workspaces: workspacepkg.NewManager(workspaceRoot, eventStore),
-		ownerID:    fmt.Sprintf("lease_%d", now().UnixNano()),
-		now:        now,
+		supervisor:    supervisor,
+		artifacts:     artifacts.NewService(),
+		events:        eventStore,
+		lifecycle:     lifecycle,
+		leases:        leases,
+		workspaces:    workspacepkg.NewManager(workspaceRoot, eventStore),
+		workspaceRoot: workspaceRoot,
+		ownerID:       fmt.Sprintf("lease_%d", now().UnixNano()),
+		now:           now,
 	}
 }
 
@@ -166,6 +169,7 @@ func (d *Dispatcher) execute(ctx context.Context, sessionID, workDir, basePrompt
 				Prompt:       buildNodePrompt(basePrompt, assignment, artifactsByNode),
 				WorkingDir:   workDir,
 				EffectiveDir: prepared.EffectiveDir,
+				AllowedRoots: []string{romapath.Join(d.workspaceRoot, "workspaces")},
 				PathHints:    []string{prepared.BaseDir, prepared.EffectiveDir},
 				StarterAgent: assignment.Profile.ID,
 				NodeCount:    1,
