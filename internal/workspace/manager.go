@@ -143,14 +143,19 @@ func (m *Manager) Release(ctx context.Context, prepared Prepared, outcome string
 	if prepared.SessionID == "" || prepared.TaskID == "" || prepared.BaseDir == "" {
 		return nil
 	}
-	prepared.Status = "released"
-	prepared.ReleasedAt = m.now()
-
 	rootDir := m.rootDir
 	if rootDir == "" {
 		rootDir = prepared.BaseDir
 	}
 	metaPath := romapath.Join(rootDir, "workspaces", prepared.SessionID, prepared.TaskID, "workspace.json")
+	if current, err := loadPrepared(metaPath); err == nil {
+		if current.Status == "merged" {
+			return nil
+		}
+		prepared = current
+	}
+	prepared.Status = "released"
+	prepared.ReleasedAt = m.now()
 	if err := writePrepared(metaPath, prepared); err != nil {
 		return fmt.Errorf("write released workspace metadata: %w", err)
 	}

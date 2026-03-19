@@ -196,6 +196,40 @@ func TestManagerCapturePatchAndMergeBack(t *testing.T) {
 	}
 }
 
+func TestManagerReleasePreservesMergedStatus(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	manager := NewManager(root, nil)
+	prepared, err := manager.Prepare(context.Background(), "sess_merge_release", "task_merge_release", root, domain.TaskStrategyDirect)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	target := filepath.Join(prepared.EffectiveDir, "README.md")
+	if err := os.WriteFile(target, []byte("merged once\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := manager.MergeBack(context.Background(), prepared); err != nil {
+		t.Fatalf("MergeBack() error = %v", err)
+	}
+	if err := manager.Release(context.Background(), prepared, "succeeded"); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+
+	current, err := loadPrepared(filepath.Join(root, ".roma", "workspaces", "sess_merge_release", "task_merge_release", "workspace.json"))
+	if err != nil {
+		t.Fatalf("loadPrepared() error = %v", err)
+	}
+	if current.Status != "merged" {
+		t.Fatalf("status = %q, want merged", current.Status)
+	}
+	if current.MergedAt.IsZero() {
+		t.Fatal("expected merged timestamp")
+	}
+}
+
 func TestManagerCapturePatchAndMergeBackIncludesUntrackedFiles(t *testing.T) {
 	root := t.TempDir()
 	initGitRepo(t, root)
