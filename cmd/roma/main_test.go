@@ -288,20 +288,37 @@ func TestQueueTailEventLinesSemanticRecommendationsStructured(t *testing.T) {
 func TestParseRunArgsWithAlias(t *testing.T) {
 	t.Parallel()
 
-	req, err := parseRunArgs([]string{"--agent", "my-codex", "--with", "my-gemini,my-copilot", "build", "feature"})
+	req, err := parseRunArgs([]string{"--agent", "my-codex", "--with", "my-gemini,my-copilot", "--prompt", "build feature"})
 	if err != nil {
 		t.Fatalf("parseRunArgs() with --with error = %v", err)
+	}
+	if req.Prompt != "build feature" {
+		t.Fatalf("prompt = %q, want %q", req.Prompt, "build feature")
 	}
 	if len(req.Delegates) != 2 || req.Delegates[0] != "my-gemini" || req.Delegates[1] != "my-copilot" {
 		t.Fatalf("delegates via --with = %#v, want [my-gemini my-copilot]", req.Delegates)
 	}
 
-	req, err = parseRunArgs([]string{"--agent", "my-codex", "--delegate", "my-gemini", "build", "feature"})
+	req, err = parseRunArgs([]string{"--agent", "my-codex", "--delegate", "my-gemini", "--prompt", "build feature"})
 	if err != nil {
 		t.Fatalf("parseRunArgs() with --delegate alias error = %v", err)
 	}
 	if len(req.Delegates) != 1 || req.Delegates[0] != "my-gemini" {
 		t.Fatalf("delegates via --delegate = %#v, want [my-gemini]", req.Delegates)
+	}
+}
+
+func TestParseRunArgsRequiresPromptFlag(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseRunArgs([]string{"--agent", "my-codex"})
+	if err == nil || !strings.Contains(err.Error(), "--prompt is required") {
+		t.Fatalf("parseRunArgs() error = %v, want --prompt is required", err)
+	}
+
+	_, err = parseRunArgs([]string{"--agent", "my-codex", "build", "feature"})
+	if err == nil || !strings.Contains(err.Error(), `unexpected positional argument "build"; use --prompt`) {
+		t.Fatalf("parseRunArgs() error = %v, want positional argument guidance", err)
 	}
 }
 
@@ -467,7 +484,7 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	out := captureStdout(t, printUsage)
 	for _, want := range []string{
 		"  roma --help",
-		`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
+		`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>]`,
 		"  roma <command> --help",
 		"  roma result show <session_id>",
 		"  roma acp status",
@@ -498,6 +515,7 @@ func TestPrintTopicUsageRunIncludesActualFlags(t *testing.T) {
 	out := captureStdout(t, func() { printTopicUsage("run") })
 	for _, want := range []string{
 		"roma run usage:",
+		"--prompt <text>",
 		"--with <id,...>",
 		"--policy-override",
 		"--override-actor <name>",
@@ -518,6 +536,109 @@ func TestPrintTopicUsageDebugShowsSubcommands(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("printTopicUsage(debug) missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunCommandsSupportDashHelp(t *testing.T) {
+	testCases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "start", args: []string{"start", "--help"}, want: "roma start usage:"},
+		{name: "stop", args: []string{"stop", "--help"}, want: "roma stop usage:"},
+		{name: "status", args: []string{"status", "--help"}, want: "roma status usage:"},
+		{name: "approve", args: []string{"approve", "--help"}, want: "roma approve usage:"},
+		{name: "reject", args: []string{"reject", "--help"}, want: "roma reject usage:"},
+		{name: "cancel", args: []string{"cancel", "--help"}, want: "roma cancel usage:"},
+		{name: "replay", args: []string{"replay", "--help"}, want: "roma replay usage:"},
+		{name: "recover", args: []string{"recover", "--help"}, want: "roma recover usage:"},
+		{name: "acp status", args: []string{"acp", "status", "--help"}, want: "roma acp status usage:"},
+		{name: "agent add", args: []string{"agent", "add", "--help"}, want: "roma agent add usage:"},
+		{name: "artifact show", args: []string{"artifact", "show", "--help"}, want: "roma artifact show usage:"},
+		{name: "event show", args: []string{"event", "show", "--help"}, want: "roma event show usage:"},
+		{name: "plan apply", args: []string{"plan", "apply", "--help"}, want: "roma plan apply usage:"},
+		{name: "queue show", args: []string{"queue", "show", "--help"}, want: "roma queue show usage:"},
+		{name: "result show", args: []string{"result", "show", "--help"}, want: "roma result show usage:"},
+		{name: "session inspect", args: []string{"session", "inspect", "--help"}, want: "roma session inspect usage:"},
+		{name: "task approve", args: []string{"task", "approve", "--help"}, want: "roma task approve usage:"},
+		{name: "workspace merge", args: []string{"workspace", "merge", "--help"}, want: "roma workspace merge usage:"},
+		{name: "graph run", args: []string{"graph", "run", "--help"}, want: "roma graph run usage:"},
+		{name: "policy check", args: []string{"policy", "check", "--help"}, want: "roma policy check usage:"},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStdout(t, func() {
+				if err := run(context.Background(), tc.args); err != nil {
+					t.Fatalf("run(%v) error = %v", tc.args, err)
+				}
+			})
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("run(%v) output missing %q:\n%s", tc.args, tc.want, out)
+			}
+		})
+	}
+}
+
+func TestRunHelpCommandRemoved(t *testing.T) {
+	err := run(context.Background(), []string{"help"})
+	if err == nil {
+		t.Fatal("run(help) error = nil, want removal error")
+	}
+	for _, want := range []string{
+		`"roma help" has been removed`,
+		`roma --help`,
+		`roma <command> --help`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("run(help) error = %q, want substring %q", err, want)
+		}
+	}
+}
+
+func TestRunSubcommandHelpCommandRemoved(t *testing.T) {
+	testCases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "agent help",
+			args: []string{"agent", "help"},
+			want: []string{`"roma agent help" has been removed`, `roma agent --help`},
+		},
+		{
+			name: "agent add help",
+			args: []string{"agent", "add", "help"},
+			want: []string{`"roma agent add help" has been removed`, `roma agent add --help`},
+		},
+		{
+			name: "queue help",
+			args: []string{"queue", "help"},
+			want: []string{`"roma queue help" has been removed`, `roma queue --help`},
+		},
+		{
+			name: "debug help",
+			args: []string{"debug", "help"},
+			want: []string{`"roma debug help" has been removed`, `roma debug --help`, `roma debug <topic> --help`},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(context.Background(), tc.args)
+			if err == nil {
+				t.Fatalf("run(%v) error = nil, want removal error", tc.args)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("run(%v) error = %q, want substring %q", tc.args, err, want)
+				}
+			}
+		})
 	}
 }
 

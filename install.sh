@@ -118,8 +118,8 @@ verify_install() {
         ok "verified $BIN_PATH"
     done
     # confirm roma CLI responds correctly
-    "$INSTALL_DIR/roma" help >/dev/null 2>&1 || die "roma help failed — binary may be corrupt"
-    ok "roma help: OK"
+    "$INSTALL_DIR/roma" --help >/dev/null 2>&1 || die "roma --help failed — binary may be corrupt"
+    ok "roma --help: OK"
 }
 
 main() {

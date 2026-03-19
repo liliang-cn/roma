@@ -1,4 +1,5 @@
 GO ?= go
+GO_ENV ?= GOWORK=off
 BIN_DIR ?= bin
 PREFIX ?= $(HOME)/.local
 INSTALL_BIN_DIR ?= $(PREFIX)/bin
@@ -13,16 +14,16 @@ $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 build-roma: | $(BIN_DIR)
-	$(GO) build -o $(BIN_DIR)/roma ./cmd/roma
+	$(GO_ENV) $(GO) build -o $(BIN_DIR)/roma ./cmd/roma
 
 build-romad: | $(BIN_DIR)
-	$(GO) build -o $(BIN_DIR)/romad ./cmd/romad
+	$(GO_ENV) $(GO) build -o $(BIN_DIR)/romad ./cmd/romad
 
 build-romatui: | $(BIN_DIR)
-	$(GO) build -o $(BIN_DIR)/romatui ./cmd/romatui
+	$(GO_ENV) $(GO) build -o $(BIN_DIR)/romatui ./cmd/romatui
 
 test:
-	$(GO) test -count=1 ./...
+	$(GO_ENV) $(GO) test -count=1 ./...
 
 install: build
 	mkdir -p $(INSTALL_BIN_DIR)

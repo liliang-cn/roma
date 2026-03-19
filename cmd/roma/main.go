@@ -54,7 +54,7 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
-	case "help", "-h", "--help":
+	case "-h", "--help":
 		if len(args) > 2 && strings.EqualFold(strings.TrimSpace(args[1]), "debug") {
 			printTopicUsage("debug " + args[2])
 			return nil
@@ -65,9 +65,17 @@ func run(ctx context.Context, args []string) error {
 		}
 		printUsage()
 		return nil
+	case "help":
+		return fmt.Errorf(`"roma help" has been removed; use "roma --help" or "roma <command> --help"`)
 	case "approve":
+		if handled, err := handleTopicHelp("approve", args[1:]); handled {
+			return err
+		}
 		return runQueueDecision(ctx, true, args[1:])
 	case "cancel":
+		if handled, err := handleTopicHelp("cancel", args[1:]); handled {
+			return err
+		}
 		return runQueueCancel(ctx, args[1:])
 	case "debug":
 		return runDebug(ctx, registry, args[1:])
@@ -90,18 +98,36 @@ func run(ctx context.Context, args []string) error {
 	case "result", "results":
 		return runResults(ctx, args[1:])
 	case "replay":
+		if handled, err := handleTopicHelp("replay", args[1:]); handled {
+			return err
+		}
 		return runReplay(ctx, args[1:])
 	case "recover":
+		if handled, err := handleTopicHelp("recover", args[1:]); handled {
+			return err
+		}
 		return runRecover(ctx, args[1:])
 	case "reject":
+		if handled, err := handleTopicHelp("reject", args[1:]); handled {
+			return err
+		}
 		return runQueueDecision(ctx, false, args[1:])
 	case "acp":
 		return runAcp(ctx, args[1:])
 	case "start":
+		if handled, err := handleTopicHelp("start", args[1:]); handled {
+			return err
+		}
 		return runStart(args[1:])
 	case "stop":
+		if handled, err := handleTopicHelp("stop", args[1:]); handled {
+			return err
+		}
 		return runStop()
 	case "status":
+		if handled, err := handleTopicHelp("status", args[1:]); handled {
+			return err
+		}
 		return runStatus(ctx)
 	case "submit", "tell", "ask":
 		return fmt.Errorf("%q has been removed; use \"roma run\" instead", args[0])
@@ -120,10 +146,49 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
+func handleTopicHelp(topic string, args []string) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	if strings.TrimSpace(args[0]) == "help" {
+		return true, fmt.Errorf(`"roma %s help" has been removed; use "roma %s --help"`, topic, topic)
+	}
+	if isHelpArg(args[0]) {
+		printTopicUsage(topic)
+		return true, nil
+	}
+	return false, nil
+}
+
+func handleSubtopicHelp(topic string, args []string) (bool, error) {
+	if len(args) > 0 {
+		if strings.TrimSpace(args[0]) == "help" {
+			return true, fmt.Errorf(`"roma %s help" has been removed; use "roma %s --help"`, topic, topic)
+		}
+		if isHelpArg(args[0]) {
+			printTopicUsage(topic)
+			return true, nil
+		}
+	}
+	if len(args) > 1 {
+		if strings.TrimSpace(args[1]) == "help" {
+			return true, fmt.Errorf(`"roma %s %s help" has been removed; use "roma %s %s --help"`, topic, args[0], topic, args[0])
+		}
+		if isHelpArg(args[1]) {
+			printTopicUsage(topic + " " + args[0])
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func runDebug(ctx context.Context, registry *agents.Registry, args []string) error {
 	if len(args) == 0 || isHelpArg(args[0]) {
 		printTopicUsage("debug")
 		return nil
+	}
+	if strings.TrimSpace(args[0]) == "help" {
+		return fmt.Errorf(`"roma debug help" has been removed; use "roma debug --help" or "roma debug <topic> --help"`)
 	}
 	switch args[0] {
 	case "agent", "agents":
@@ -156,9 +221,8 @@ func runDebug(ctx context.Context, registry *agents.Registry, args []string) err
 }
 
 func runAgents(ctx context.Context, registry *agents.Registry, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("agent")
-		return nil
+	if handled, err := handleSubtopicHelp("agent", args); handled {
+		return err
 	}
 	if len(args) == 0 || args[0] == "list" {
 		profiles := registry.WithResolvedAvailability(ctx)
@@ -302,9 +366,8 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 }
 
 func runGraph(ctx context.Context, registry *agents.Registry, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("graph")
-		return nil
+	if handled, err := handleSubtopicHelp("graph", args); handled {
+		return err
 	}
 	if len(args) == 0 || args[0] != "run" {
 		return fmt.Errorf("unknown graph subcommand")
@@ -460,9 +523,8 @@ func runCuria(ctx context.Context, args []string) error {
 }
 
 func runResults(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("result")
-		return nil
+	if handled, err := handleSubtopicHelp("result", args); handled {
+		return err
 	}
 	if len(args) < 2 || args[0] != "show" {
 		return fmt.Errorf("usage: roma result show <session_id>")
@@ -622,9 +684,8 @@ func runSubmit(ctx context.Context, args []string) error {
 }
 
 func runQueue(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("queue")
-		return nil
+	if handled, err := handleSubtopicHelp("queue", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -779,6 +840,16 @@ func runQueue(ctx context.Context, args []string) error {
 }
 
 func runQueueDecision(ctx context.Context, approved bool, args []string) error {
+	if approved {
+		if handled, err := handleTopicHelp("approve", args); handled {
+			return err
+		}
+	}
+	if !approved {
+		if handled, err := handleTopicHelp("reject", args); handled {
+			return err
+		}
+	}
 	if len(args) == 0 {
 		if approved {
 			return fmt.Errorf("roma approve requires a job id")
@@ -1121,6 +1192,9 @@ func inspectQueueLocal(ctx context.Context, wd, jobID string, raw bool) (api.Que
 }
 
 func runQueueCancel(ctx context.Context, args []string) error {
+	if handled, err := handleTopicHelp("cancel", args); handled {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("roma cancel requires a job id")
 	}
@@ -1341,9 +1415,8 @@ func applyQueueDecisionLocal(ctx context.Context, wd string, item queue.Request,
 }
 
 func runArtifacts(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("artifact")
-		return nil
+	if handled, err := handleSubtopicHelp("artifact", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1477,9 +1550,8 @@ func resolveFinalAnswerEnvelopeLocal(ctx context.Context, artifactStore artifact
 }
 
 func runSessions(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("session")
-		return nil
+	if handled, err := handleSubtopicHelp("session", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1814,6 +1886,9 @@ func printCuriaSummary(resp api.SessionInspectResponse) {
 }
 
 func runAcp(ctx context.Context, args []string) error {
+	if handled, err := handleSubtopicHelp("acp", args); handled {
+		return err
+	}
 	if len(args) < 1 || args[0] != "status" {
 		return fmt.Errorf("usage: roma acp status")
 	}
@@ -2284,6 +2359,9 @@ func listControlPlaneWorkspaces(ctx context.Context, sessionStore history.Backen
 }
 
 func runReplay(ctx context.Context, args []string) error {
+	if handled, err := handleTopicHelp("replay", args); handled {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("roma replay requires a session id")
 	}
@@ -2319,6 +2397,9 @@ func runReplay(ctx context.Context, args []string) error {
 }
 
 func runRecover(ctx context.Context, args []string) error {
+	if handled, err := handleTopicHelp("recover", args); handled {
+		return err
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -2346,9 +2427,8 @@ func runRecover(ctx context.Context, args []string) error {
 }
 
 func runPolicy(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("policy")
-		return nil
+	if handled, err := handleSubtopicHelp("policy", args); handled {
+		return err
 	}
 	if len(args) == 0 || args[0] != "check" {
 		return fmt.Errorf("unknown policy subcommand")
@@ -2403,9 +2483,8 @@ func runPolicy(ctx context.Context, args []string) error {
 }
 
 func runPlans(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("plan")
-		return nil
+	if handled, err := handleSubtopicHelp("plan", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -2640,9 +2719,8 @@ func runPlans(ctx context.Context, args []string) error {
 }
 
 func runTasks(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("task")
-		return nil
+	if handled, err := handleSubtopicHelp("task", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -2802,9 +2880,8 @@ func runTasks(ctx context.Context, args []string) error {
 }
 
 func runWorkspaces(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("workspace")
-		return nil
+	if handled, err := handleSubtopicHelp("workspace", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -2926,9 +3003,8 @@ func runWorkspaces(ctx context.Context, args []string) error {
 }
 
 func runEvents(ctx context.Context, args []string) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		printTopicUsage("event")
-		return nil
+	if handled, err := handleSubtopicHelp("event", args); handled {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -3081,7 +3157,6 @@ func syncWorkspace(ctx context.Context, workDir string) error {
 
 func parseRunArgs(args []string) (runsvc.Request, error) {
 	req := runsvc.Request{}
-	promptParts := make([]string, 0, len(args))
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -3118,6 +3193,12 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 				return runsvc.Request{}, fmt.Errorf("--override-actor requires a value")
 			}
 			req.OverrideActor = args[i]
+		case "--prompt":
+			i++
+			if i >= len(args) {
+				return runsvc.Request{}, fmt.Errorf("--prompt requires a value")
+			}
+			req.Prompt = strings.TrimSpace(args[i])
 		case "--max-rounds":
 			i++
 			if i >= len(args) {
@@ -3129,13 +3210,12 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 			}
 			req.MaxRounds = n
 		default:
-			promptParts = append(promptParts, args[i])
+			return runsvc.Request{}, fmt.Errorf("unexpected positional argument %q; use --prompt", args[i])
 		}
 	}
 
-	req.Prompt = strings.TrimSpace(strings.Join(promptParts, " "))
 	if req.Prompt == "" {
-		return runsvc.Request{}, fmt.Errorf("prompt is required")
+		return runsvc.Request{}, fmt.Errorf("--prompt is required")
 	}
 	if req.PolicyOverride && req.OverrideActor == "" {
 		req.OverrideActor = policy.OverrideActor()
@@ -3150,7 +3230,7 @@ func printUsage() {
 	fmt.Println("Core:")
 	fmt.Println("  roma --help")
 	fmt.Println("  roma tui [--cwd <dir>]")
-	fmt.Println(`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`)
+	fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>]`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma result show <session_id>")
 	fmt.Println("  roma <command> --help")
@@ -3181,7 +3261,7 @@ func printUsage() {
 	fmt.Println("  roma agent --help")
 	fmt.Println("  roma tui")
 	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
-	fmt.Println(`  roma run --agent my-codex --with my-gemini,my-copilot "build a feature"`)
+	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot`)
 }
 
 func printTopicUsage(topic string) {
@@ -3189,19 +3269,43 @@ func printTopicUsage(topic string) {
 	case "acp":
 		fmt.Println("roma acp usage:")
 		fmt.Println("  roma acp status")
+	case "acp status":
+		fmt.Println("roma acp status usage:")
+		fmt.Println("  roma acp status")
 	case "agent", "agents":
 		fmt.Println("roma agent usage:")
 		fmt.Println("  roma agent list")
 		fmt.Println("  roma agent add <id> <name> <path> [--arg <arg>] [--alias <a1,a2>] [--pty] [--mcp] [--json]")
 		fmt.Println("  roma agent remove <id>")
 		fmt.Println("  roma agent inspect <id>")
+	case "agent add":
+		fmt.Println("roma agent add usage:")
+		fmt.Println("  roma agent add <id> <name> <path> [--arg <arg>] [--alias <a1,a2>] [--pty] [--mcp] [--json]")
+	case "agent remove":
+		fmt.Println("roma agent remove usage:")
+		fmt.Println("  roma agent remove <id>")
+	case "agent inspect":
+		fmt.Println("roma agent inspect usage:")
+		fmt.Println("  roma agent inspect <id>")
 	case "artifact", "artifacts":
 		fmt.Println("roma artifact usage:")
 		fmt.Println("  roma artifact list [--session <session_id>] [--kind <kind>]")
 		fmt.Println("  roma artifact show <artifact_id>")
+	case "artifact list":
+		fmt.Println("roma artifact list usage:")
+		fmt.Println("  roma artifact list [--session <session_id>] [--kind <kind>]")
+	case "artifact show":
+		fmt.Println("roma artifact show usage:")
+		fmt.Println("  roma artifact show <artifact_id>")
 	case "event", "events":
 		fmt.Println("roma event usage:")
 		fmt.Println("  roma event list [--session <session_id>] [--task <task_id>] [--type <event_type>]")
+		fmt.Println("  roma event show <event_id>")
+	case "event list":
+		fmt.Println("roma event list usage:")
+		fmt.Println("  roma event list [--session <session_id>] [--task <task_id>] [--type <event_type>]")
+	case "event show":
+		fmt.Println("roma event show usage:")
 		fmt.Println("  roma event show <event_id>")
 	case "plan", "plans":
 		fmt.Println("roma plan usage:")
@@ -3212,6 +3316,27 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma plan rollback <session_id> <task_id> <artifact_id>")
 		fmt.Println("  roma plan approve <artifact_id>")
 		fmt.Println("  roma plan reject <artifact_id>")
+	case "plan inbox":
+		fmt.Println("roma plan inbox usage:")
+		fmt.Println("  roma plan inbox [--session <session_id>]")
+	case "plan inspect":
+		fmt.Println("roma plan inspect usage:")
+		fmt.Println("  roma plan inspect <artifact_id>")
+	case "plan preview":
+		fmt.Println("roma plan preview usage:")
+		fmt.Println("  roma plan preview <session_id> <task_id> <artifact_id>")
+	case "plan apply":
+		fmt.Println("roma plan apply usage:")
+		fmt.Println("  roma plan apply <session_id> <task_id> <artifact_id> [--dry-run] [--policy-override] [--override-actor <name>]")
+	case "plan rollback":
+		fmt.Println("roma plan rollback usage:")
+		fmt.Println("  roma plan rollback <session_id> <task_id> <artifact_id>")
+	case "plan approve":
+		fmt.Println("roma plan approve usage:")
+		fmt.Println("  roma plan approve <artifact_id>")
+	case "plan reject":
+		fmt.Println("roma plan reject usage:")
+		fmt.Println("  roma plan reject <artifact_id>")
 	case "queue":
 		fmt.Println("roma queue usage:")
 		fmt.Println("  roma queue list [--status <status>] [--mode <direct|graph>]")
@@ -3220,8 +3345,29 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma queue attach <job_id> [--raw]")
 		fmt.Println("  roma queue tail <job_id> [--raw]")
 		fmt.Println("  roma queue cancel <job_id>")
+	case "queue list":
+		fmt.Println("roma queue list usage:")
+		fmt.Println("  roma queue list [--status <status>] [--mode <direct|graph>]")
+	case "queue show":
+		fmt.Println("roma queue show usage:")
+		fmt.Println("  roma queue show <job_id>")
+	case "queue inspect":
+		fmt.Println("roma queue inspect usage:")
+		fmt.Println("  roma queue inspect <job_id>")
+	case "queue attach":
+		fmt.Println("roma queue attach usage:")
+		fmt.Println("  roma queue attach <job_id> [--raw]")
+	case "queue tail":
+		fmt.Println("roma queue tail usage:")
+		fmt.Println("  roma queue tail <job_id> [--raw]")
+	case "queue cancel":
+		fmt.Println("roma queue cancel usage:")
+		fmt.Println("  roma queue cancel <job_id>")
 	case "result", "results":
 		fmt.Println("roma result usage:")
+		fmt.Println("  roma result show <session_id>")
+	case "result show":
+		fmt.Println("roma result show usage:")
 		fmt.Println("  roma result show <session_id>")
 	case "tui":
 		fmt.Println("roma tui usage:")
@@ -3238,7 +3384,7 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma debug workspace <subcommand>")
 		fmt.Println("  roma debug graph run --file <graph.json>")
 		fmt.Println("  roma debug curia reputation [--reviewer <agent_id>]")
-		fmt.Println("  roma debug policy check --agent <id> \"<prompt>\"")
+		fmt.Println(`  roma debug policy check --agent <id> --prompt "<prompt>"`)
 		fmt.Println("  roma debug replay <session_id>")
 		fmt.Println("  roma debug recover")
 	case "debug session":
@@ -3269,11 +3415,35 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma session show <session_id>")
 		fmt.Println("  roma session inspect <session_id>")
 		fmt.Println("  roma session curia <session_id>")
+	case "session list":
+		fmt.Println("roma session list usage:")
+		fmt.Println("  roma session list")
+	case "session show":
+		fmt.Println("roma session show usage:")
+		fmt.Println("  roma session show <session_id>")
+	case "session inspect":
+		fmt.Println("roma session inspect usage:")
+		fmt.Println("  roma session inspect <session_id>")
+	case "session curia":
+		fmt.Println("roma session curia usage:")
+		fmt.Println("  roma session curia <session_id>")
 	case "task", "tasks":
 		fmt.Println("roma task usage:")
 		fmt.Println("  roma task list [--session <session_id>]")
 		fmt.Println("  roma task show <task_id>")
 		fmt.Println("  roma task approve <task_id>")
+		fmt.Println("  roma task reject <task_id>")
+	case "task list":
+		fmt.Println("roma task list usage:")
+		fmt.Println("  roma task list [--session <session_id>]")
+	case "task show":
+		fmt.Println("roma task show usage:")
+		fmt.Println("  roma task show <task_id>")
+	case "task approve":
+		fmt.Println("roma task approve usage:")
+		fmt.Println("  roma task approve <task_id>")
+	case "task reject":
+		fmt.Println("roma task reject usage:")
 		fmt.Println("  roma task reject <task_id>")
 	case "workspace", "workspaces":
 		fmt.Println("roma workspace usage:")
@@ -3281,20 +3451,39 @@ func printTopicUsage(topic string) {
 		fmt.Println("  roma workspace show <session_id> <task_id>")
 		fmt.Println("  roma workspace cleanup")
 		fmt.Println("  roma workspace merge <session_id> <task_id>")
+	case "workspace list":
+		fmt.Println("roma workspace list usage:")
+		fmt.Println("  roma workspace list")
+	case "workspace show":
+		fmt.Println("roma workspace show usage:")
+		fmt.Println("  roma workspace show <session_id> <task_id>")
+	case "workspace cleanup":
+		fmt.Println("roma workspace cleanup usage:")
+		fmt.Println("  roma workspace cleanup")
+	case "workspace merge":
+		fmt.Println("roma workspace merge usage:")
+		fmt.Println("  roma workspace merge <session_id> <task_id>")
 	case "graph":
 		fmt.Println("roma graph usage:")
+		fmt.Println("  roma debug graph run --file <graph.json> [--cwd <dir>] [--continuous] [--max-rounds <n>]")
+	case "graph run":
+		fmt.Println("roma graph run usage:")
 		fmt.Println("  roma debug graph run --file <graph.json> [--cwd <dir>] [--continuous] [--max-rounds <n>]")
 	case "curia":
 		fmt.Println("roma curia usage:")
 		fmt.Println("  roma debug curia reputation [--reviewer <agent_id>]")
 	case "policy":
 		fmt.Println("roma policy usage:")
-		fmt.Println(`  roma policy check --agent <id> [--with <id,...>] [--cwd <dir>] "<prompt>"`)
+		fmt.Println(`  roma policy check --agent <id> --prompt "<prompt>" [--with <id,...>] [--cwd <dir>]`)
+	case "policy check":
+		fmt.Println("roma policy check usage:")
+		fmt.Println(`  roma policy check --agent <id> --prompt "<prompt>" [--with <id,...>] [--cwd <dir>]`)
 	case "run":
 		fmt.Println("roma run usage:")
-		fmt.Println(`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <name>] "<prompt>"`)
+		fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <name>]`)
 		fmt.Println("")
 		fmt.Println("Flags:")
+		fmt.Println("  --prompt <text>      task prompt (required)")
 		fmt.Println("  --agent <id>         starter agent ID (default: first available)")
 		fmt.Println("  --with <id,...>      delegate agent IDs (comma-separated)")
 		fmt.Println("  --cwd <dir>          working directory (default: current directory)")
@@ -3311,6 +3500,21 @@ func printTopicUsage(topic string) {
 	case "recover":
 		fmt.Println("roma recover usage:")
 		fmt.Println("  roma recover")
+	case "approve":
+		fmt.Println("roma approve usage:")
+		fmt.Println("  roma approve <job_id>")
+	case "reject":
+		fmt.Println("roma reject usage:")
+		fmt.Println("  roma reject <job_id>")
+	case "cancel":
+		fmt.Println("roma cancel usage:")
+		fmt.Println("  roma cancel <job_id>")
+	case "start":
+		fmt.Println("roma start usage:")
+		fmt.Println("  roma start [--acp-port <port>]")
+	case "stop":
+		fmt.Println("roma stop usage:")
+		fmt.Println("  roma stop")
 	case "status":
 		fmt.Println("roma status usage:")
 		fmt.Println("  roma status")
@@ -3321,7 +3525,7 @@ func printTopicUsage(topic string) {
 
 func isHelpArg(value string) bool {
 	switch strings.TrimSpace(value) {
-	case "help", "-h", "--help":
+	case "-h", "--help":
 		return true
 	default:
 		return false

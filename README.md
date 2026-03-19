@@ -20,7 +20,7 @@ The result is not just "what one agent said" — it's the outcome of a structure
 ---
 
 **`romad`** is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
-**`roma`** is the client. You use it to submit work, inspect progress, approve plans, and debug sessions.
+**`roma`** is the client. You use it to run work, inspect progress, approve plans, and debug sessions.
 
 ROMA supports four execution modes:
 
@@ -103,13 +103,10 @@ roma start
 
 ```sh
 # single agent — direct mode
-roma run --agent claude "add input validation to the user registration handler"
+roma run --prompt "add input validation to the user registration handler" --agent claude
 
 # multi-agent — claude coordinates, codex implements
-roma run --agent claude --with codex "refactor the payment module and add unit tests"
-
-# async — submit and get a job ID immediately
-roma submit --agent claude "write API documentation for all public endpoints"
+roma run --prompt "refactor the payment module and add unit tests" --agent claude --with codex
 ```
 
 ### 4. Inspect progress
@@ -144,8 +141,7 @@ Logs are written to `~/.roma/romad.log`. PID is stored in `~/.roma/romad.pid`.
 ### Running tasks
 
 ```sh
-roma run    --agent <id> [--with <id,...>] "<prompt>"   # run and wait
-roma submit --agent <id> [--with <id,...>] "<prompt>"   # submit async, print job_id
+roma run    --prompt "<prompt>" [--agent <id>] [--with <id,...>]   # run and wait
 ```
 
 ### Queue management
