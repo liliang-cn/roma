@@ -105,6 +105,29 @@ func NormalizeInterruptedTasks(ctx context.Context, workDir string) error {
 	return nil
 }
 
+// NormalizeInterruptedTasksForSession reclassifies in-flight task records for one session so recovery can resume them.
+func NormalizeInterruptedTasksForSession(ctx context.Context, workDir, sessionID string) error {
+	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		return err
+	}
+	tasks, err := taskStore.ListTasksBySession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("list tasks for session %s: %w", sessionID, err)
+	}
+	for _, task := range tasks {
+		if task.State != domain.TaskStateRunning {
+			continue
+		}
+		task.State = domain.TaskStateReady
+		task.UpdatedAt = time.Now().UTC()
+		if err := taskStore.UpsertTask(ctx, task); err != nil {
+			return fmt.Errorf("reset interrupted task %s: %w", task.ID, err)
+		}
+	}
+	return nil
+}
+
 // RecoverInterruptedLeases marks active dispatcher leases as recovered on daemon restart.
 func RecoverInterruptedLeases(ctx context.Context, workDir string) error {
 	leaseStore, err := NewLeaseStore(workDir)

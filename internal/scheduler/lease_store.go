@@ -143,6 +143,17 @@ func (s *LeaseStore) RecoverActive(ctx context.Context) error {
 	return nil
 }
 
+// RecoverSession marks one active lease as recovered.
+func (s *LeaseStore) RecoverSession(ctx context.Context, sessionID string) error {
+	record, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	record.Status = LeaseStatusRecovered
+	record.UpdatedAt = time.Now().UTC()
+	return s.save(ctx, record)
+}
+
 // Get returns one persisted lease.
 func (s *LeaseStore) Get(ctx context.Context, sessionID string) (LeaseRecord, error) {
 	row := s.db.QueryRowContext(

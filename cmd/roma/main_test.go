@@ -334,8 +334,6 @@ func TestCandidateQueueRootsIncludesWorkspaceAndHome(t *testing.T) {
 }
 
 func TestPrintResultShowPending(t *testing.T) {
-	t.Parallel()
-
 	out := captureStdout(t, func() {
 		if err := printResultShow(api.ResultShowResponse{
 			Session: history.SessionRecord{
@@ -356,6 +354,60 @@ func TestPrintResultShowPending(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output = %q, missing %q", out, want)
+		}
+	}
+}
+
+func TestPrintUsageIncludesActualCommands(t *testing.T) {
+	out := captureStdout(t, printUsage)
+	for _, want := range []string{
+		"  roma                                      (starts TUI)",
+		`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
+		`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
+		"  roma result show <session_id>",
+		"  roma acp status",
+		"  artifact    inspect stored artifacts",
+		"  debug       inspect sessions, tasks, artifacts, events, plans, and workspaces",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("printUsage() output missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{
+		`roma run --agent <agent_id> --with <delegates> "prompt"`,
+		`roma submit --agent <agent_id> --with <delegates> "prompt"`,
+		"debug                    show debugging commands",
+		"debug      low-level inspection of sessions, tasks, artifacts, etc.",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("printUsage() output still contains stale help text %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestPrintTopicUsageRunIncludesActualFlags(t *testing.T) {
+	out := captureStdout(t, func() { printTopicUsage("run") })
+	for _, want := range []string{
+		"roma run usage:",
+		"--with <id,...>",
+		"--policy-override",
+		"--override-actor <name>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("printTopicUsage(run) missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintTopicUsageDebugShowsSubcommands(t *testing.T) {
+	out := captureStdout(t, func() { printTopicUsage("debug") })
+	for _, want := range []string{
+		"roma debug session <subcommand>",
+		"roma debug task <subcommand>",
+		"roma debug artifact <subcommand>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("printTopicUsage(debug) missing %q:\n%s", want, out)
 		}
 	}
 }

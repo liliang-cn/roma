@@ -6,11 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/roma/internal/acpserver"
 	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/queue"
 	"github.com/liliang-cn/roma/internal/run"
+	"github.com/liliang-cn/roma/internal/scheduler"
+	"github.com/liliang-cn/roma/internal/taskstore"
 )
 
 func TestDaemonReloadsUserAgentConfigBeforeProcessingQueueItem(t *testing.T) {
@@ -162,6 +166,127 @@ func TestDaemonStartACPServerWhenConfigured(t *testing.T) {
 	}
 	if !started {
 		t.Fatal("startACP() did not start the ACP server")
+	}
+}
+
+func TestRecoverStalledQueueRunsRequeuesAndNormalizesSession(t *testing.T) {
+	homeDir := t.TempDir()
+	workDir := t.TempDir()
+	t.Setenv("ROMA_HOME", homeDir)
+
+	daemon, err := NewDaemonForWorkingDir(workDir)
+	if err != nil {
+		t.Fatalf("NewDaemonForWorkingDir() error = %v", err)
+	}
+
+	queueStore, err := queue.NewSQLiteStore(homeDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(queue) error = %v", err)
+	}
+	sessionStore, err := history.NewSQLiteStore(homeDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(history) error = %v", err)
+	}
+	sessionFileStore := history.NewStore(homeDir)
+	taskStore, err := taskstore.NewSQLiteStore(homeDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(task) error = %v", err)
+	}
+	taskFileStore := taskstore.NewStore(homeDir)
+	leaseStore, err := scheduler.NewLeaseStore(homeDir)
+	if err != nil {
+		t.Fatalf("NewLeaseStore() error = %v", err)
+	}
+
+	old := time.Now().UTC().Add(-time.Minute)
+	req := queue.Request{
+		ID:           "job_stalled",
+		Prompt:       "recover me",
+		StarterAgent: "starter",
+		WorkingDir:   workDir,
+		SessionID:    "sess_stalled",
+		TaskID:       "task_stalled",
+		Status:       queue.StatusRunning,
+		CreatedAt:    old,
+		UpdatedAt:    old,
+		Error:        "old error",
+	}
+	if err := queueStore.UpsertExact(context.Background(), req); err != nil {
+		t.Fatalf("UpsertExact(queue) error = %v", err)
+	}
+	sessionRecord := history.SessionRecord{
+		ID:         "sess_stalled",
+		TaskID:     "task_stalled",
+		Prompt:     "recover me",
+		Starter:    "starter",
+		WorkingDir: workDir,
+		Status:     "running",
+		CreatedAt:  old,
+		UpdatedAt:  old,
+	}
+	if err := sessionStore.Save(context.Background(), sessionRecord); err != nil {
+		t.Fatalf("Save(session) error = %v", err)
+	}
+	if err := sessionFileStore.Save(context.Background(), sessionRecord); err != nil {
+		t.Fatalf("Save(session file) error = %v", err)
+	}
+	taskRecord := domain.TaskRecord{
+		ID:        "sess_stalled__task_stalled_delegate_1",
+		SessionID: "sess_stalled",
+		Title:     "stalled task",
+		Strategy:  domain.TaskStrategyRelay,
+		State:     domain.TaskStateRunning,
+		AgentID:   "starter",
+		CreatedAt: old,
+		UpdatedAt: old,
+	}
+	if err := taskStore.UpsertTask(context.Background(), taskRecord); err != nil {
+		t.Fatalf("UpsertTask() error = %v", err)
+	}
+	if err := taskFileStore.UpsertTask(context.Background(), taskRecord); err != nil {
+		t.Fatalf("UpsertTask(file) error = %v", err)
+	}
+	if err := leaseStore.Acquire(context.Background(), "sess_stalled", "owner_1"); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+
+	if err := daemon.recoverStalledQueueRuns(context.Background(), homeDir, time.Second); err != nil {
+		t.Fatalf("recoverStalledQueueRuns() error = %v", err)
+	}
+
+	gotReq, err := daemon.queue.Get(context.Background(), "job_stalled")
+	if err != nil {
+		t.Fatalf("Get(queue) error = %v", err)
+	}
+	if gotReq.Status != queue.StatusPending {
+		t.Fatalf("queue status = %s, want %s", gotReq.Status, queue.StatusPending)
+	}
+	if gotReq.Error != "recovered after daemon stall" {
+		t.Fatalf("queue error = %q, want recovery marker", gotReq.Error)
+	}
+
+	gotSession, err := sessionStore.Get(context.Background(), "sess_stalled")
+	if err != nil {
+		t.Fatalf("Get(session) error = %v", err)
+	}
+	if gotSession.Status != "failed_recoverable" {
+		t.Fatalf("session status = %q, want failed_recoverable", gotSession.Status)
+	}
+
+	gotTask, err := taskStore.GetTask(context.Background(), "sess_stalled__task_stalled_delegate_1")
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if gotTask.State != domain.TaskStateReady {
+		t.Fatalf("task state = %s, want %s", gotTask.State, domain.TaskStateReady)
+	}
+
+	gotLease, err := leaseStore.Get(context.Background(), "sess_stalled")
+	if err != nil {
+		t.Fatalf("Get(lease) error = %v", err)
+	}
+	if gotLease.Status != scheduler.LeaseStatusRecovered {
+		t.Fatalf("lease status = %s, want %s", gotLease.Status, scheduler.LeaseStatusRecovered)
 	}
 }
 

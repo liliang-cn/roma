@@ -30,6 +30,8 @@ import (
 	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
 
+const stalledRunGracePeriod = 15 * time.Second
+
 // acpService is the minimal interface for the ACP server lifecycle.
 type acpService interface {
 	Start(ctx context.Context) error
@@ -304,6 +306,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ticker.C:
 			if err := d.processNextQueueItem(ctx); err != nil {
 				log.Printf("romad queue error: %v", err)
+			}
+			if err := d.recoverStalledQueueRuns(ctx, controlDir, stalledRunGracePeriod); err != nil {
+				log.Printf("romad stalled-run recovery error: %v", err)
 			}
 			if err := scheduler.ResumeRecoverableSessions(ctx, controlDir, d.queue, d.runner); err != nil {
 				log.Printf("romad recovery error: %v", err)
@@ -611,6 +616,66 @@ func (d *Daemon) startJobHeartbeat(ctx context.Context, req queue.Request) func(
 	return func() {
 		close(stop)
 	}
+}
+
+func (d *Daemon) recoverStalledQueueRuns(ctx context.Context, controlDir string, gracePeriod time.Duration) error {
+	if d.queue == nil {
+		return nil
+	}
+	requests, err := d.queue.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list queue for stalled-run recovery: %w", err)
+	}
+	now := time.Now().UTC()
+	cutoff := now.Add(-gracePeriod)
+	sessionStore := newHistoryBackend(controlDir)
+	taskStore := newTaskBackend(controlDir)
+	leaseStore, leaseErr := scheduler.NewLeaseStore(controlDir)
+	if leaseErr != nil {
+		leaseStore = nil
+	}
+	for _, req := range requests {
+		if req.Status != queue.StatusRunning {
+			continue
+		}
+		if d.runningCancel(req.ID) != nil {
+			continue
+		}
+		if gracePeriod > 0 && req.UpdatedAt.After(cutoff) {
+			continue
+		}
+		log.Printf("romad recovering stalled job id=%s session=%s task=%s updated_at=%s", req.ID, req.SessionID, req.TaskID, req.UpdatedAt.Format(time.RFC3339Nano))
+		if req.SessionID != "" {
+			if session, err := sessionStore.Get(ctx, req.SessionID); err == nil && session.Status == "running" {
+				session.Status = "failed_recoverable"
+				session.UpdatedAt = now
+				_ = sessionStore.Save(ctx, session)
+			}
+			if err := scheduler.NormalizeInterruptedTasksForSession(ctx, controlDir, req.SessionID); err != nil {
+				return fmt.Errorf("normalize interrupted tasks for session %s: %w", req.SessionID, err)
+			}
+			if leaseStore != nil {
+				if record, err := leaseStore.Get(ctx, req.SessionID); err == nil && record.Status == scheduler.LeaseStatusActive {
+					if err := leaseStore.RecoverSession(ctx, req.SessionID); err != nil {
+						return fmt.Errorf("recover lease for session %s: %w", req.SessionID, err)
+					}
+				}
+			}
+			if items, err := taskStore.ListTasksBySession(ctx, req.SessionID); err == nil {
+				for _, item := range items {
+					if item.State == domain.TaskStateRunning {
+						log.Printf("romad reset stalled task=%s session=%s", item.ID, req.SessionID)
+					}
+				}
+			}
+		}
+		req.Status = queue.StatusPending
+		req.Error = "recovered after daemon stall"
+		if err := d.queue.Update(ctx, req); err != nil {
+			return fmt.Errorf("requeue stalled job %s: %w", req.ID, err)
+		}
+	}
+	return nil
 }
 
 func (d *Daemon) deliverQueueNotification(ctx context.Context, req queue.Request) {

@@ -248,6 +248,60 @@ func TestResumeRecoverableSessionsSkipsPendingApprovalLeaseSessions(t *testing.T
 	}
 }
 
+func TestNormalizeInterruptedTasksForSession(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	now := time.Now().UTC()
+	for _, record := range []domain.TaskRecord{
+		{
+			ID:        "sess_1__running",
+			SessionID: "sess_1",
+			Title:     "Running task",
+			Strategy:  domain.TaskStrategyRelay,
+			State:     domain.TaskStateRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "sess_1__done",
+			SessionID: "sess_1",
+			Title:     "Done task",
+			Strategy:  domain.TaskStrategyRelay,
+			State:     domain.TaskStateSucceeded,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := taskStore.UpsertTask(context.Background(), record); err != nil {
+			t.Fatalf("UpsertTask() error = %v", err)
+		}
+	}
+
+	if err := NormalizeInterruptedTasksForSession(context.Background(), workDir, "sess_1"); err != nil {
+		t.Fatalf("NormalizeInterruptedTasksForSession() error = %v", err)
+	}
+
+	running, err := taskStore.GetTask(context.Background(), "sess_1__running")
+	if err != nil {
+		t.Fatalf("GetTask(running) error = %v", err)
+	}
+	if running.State != domain.TaskStateReady {
+		t.Fatalf("running state = %s, want %s", running.State, domain.TaskStateReady)
+	}
+	done, err := taskStore.GetTask(context.Background(), "sess_1__done")
+	if err != nil {
+		t.Fatalf("GetTask(done) error = %v", err)
+	}
+	if done.State != domain.TaskStateSucceeded {
+		t.Fatalf("done state = %s, want %s", done.State, domain.TaskStateSucceeded)
+	}
+}
+
 func TestReclaimStaleWorkspaces(t *testing.T) {
 	t.Parallel()
 

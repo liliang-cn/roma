@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/liliang-cn/roma/internal/agents"
+	"github.com/liliang-cn/roma/internal/domain"
+	"github.com/liliang-cn/roma/internal/scheduler"
 )
 
 func TestInspectRepoConflictsDetectsUnmergedPaths(t *testing.T) {
@@ -58,6 +62,48 @@ func TestEnsureConflictFreeConclusionFailsForUnmergedRepo(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "README.md") {
 		t.Fatalf("error = %q, want README.md mentioned", err.Error())
+	}
+}
+
+func TestResolveCaesarDelegateTargetRequiresKnownNodeTarget(t *testing.T) {
+	t.Parallel()
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{ID: "starter", DisplayName: "Starter", Command: "sh", Args: []string{"-c", "true"}, Availability: domain.AgentAvailabilityAvailable},
+		domain.AgentProfile{ID: "worker", DisplayName: "Worker", Command: "sh", Args: []string{"-c", "true"}, Availability: domain.AgentAvailabilityAvailable},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	svc := NewService(registry)
+	assignments := []scheduler.NodeAssignment{
+		{
+			Node: domain.TaskNodeSpec{ID: "task_1_starter_caesar_1"},
+			Profile: domain.AgentProfile{
+				ID:           "starter",
+				Availability: domain.AgentAvailabilityAvailable,
+			},
+		},
+		{
+			Node: domain.TaskNodeSpec{ID: "task_1_delegate_1"},
+			Profile: domain.AgentProfile{
+				ID:           "worker",
+				Availability: domain.AgentAvailabilityAvailable,
+			},
+		},
+	}
+
+	if _, ok := svc.resolveCaesarDelegateTarget(context.Background(), assignments, "task_1_delegate_1"); !ok {
+		t.Fatal("resolveCaesarDelegateTarget(node id) = false, want true")
+	}
+	if _, ok := svc.resolveCaesarDelegateTarget(context.Background(), assignments, "delegate_1"); !ok {
+		t.Fatal("resolveCaesarDelegateTarget(suffix) = false, want true")
+	}
+	if _, ok := svc.resolveCaesarDelegateTarget(context.Background(), assignments, "starter"); ok {
+		t.Fatal("resolveCaesarDelegateTarget(starter agent id) = true, want false")
+	}
+	if _, ok := svc.resolveCaesarDelegateTarget(context.Background(), assignments, "worker"); ok {
+		t.Fatal("resolveCaesarDelegateTarget(worker agent id) = true, want false")
 	}
 }
 

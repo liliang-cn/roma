@@ -261,10 +261,6 @@ func (s *Service) resolveCaesarDelegateTarget(ctx context.Context, assignments [
 		}
 		return assignment.Profile, true
 	}
-	// Exact agent ID match fallback.
-	if profile, ok := s.registry.Resolve(ctx, raw); ok {
-		return profile, true
-	}
 	return domain.AgentProfile{}, false
 }
 
