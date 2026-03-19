@@ -468,6 +468,7 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	for _, want := range []string{
 		"  roma --help",
 		`  roma run [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
+		"  roma <command> --help",
 		"  roma result show <session_id>",
 		"  roma acp status",
 		"  artifact    inspect stored artifacts",
@@ -481,6 +482,9 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 		`roma run --agent <agent_id> --with <delegates> "prompt"`,
 		`  roma submit [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>] "<prompt>"`,
 		`roma submit --agent <agent_id> --with <delegates> "prompt"`,
+		"  roma help <topic>",
+		"  roma help queue",
+		"  roma help agent",
 		"debug                    show debugging commands",
 		"debug      low-level inspection of sessions, tasks, artifacts, etc.",
 	} {
