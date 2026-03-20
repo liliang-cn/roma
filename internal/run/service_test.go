@@ -227,7 +227,7 @@ func TestRunWithDelegatesPropagatesExecutionFailure(t *testing.T) {
 	}
 }
 
-func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
+func TestBuildOrchestratedAssignmentsFanOutAfterStarterClarify(t *testing.T) {
 	t.Parallel()
 
 	starter := domain.AgentProfile{ID: "starter", DisplayName: "Starter"}
@@ -237,49 +237,25 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterBootstrap(t *testing.T) {
 	}
 
 	assignments := buildOrchestratedAssignments("task_1", starter, delegates, true, 3, nil)
-	// clarify + bootstrap + 2 delegates = 4
-	if len(assignments) != 4 {
-		t.Fatalf("assignment count = %d, want 4", len(assignments))
+	// clarify + 2 delegates = 3
+	if len(assignments) != 3 {
+		t.Fatalf("assignment count = %d, want 3", len(assignments))
 	}
 
 	clarify := assignments[0]
-	bootstrap := assignments[1]
 
 	if clarify.Node.ID != "task_1_starter_clarify" {
 		t.Fatalf("clarify node id = %q, want task_1_starter_clarify", clarify.Node.ID)
 	}
-	if bootstrap.Node.ID != "task_1_starter_bootstrap" {
-		t.Fatalf("bootstrap node id = %q, want task_1_starter_bootstrap", bootstrap.Node.ID)
-	}
-	if bootstrap.Node.Title != "Starter Caesar coordination" {
-		t.Fatalf("bootstrap title = %q, want Starter Caesar coordination", bootstrap.Node.Title)
-	}
-	if bootstrap.SemanticReviewer.ID != "starter" {
-		t.Fatalf("bootstrap reviewer = %q, want starter", bootstrap.SemanticReviewer.ID)
-	}
-	// bootstrap depends on clarify
-	if got := bootstrap.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_clarify" {
-		t.Fatalf("bootstrap dependencies = %#v, want [task_1_starter_clarify]", got)
-	}
-	// delegates depend on bootstrap
-	for _, assignment := range assignments[2:] {
-		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_bootstrap" {
-			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_bootstrap]", assignment.Node.ID, got)
+	for _, assignment := range assignments[1:] {
+		if got := assignment.Node.Dependencies; len(got) != 1 || got[0] != "task_1_starter_clarify" {
+			t.Fatalf("delegate %s dependencies = %#v, want [task_1_starter_clarify]", assignment.Node.ID, got)
 		}
 		if assignment.SemanticReviewer.ID != "starter" {
 			t.Fatalf("delegate %s reviewer = %q, want starter", assignment.Node.ID, assignment.SemanticReviewer.ID)
 		}
 	}
-	if strings.Contains(strings.ToLower(bootstrap.PromptHint), "inspect the delegate agents") {
-		t.Fatalf("bootstrap prompt hint = %q, want no runtime delegate inspection directive", bootstrap.PromptHint)
-	}
-	if !strings.Contains(bootstrap.PromptHint, "Known delegate profiles") {
-		t.Fatalf("bootstrap prompt hint = %q, want embedded delegate summary", bootstrap.PromptHint)
-	}
-	if !strings.Contains(bootstrap.PromptHint, "You do not implement the task yourself.") {
-		t.Fatalf("bootstrap prompt hint = %q, want Caesar-only coordination directive", bootstrap.PromptHint)
-	}
-	for _, assignment := range assignments[2:] {
+	for _, assignment := range assignments[1:] {
 		if strings.Contains(strings.ToLower(assignment.PromptHint), "active contributor") {
 			t.Fatalf("delegate prompt hint = %q, want no starter worker language", assignment.PromptHint)
 		}
@@ -295,13 +271,12 @@ func TestBuildOrchestratedAssignmentsIncludesClarifyNode(t *testing.T) {
 	}
 
 	assignments := buildOrchestratedAssignments("task_x", starter, delegates, false, 1, nil)
-	if len(assignments) != 3 {
-		t.Fatalf("assignment count = %d, want 3 (clarify + bootstrap + 1 delegate)", len(assignments))
+	if len(assignments) != 2 {
+		t.Fatalf("assignment count = %d, want 2 (clarify + 1 delegate)", len(assignments))
 	}
 
 	clarify := assignments[0]
-	bootstrap := assignments[1]
-	delegate := assignments[2]
+	delegate := assignments[1]
 
 	if clarify.Node.ID != "task_x_starter_clarify" {
 		t.Fatalf("clarify node id = %q, want task_x_starter_clarify", clarify.Node.ID)
@@ -316,14 +291,9 @@ func TestBuildOrchestratedAssignmentsIncludesClarifyNode(t *testing.T) {
 		t.Fatalf("clarify profile = %q, want starter", clarify.Profile.ID)
 	}
 
-	// bootstrap depends on clarify
-	if got := bootstrap.Node.Dependencies; len(got) != 1 || got[0] != "task_x_starter_clarify" {
-		t.Fatalf("bootstrap dependencies = %#v, want [task_x_starter_clarify]", got)
-	}
-
-	// delegate depends on bootstrap
-	if got := delegate.Node.Dependencies; len(got) != 1 || got[0] != "task_x_starter_bootstrap" {
-		t.Fatalf("delegate dependencies = %#v, want [task_x_starter_bootstrap]", got)
+	// delegate depends on clarify
+	if got := delegate.Node.Dependencies; len(got) != 1 || got[0] != "task_x_starter_clarify" {
+		t.Fatalf("delegate dependencies = %#v, want [task_x_starter_clarify]", got)
 	}
 }
 
@@ -607,38 +577,23 @@ func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
 	}
 }
 
-func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
+func TestRunOrchestratedStarterClarifiesThenDelegates(t *testing.T) {
 	workDir := t.TempDir()
 	controlDir := t.TempDir()
 	initRunGitRepo(t, workDir)
 
 	starterScript := strings.Join([]string{
 		`prompt="$1"`,
-		`if printf '%s' "$prompt" | grep -Eq "Starter Caesar coordination|Caesar review round"; then`,
-		`  if printf '%s' "$prompt" | grep -q "Upstream artifact summaries:"; then`,
-		`    if printf '%s' "$prompt" | grep -q "second pass complete"; then`,
-		`      printf 'ROMA_DONE: all work is complete\n'`,
-		`    else`,
-		`      target=$(printf '%s\n' "$prompt" | sed -n 's/^- \([^:]*delegate_1\):.*/\1/p' | head -n1)`,
-		`      if [ -z "$target" ]; then target=worker; fi`,
-		`      printf 'ROMA_FOLLOWUP: delegate %s | second pass\n' "$target"`,
-		`    fi`,
-		`  else`,
-		`    printf 'bootstrap ready\n'`,
-		`  fi`,
+		`if printf '%s' "$prompt" | grep -q "Starter prompt clarification"; then`,
+		`  printf 'clarified spec\n'`,
 		`else`,
-		`  printf 'unexpected Caesar prompt\n'`,
+		`  printf 'starter should only clarify once\n' >&2`,
+		`  exit 9`,
 		`fi`,
 	}, "\n")
 	workerScript := strings.Join([]string{
-		`prompt="$1"`,
-		`if printf '%s' "$prompt" | grep -q "second pass"; then`,
-		`  printf 'second\n' > second.txt`,
-		`  printf 'second pass complete\nROMA_MERGE_BACK: direct_merge | second pass ready\nROMA_MERGE_FILE: second.txt\n'`,
-		`else`,
-		`  printf 'first\n' > first.txt`,
-		`  printf 'first pass complete\nROMA_MERGE_BACK: direct_merge | first pass ready\nROMA_MERGE_FILE: first.txt\n'`,
-		`fi`,
+		`printf 'delegated work\n' > delegated.txt`,
+		`printf 'delegated work complete\nROMA_MERGE_BACK: direct_merge | delegated work ready\nROMA_MERGE_FILE: delegated.txt\n'`,
 	}, "\n")
 
 	registry, err := agents.NewRegistry(
@@ -676,22 +631,18 @@ func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 		t.Fatalf("status = %s, want succeeded", result.Status)
 	}
 
-	firstContent, err := os.ReadFile(filepath.Join(workDir, "first.txt"))
+	delegatedContent, err := os.ReadFile(filepath.Join(workDir, "delegated.txt"))
 	if err != nil {
-		t.Fatalf("ReadFile(first.txt) error = %v", err)
+		t.Fatalf("ReadFile(delegated.txt) error = %v", err)
 	}
-	if strings.TrimSpace(string(firstContent)) != "first" {
-		t.Fatalf("first.txt = %q, want first", strings.TrimSpace(string(firstContent)))
+	if strings.TrimSpace(string(delegatedContent)) != "delegated work" {
+		t.Fatalf("delegated.txt = %q, want delegated work", strings.TrimSpace(string(delegatedContent)))
 	}
-	secondContent, err := os.ReadFile(filepath.Join(workDir, "second.txt"))
-	if err != nil {
-		t.Fatalf("ReadFile(second.txt) error = %v", err)
-	}
-	if strings.TrimSpace(string(secondContent)) != "second" {
-		t.Fatalf("second.txt = %q, want second", strings.TrimSpace(string(secondContent)))
+	if _, err := os.Stat(filepath.Join(workDir, "second.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected no follow-up second.txt, stat err = %v", err)
 	}
 
-	taskStore, err := taskstore.NewSQLiteStore(workDir)
+	taskStore, err := taskstore.NewSQLiteStore(controlDir)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -699,10 +650,17 @@ func TestRunOrchestratedCaesarCoordinatesFollowUpsAndAutoMerges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasksBySession() error = %v", err)
 	}
+	clarifyCount := 0
 	for _, task := range tasks {
-		if task.Title == "Starter contribution" {
-			t.Fatalf("unexpected starter worker task present: %#v", task)
+		if task.Title == "Starter prompt clarification" {
+			clarifyCount++
 		}
+		if strings.Contains(task.Title, "Caesar review round") || task.Title == "Starter Caesar coordination" {
+			t.Fatalf("unexpected starter coordination task present: %#v", task)
+		}
+	}
+	if clarifyCount != 1 {
+		t.Fatalf("clarify task count = %d, want 1", clarifyCount)
 	}
 }
 

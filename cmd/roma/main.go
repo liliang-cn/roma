@@ -340,29 +340,48 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 		}
 	}
 
-	client := api.NewClient(req.WorkingDir)
-	if client.Available() {
-		resp, err := client.Submit(ctx, api.SubmitRequest{
-			GraphFile:           "",
-			Prompt:              req.Prompt,
-			StarterAgent:        req.StarterAgent,
-			Delegates:           req.Delegates,
-			WorkingDir:          req.WorkingDir,
-			PolicyOverride:      req.PolicyOverride,
-			PolicyOverrideActor: req.OverrideActor,
-			Continuous:          req.Continuous,
-			MaxRounds:           req.MaxRounds,
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("submitted to daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
-		return nil
+	if err := ensureDaemonAvailable(
+		func() bool { return api.NewClient(req.WorkingDir).Available() },
+		func() error { return runStart(nil) },
+		5*time.Second,
+		100*time.Millisecond,
+	); err != nil {
+		return err
 	}
 
-	svc := runsvc.NewService(registry)
-	svc.SetControlDir(romapath.HomeDir())
-	return svc.Run(ctx, req)
+	resp, err := api.NewClient(req.WorkingDir).Submit(ctx, api.SubmitRequest{
+		GraphFile:           "",
+		Prompt:              req.Prompt,
+		StarterAgent:        req.StarterAgent,
+		Delegates:           req.Delegates,
+		WorkingDir:          req.WorkingDir,
+		PolicyOverride:      req.PolicyOverride,
+		PolicyOverrideActor: req.OverrideActor,
+		Continuous:          req.Continuous,
+		MaxRounds:           req.MaxRounds,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("submitted to daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+	return nil
+}
+
+func ensureDaemonAvailable(check func() bool, start func() error, timeout, interval time.Duration) error {
+	if check() {
+		return nil
+	}
+	if err := start(); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return nil
+		}
+		time.Sleep(interval)
+	}
+	return fmt.Errorf("romad did not become ready within %s", timeout)
 }
 
 func runGraph(ctx context.Context, registry *agents.Registry, args []string) error {
@@ -3185,6 +3204,8 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 			}
 		case "--continuous":
 			req.Continuous = true
+		case "--verbose":
+			req.Verbose = true
 		case "--policy-override":
 			req.PolicyOverride = true
 		case "--override-actor":
@@ -3230,7 +3251,7 @@ func printUsage() {
 	fmt.Println("Core:")
 	fmt.Println("  roma --help")
 	fmt.Println("  roma tui [--cwd <dir>]")
-	fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>]`)
+	fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <id>]`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma result show <session_id>")
 	fmt.Println("  roma <command> --help")
@@ -3262,6 +3283,7 @@ func printUsage() {
 	fmt.Println("  roma tui")
 	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
 	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot`)
+	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot --verbose`)
 }
 
 func printTopicUsage(topic string) {
@@ -3480,7 +3502,7 @@ func printTopicUsage(topic string) {
 		fmt.Println(`  roma policy check --agent <id> --prompt "<prompt>" [--with <id,...>] [--cwd <dir>]`)
 	case "run":
 		fmt.Println("roma run usage:")
-		fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <name>]`)
+		fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <name>]`)
 		fmt.Println("")
 		fmt.Println("Flags:")
 		fmt.Println("  --prompt <text>      task prompt (required)")
@@ -3489,6 +3511,7 @@ func printTopicUsage(topic string) {
 		fmt.Println("  --cwd <dir>          working directory (default: current directory)")
 		fmt.Println("  --continuous         run until completion or max rounds")
 		fmt.Println("  --max-rounds <n>     maximum number of refinement rounds")
+		fmt.Println("  --verbose            print per-node execution output")
 		fmt.Println("  --policy-override    override safety policies")
 		fmt.Println("  --override-actor <n> name of the actor performing the override")
 	case "submit", "tell", "ask":

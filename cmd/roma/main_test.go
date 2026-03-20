@@ -288,12 +288,15 @@ func TestQueueTailEventLinesSemanticRecommendationsStructured(t *testing.T) {
 func TestParseRunArgsWithAlias(t *testing.T) {
 	t.Parallel()
 
-	req, err := parseRunArgs([]string{"--agent", "my-codex", "--with", "my-gemini,my-copilot", "--prompt", "build feature"})
+	req, err := parseRunArgs([]string{"--agent", "my-codex", "--with", "my-gemini,my-copilot", "--prompt", "build feature", "--verbose"})
 	if err != nil {
 		t.Fatalf("parseRunArgs() with --with error = %v", err)
 	}
 	if req.Prompt != "build feature" {
 		t.Fatalf("prompt = %q, want %q", req.Prompt, "build feature")
+	}
+	if !req.Verbose {
+		t.Fatal("verbose = false, want true")
 	}
 	if len(req.Delegates) != 2 || req.Delegates[0] != "my-gemini" || req.Delegates[1] != "my-copilot" {
 		t.Fatalf("delegates via --with = %#v, want [my-gemini my-copilot]", req.Delegates)
@@ -319,6 +322,43 @@ func TestParseRunArgsRequiresPromptFlag(t *testing.T) {
 	_, err = parseRunArgs([]string{"--agent", "my-codex", "build", "feature"})
 	if err == nil || !strings.Contains(err.Error(), `unexpected positional argument "build"; use --prompt`) {
 		t.Fatalf("parseRunArgs() error = %v, want positional argument guidance", err)
+	}
+}
+
+func TestEnsureDaemonAvailableStartsWhenNeeded(t *testing.T) {
+	t.Parallel()
+
+	available := false
+	started := false
+	err := ensureDaemonAvailable(
+		func() bool { return available },
+		func() error {
+			started = true
+			available = true
+			return nil
+		},
+		50*time.Millisecond,
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("ensureDaemonAvailable() error = %v", err)
+	}
+	if !started {
+		t.Fatal("start = false, want true")
+	}
+}
+
+func TestEnsureDaemonAvailableTimesOut(t *testing.T) {
+	t.Parallel()
+
+	err := ensureDaemonAvailable(
+		func() bool { return false },
+		func() error { return nil },
+		5*time.Millisecond,
+		time.Millisecond,
+	)
+	if err == nil || !strings.Contains(err.Error(), "romad did not become ready") {
+		t.Fatalf("ensureDaemonAvailable() error = %v, want readiness timeout", err)
 	}
 }
 
@@ -484,7 +524,7 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	out := captureStdout(t, printUsage)
 	for _, want := range []string{
 		"  roma --help",
-		`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--policy-override] [--override-actor <id>]`,
+		`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <id>]`,
 		"  roma <command> --help",
 		"  roma result show <session_id>",
 		"  roma acp status",
@@ -517,6 +557,7 @@ func TestPrintTopicUsageRunIncludesActualFlags(t *testing.T) {
 		"roma run usage:",
 		"--prompt <text>",
 		"--with <id,...>",
+		"--verbose",
 		"--policy-override",
 		"--override-actor <name>",
 	} {

@@ -33,6 +33,7 @@ type Request struct {
 	StarterAgent   string
 	WorkingDir     string
 	Delegates      []string
+	Verbose        bool
 	SessionID      string
 	TaskID         string
 	PolicyOverride bool
@@ -218,17 +219,9 @@ func (s *Service) runOrchestrated(ctx context.Context, req Request, starter doma
 
 	dispatcher := scheduler.NewDispatcherWithControlDir(req.WorkingDir, s.controlRoot(req.WorkingDir), s.supervisor, s.events, s.tasks)
 	execResult, err := dispatcher.Execute(ctx, sessionID, req.WorkingDir, req.Prompt, assignments)
-	if err == nil && len(delegates) > 0 {
-		if updatedAssignments, updatedResult, caesarErr := s.continueCaesarCoordination(ctx, req, sessionID, taskID, starter, assignments, execResult, dispatcher); caesarErr != nil {
-			assignments = updatedAssignments
-			execResult = updatedResult
-			err = caesarErr
-		} else {
-			assignments = updatedAssignments
-			execResult = updatedResult
-		}
+	if req.Verbose {
+		writeRelayResult(w, assignments, execResult)
 	}
-	writeRelayResult(w, assignments, execResult)
 	if s.store != nil {
 		for _, nodeID := range execResult.Order {
 			artifact := execResult.Artifacts[nodeID]
@@ -367,7 +360,9 @@ func (s *Service) runDirect(ctx context.Context, req Request, profile domain.Age
 		}
 	}
 	s.handleMergeBackRequests(ctx, req.WorkingDir, collectRelayArtifacts(execResult))
-	writeRelayResult(stdout, fullAssignments, execResult)
+	if req.Verbose {
+		writeRelayResult(stdout, fullAssignments, execResult)
+	}
 
 	record.ArtifactIDs = collectRelayArtifactIDs(execResult)
 	record.UpdatedAt = time.Now().UTC()
@@ -587,7 +582,7 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		}}
 	}
 
-	assignments := make([]scheduler.NodeAssignment, 0, 2+len(delegates))
+	assignments := make([]scheduler.NodeAssignment, 0, 1+len(delegates))
 
 	clarifyNodeID := taskID + "_starter_clarify"
 	assignments = append(assignments, scheduler.NodeAssignment{
@@ -604,21 +599,6 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 		PromptHint:       buildStarterClarifyPromptHint(starter, delegates, helpOutputs),
 	})
 
-	bootstrapNodeID := taskID + "_starter_bootstrap"
-	assignments = append(assignments, scheduler.NodeAssignment{
-		Node: domain.TaskNodeSpec{
-			ID:            bootstrapNodeID,
-			Title:         "Starter Caesar coordination",
-			Strategy:      domain.TaskStrategyDirect,
-			Dependencies:  []string{clarifyNodeID},
-			SchemaVersion: "v1",
-		},
-		Profile:          starter,
-		SemanticReviewer: starter,
-		Continuous:       continuous,
-		MaxRounds:        maxRounds,
-		PromptHint:       buildStarterBootstrapPromptHint(starter, delegates, helpOutputs),
-	})
 	for i, delegate := range delegates {
 		nodeID := fmt.Sprintf("%s_delegate_%d", taskID, i+1)
 		assignments = append(assignments, scheduler.NodeAssignment{
@@ -626,7 +606,7 @@ func buildOrchestratedAssignments(taskID string, starter domain.AgentProfile, de
 				ID:            nodeID,
 				Title:         "Concurrent delegate execution",
 				Strategy:      domain.TaskStrategyRelay,
-				Dependencies:  []string{bootstrapNodeID},
+				Dependencies:  []string{clarifyNodeID},
 				SchemaVersion: "v1",
 			},
 			Profile:          delegate,
@@ -655,37 +635,6 @@ func buildStarterClarifyPromptHint(starter domain.AgentProfile, delegates []doma
 	}
 	if len(delegates) > 0 {
 		lines = append(lines, "", "Available delegate agents:")
-		for _, delegate := range delegates {
-			summary := "- " + delegateAutomationSummary(delegate)
-			if out := strings.TrimSpace(helpOutputs[delegate.ID]); out != "" {
-				summary += "\n  capability probe output:\n"
-				for _, hl := range strings.Split(out, "\n") {
-					summary += "    " + hl + "\n"
-				}
-			}
-			lines = append(lines, summary)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func buildStarterBootstrapPromptHint(starter domain.AgentProfile, delegates []domain.AgentProfile, helpOutputs map[string]string) string {
-	lines := []string{
-		fmt.Sprintf("You are Caesar, the coordinating starter agent (%s).", starter.DisplayName),
-		"You do not implement the task yourself.",
-		"The upstream clarify node has already produced a structured task specification; use it as the basis for your work assignment plan.",
-		"Your job is to produce the shared bootstrap plan for the delegate agents and coordinate their work.",
-		"Explicitly summarize how work should be split so the later parallel agents can execute with minimal overlap.",
-		"Keep ownership of coordination, progress tracking, and follow-up questions; delegate concrete implementation.",
-		"You may run `<command> --help` (or any healthcheck command) yourself if you need more detail about an agent's capabilities.",
-	}
-	if len(delegates) > 0 {
-		names := make([]string, 0, len(delegates))
-		for _, delegate := range delegates {
-			names = append(names, fmt.Sprintf("%s (%s)", delegate.DisplayName, delegate.ID))
-		}
-		lines = append(lines, "Delegate agents: "+strings.Join(names, ", "))
-		lines = append(lines, "Known delegate profiles:")
 		for _, delegate := range delegates {
 			summary := "- " + delegateAutomationSummary(delegate)
 			if out := strings.TrimSpace(helpOutputs[delegate.ID]); out != "" {
