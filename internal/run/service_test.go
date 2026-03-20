@@ -19,8 +19,6 @@ import (
 )
 
 func TestRunRejectsUnknownAgent(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.DefaultRegistry()
 	if err != nil {
 		t.Fatalf("DefaultRegistry() error = %v", err)
@@ -38,8 +36,6 @@ func TestRunRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestRunRejectsUnknownDelegate(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(domain.AgentProfile{
 		ID:           "starter",
 		DisplayName:  "Starter",
@@ -65,8 +61,6 @@ func TestRunRejectsUnknownDelegate(t *testing.T) {
 }
 
 func TestWriteRelayResult(t *testing.T) {
-	t.Parallel()
-
 	var buf strings.Builder
 	writeRelayResult(&buf, []scheduler.NodeAssignment{
 		{
@@ -97,8 +91,6 @@ func TestWriteRelayResult(t *testing.T) {
 }
 
 func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(domain.AgentProfile{
 		ID:           "codex-cli",
 		DisplayName:  "Codex CLI",
@@ -174,8 +166,6 @@ func TestRunReturnsAwaitingApprovalOnPolicyWarn(t *testing.T) {
 }
 
 func TestRunWithDelegatesPropagatesExecutionFailure(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(
 		domain.AgentProfile{
 			ID:           "claude",
@@ -228,8 +218,6 @@ func TestRunWithDelegatesPropagatesExecutionFailure(t *testing.T) {
 }
 
 func TestBuildOrchestratedAssignmentsFanOutAfterStarterClarify(t *testing.T) {
-	t.Parallel()
-
 	starter := domain.AgentProfile{ID: "starter", DisplayName: "Starter"}
 	delegates := []domain.AgentProfile{
 		{ID: "gemini", DisplayName: "Gemini"},
@@ -263,8 +251,6 @@ func TestBuildOrchestratedAssignmentsFanOutAfterStarterClarify(t *testing.T) {
 }
 
 func TestBuildOrchestratedAssignmentsIncludesClarifyNode(t *testing.T) {
-	t.Parallel()
-
 	starter := domain.AgentProfile{ID: "starter", DisplayName: "Starter"}
 	delegates := []domain.AgentProfile{
 		{ID: "agent-a", DisplayName: "Agent A"},
@@ -298,8 +284,6 @@ func TestBuildOrchestratedAssignmentsIncludesClarifyNode(t *testing.T) {
 }
 
 func TestBuildStarterClarifyPromptHintMentionsDelegates(t *testing.T) {
-	t.Parallel()
-
 	starter := domain.AgentProfile{ID: "starter", DisplayName: "My Starter"}
 	delegates := []domain.AgentProfile{
 		{ID: "agent-1", DisplayName: "Agent One", Capabilities: []string{"go", "python"}},
@@ -326,8 +310,6 @@ func TestBuildStarterClarifyPromptHintMentionsDelegates(t *testing.T) {
 }
 
 func TestMaybePromoteOrchestratedToCuriaForProtectedScope(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(
 		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
 		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
@@ -370,8 +352,6 @@ func TestMaybePromoteOrchestratedToCuriaForProtectedScope(t *testing.T) {
 }
 
 func TestMaybePromoteOrchestratedToCuriaIgnoresAvoidanceConstraints(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(
 		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
 		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
@@ -404,8 +384,6 @@ func TestMaybePromoteOrchestratedToCuriaIgnoresAvoidanceConstraints(t *testing.T
 }
 
 func TestMaybePromoteGraphAssignmentsToCuria(t *testing.T) {
-	t.Parallel()
-
 	registry, err := agents.NewRegistry(
 		domain.AgentProfile{ID: "my-codex", DisplayName: "My Codex", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
 		domain.AgentProfile{ID: "my-gemini", DisplayName: "My Gemini", Command: "sh", HealthcheckArgs: []string{"-c", "exit 0"}, Availability: domain.AgentAvailabilityAvailable},
@@ -443,8 +421,6 @@ func TestMaybePromoteGraphAssignmentsToCuria(t *testing.T) {
 }
 
 func TestRunDirectAutoMergeBackRequest(t *testing.T) {
-	t.Parallel()
-
 	workDir := t.TempDir()
 	initRunGitRepo(t, workDir)
 	registry, err := agents.NewRegistry(domain.AgentProfile{
@@ -533,8 +509,6 @@ func TestRunDirectAutoMergeBackRequestUsesControlRootWorkspaceMetadata(t *testin
 }
 
 func TestRunDirectMergeBackRequestRequireVoteDoesNotAutoMerge(t *testing.T) {
-	t.Parallel()
-
 	workDir := t.TempDir()
 	initRunGitRepo(t, workDir)
 	registry, err := agents.NewRegistry(domain.AgentProfile{
