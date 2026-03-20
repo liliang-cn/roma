@@ -371,6 +371,7 @@ func (d *Daemon) processNextQueueItem(ctx context.Context) error {
 		if req.Graph == nil {
 			runResult, runErr = d.runner.RunWithResult(runCtx, run.Request{
 				Prompt:         req.Prompt,
+				Mode:           req.Mode,
 				StarterAgent:   req.StarterAgent,
 				WorkingDir:     req.WorkingDir,
 				Delegates:      req.Delegates,

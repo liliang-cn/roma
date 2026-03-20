@@ -47,7 +47,7 @@ func (s *SQLiteStore) UpsertExact(ctx context.Context, req Request) error {
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Request, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, mode, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests WHERE id = ?`,
 		id,
 	)
@@ -58,7 +58,7 @@ func (s *SQLiteStore) Get(ctx context.Context, id string) (Request, error) {
 func (s *SQLiteStore) List(ctx context.Context) ([]Request, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, mode, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests ORDER BY created_at`,
 	)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Request, error) {
 func (s *SQLiteStore) NextPending(ctx context.Context) (Request, bool, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
+		`SELECT id, graph_file, graph_json, prompt, mode, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error
 		 FROM queue_requests WHERE status = ? ORDER BY created_at LIMIT 1`,
 		string(StatusPending),
 	)
@@ -130,12 +130,13 @@ func (s *SQLiteStore) save(ctx context.Context, req Request) error {
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT OR REPLACE INTO queue_requests
-		(id, graph_file, graph_json, prompt, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, graph_file, graph_json, prompt, mode, starter_agent, delegates_json, working_dir, continuous, max_rounds, session_id, task_id, artifact_ids_json, policy_override, policy_override_actor, status, created_at, updated_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.ID,
 		req.GraphFile,
 		string(graphRaw),
 		req.Prompt,
+		req.Mode,
 		req.StarterAgent,
 		string(delegatesRaw),
 		req.WorkingDir,
@@ -180,6 +181,7 @@ func scanRequest(scanner requestScanner) (Request, error) {
 		&record.GraphFile,
 		&graphRaw,
 		&record.Prompt,
+		&record.Mode,
 		&record.StarterAgent,
 		&delegatesRaw,
 		&record.WorkingDir,

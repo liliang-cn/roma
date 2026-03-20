@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS queue_requests (
   graph_file TEXT,
   graph_json TEXT,
   prompt TEXT NOT NULL,
+  mode TEXT,
   starter_agent TEXT NOT NULL,
   delegates_json TEXT,
   working_dir TEXT NOT NULL,
@@ -145,6 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_leases_status_updated ON scheduler_leas
 		if !alreadyExists(err) {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate queue_requests.max_rounds: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE queue_requests ADD COLUMN mode TEXT`); err != nil {
+		if !alreadyExists(err) {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate queue_requests.mode: %w", err)
 		}
 	}
 	if _, err := db.Exec(`ALTER TABLE session_history ADD COLUMN final_artifact_id TEXT`); err != nil {

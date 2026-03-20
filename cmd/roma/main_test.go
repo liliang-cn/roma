@@ -16,6 +16,7 @@ import (
 	"github.com/liliang-cn/roma/internal/events"
 	"github.com/liliang-cn/roma/internal/history"
 	"github.com/liliang-cn/roma/internal/queue"
+	runsvc "github.com/liliang-cn/roma/internal/run"
 	"github.com/liliang-cn/roma/internal/scheduler"
 	workspacepkg "github.com/liliang-cn/roma/internal/workspace"
 )
@@ -288,15 +289,21 @@ func TestQueueTailEventLinesSemanticRecommendationsStructured(t *testing.T) {
 func TestParseRunArgsWithAlias(t *testing.T) {
 	t.Parallel()
 
-	req, err := parseRunArgs([]string{"--agent", "my-codex", "--with", "my-gemini,my-copilot", "--prompt", "build feature", "--verbose"})
+	req, err := parseRunArgs([]string{"--mode", "senate", "--agent", "my-codex", "--with", "my-gemini,my-copilot", "--prompt", "build feature", "--verbose", "-d"})
 	if err != nil {
 		t.Fatalf("parseRunArgs() with --with error = %v", err)
 	}
 	if req.Prompt != "build feature" {
 		t.Fatalf("prompt = %q, want %q", req.Prompt, "build feature")
 	}
+	if req.Mode != runsvc.RunModeSenate {
+		t.Fatalf("mode = %q, want %q", req.Mode, runsvc.RunModeSenate)
+	}
 	if !req.Verbose {
 		t.Fatal("verbose = false, want true")
+	}
+	if !req.Detach {
+		t.Fatal("detach = false, want true")
 	}
 	if len(req.Delegates) != 2 || req.Delegates[0] != "my-gemini" || req.Delegates[1] != "my-copilot" {
 		t.Fatalf("delegates via --with = %#v, want [my-gemini my-copilot]", req.Delegates)
@@ -308,6 +315,14 @@ func TestParseRunArgsWithAlias(t *testing.T) {
 	}
 	if len(req.Delegates) != 1 || req.Delegates[0] != "my-gemini" {
 		t.Fatalf("delegates via --delegate = %#v, want [my-gemini]", req.Delegates)
+	}
+
+	req, err = parseRunArgs([]string{"--mode", "relay", "--agent", "my-codex", "--prompt", "build feature"})
+	if err != nil {
+		t.Fatalf("parseRunArgs() with relay alias error = %v", err)
+	}
+	if req.Mode != runsvc.RunModeFanout {
+		t.Fatalf("mode = %q, want %q", req.Mode, runsvc.RunModeFanout)
 	}
 }
 
@@ -325,6 +340,39 @@ func TestParseRunArgsRequiresPromptFlag(t *testing.T) {
 	}
 }
 
+func TestLatestQueueRequestForDirPrefersCurrentWorkingDir(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	item, ok := latestQueueRequestForDir([]queue.Request{
+		{ID: "job_old_same", WorkingDir: "/tmp/repo", CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "job_new_other", WorkingDir: "/tmp/other", CreatedAt: now},
+		{ID: "job_new_same", WorkingDir: "/tmp/repo", CreatedAt: now.Add(-time.Minute)},
+	}, "/tmp/repo")
+	if !ok {
+		t.Fatal("latestQueueRequestForDir() = false, want true")
+	}
+	if item.ID != "job_new_same" {
+		t.Fatalf("job id = %q, want %q", item.ID, "job_new_same")
+	}
+}
+
+func TestLatestQueueRequestForDirFallsBackToLatestOverall(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	item, ok := latestQueueRequestForDir([]queue.Request{
+		{ID: "job_old", WorkingDir: "/tmp/a", CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "job_new", WorkingDir: "/tmp/b", CreatedAt: now},
+	}, "/tmp/repo")
+	if !ok {
+		t.Fatal("latestQueueRequestForDir() = false, want true")
+	}
+	if item.ID != "job_new" {
+		t.Fatalf("job id = %q, want %q", item.ID, "job_new")
+	}
+}
+
 func TestEnsureDaemonAvailableStartsWhenNeeded(t *testing.T) {
 	t.Parallel()
 
@@ -332,6 +380,8 @@ func TestEnsureDaemonAvailableStartsWhenNeeded(t *testing.T) {
 	started := false
 	err := ensureDaemonAvailable(
 		func() bool { return available },
+		func() bool { return false },
+		func() error { return nil },
 		func() error {
 			started = true
 			available = true
@@ -353,12 +403,46 @@ func TestEnsureDaemonAvailableTimesOut(t *testing.T) {
 
 	err := ensureDaemonAvailable(
 		func() bool { return false },
+		func() bool { return false },
+		func() error { return nil },
 		func() error { return nil },
 		5*time.Millisecond,
 		time.Millisecond,
 	)
 	if err == nil || !strings.Contains(err.Error(), "romad did not become ready") {
 		t.Fatalf("ensureDaemonAvailable() error = %v, want readiness timeout", err)
+	}
+}
+
+func TestEnsureDaemonAvailableRestartsStaleDaemon(t *testing.T) {
+	t.Parallel()
+
+	available := false
+	stopped := false
+	started := false
+	err := ensureDaemonAvailable(
+		func() bool { return available },
+		func() bool { return true },
+		func() error {
+			stopped = true
+			return nil
+		},
+		func() error {
+			started = true
+			available = true
+			return nil
+		},
+		50*time.Millisecond,
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("ensureDaemonAvailable() error = %v", err)
+	}
+	if !stopped {
+		t.Fatal("stop = false, want true")
+	}
+	if !started {
+		t.Fatal("start = false, want true")
 	}
 }
 
@@ -524,7 +608,8 @@ func TestPrintUsageIncludesActualCommands(t *testing.T) {
 	out := captureStdout(t, printUsage)
 	for _, want := range []string{
 		"  roma --help",
-		`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <id>]`,
+		"  roma check [job_id] [--raw]",
+		`  roma run --prompt "<prompt>" [--mode <fanout|caesar|senate>] [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [-d] [-f] [--verbose] [--policy-override] [--override-actor <id>]`,
 		"  roma <command> --help",
 		"  roma result show <session_id>",
 		"  roma acp status",
@@ -556,13 +641,28 @@ func TestPrintTopicUsageRunIncludesActualFlags(t *testing.T) {
 	for _, want := range []string{
 		"roma run usage:",
 		"--prompt <text>",
+		"--mode <name>",
 		"--with <id,...>",
+		"-d, --detach",
+		"-f, --follow",
 		"--verbose",
 		"--policy-override",
 		"--override-actor <name>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("printTopicUsage(run) missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintTopicUsageCheck(t *testing.T) {
+	out := captureStdout(t, func() { printTopicUsage("check") })
+	for _, want := range []string{
+		"roma check usage:",
+		"roma check [job_id] [--raw]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("printTopicUsage(check) missing %q:\n%s", want, out)
 		}
 	}
 }
@@ -606,6 +706,7 @@ func TestRunCommandsSupportDashHelp(t *testing.T) {
 		{name: "workspace merge", args: []string{"workspace", "merge", "--help"}, want: "roma workspace merge usage:"},
 		{name: "graph run", args: []string{"graph", "run", "--help"}, want: "roma graph run usage:"},
 		{name: "policy check", args: []string{"policy", "check", "--help"}, want: "roma policy check usage:"},
+		{name: "check", args: []string{"check", "--help"}, want: "roma check usage:"},
 	}
 
 	for _, tc := range testCases {

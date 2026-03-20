@@ -17,6 +17,7 @@ type SubmitRequest struct {
 	GraphFile           string              `json:"graph_file,omitempty"`
 	Graph               *GraphSubmitRequest `json:"graph,omitempty"`
 	Prompt              string              `json:"prompt"`
+	Mode                string              `json:"mode,omitempty"`
 	StarterAgent        string              `json:"starter_agent"`
 	Delegates           []string            `json:"delegates,omitempty"`
 	WorkingDir          string              `json:"working_dir"`
@@ -270,4 +271,3 @@ type ACPStatusResponse struct {
 	Enabled bool `json:"enabled"`
 	Port    int  `json:"port"`
 }
-

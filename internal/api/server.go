@@ -302,6 +302,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		GraphFile:           req.GraphFile,
 		Graph:               toQueueGraph(req.Graph),
 		Prompt:              req.Prompt,
+		Mode:                req.Mode,
 		StarterAgent:        req.StarterAgent,
 		Delegates:           req.Delegates,
 		WorkingDir:          req.WorkingDir,

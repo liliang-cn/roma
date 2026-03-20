@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -595,6 +596,9 @@ func finalAnswerOutcomeType(status string, items []domain.ArtifactEnvelope) stri
 	case "failed", "failed_recoverable", "failed_terminal":
 		return "failure"
 	}
+	if len(collectChangedFiles(items)) > 0 {
+		return "code_change"
+	}
 	for _, item := range items {
 		if item.Kind == domain.ArtifactKindExecutionPlan {
 			return "code_change"
@@ -639,6 +643,11 @@ func finalAnswerSummary(status string, items []domain.ArtifactEnvelope, err erro
 	if err != nil {
 		return "Execution failed: " + trimLine(err.Error())
 	}
+	if report, ok := preferredFinalAnswerReport(items); ok {
+		if summary := finalAnswerArtifactSummary(report); summary != "" {
+			return summary
+		}
+	}
 	for i := len(items) - 1; i >= 0; i-- {
 		if summary := finalAnswerArtifactSummary(items[i]); summary != "" {
 			return summary
@@ -657,6 +666,13 @@ func finalAnswerBody(status, prompt string, items []domain.ArtifactEnvelope, err
 	}
 	if len(items) == 0 {
 		return summary
+	}
+	if envelope, ok := preferredFinalAnswerReport(items); ok {
+		if report, ok := reportFromEnvelope(envelope); ok {
+			if body := extractMeaningfulReportBody(report.RawOutput); body != "" {
+				return body
+			}
+		}
 	}
 	points := collectKeyPoints(items)
 	if len(points) == 0 {
@@ -716,6 +732,15 @@ func collectChangedFiles(items []domain.ArtifactEnvelope) []string {
 				out = append(out, file)
 			}
 		}
+		if report, ok := reportFromEnvelope(item); ok && report.MergeBackRequest != nil {
+			for _, file := range report.MergeBackRequest.ChangedFiles {
+				if _, exists := seen[file]; exists {
+					continue
+				}
+				seen[file] = struct{}{}
+				out = append(out, file)
+			}
+		}
 	}
 	return out
 }
@@ -723,6 +748,9 @@ func collectChangedFiles(items []domain.ArtifactEnvelope) []string {
 func collectKeyPoints(items []domain.ArtifactEnvelope) []string {
 	out := make([]string, 0, 4)
 	for i := len(items) - 1; i >= 0 && len(out) < 4; i-- {
+		if isStarterClarifyArtifact(items[i]) {
+			continue
+		}
 		summary := finalAnswerArtifactSummary(items[i])
 		if summary == "" {
 			continue
@@ -741,6 +769,23 @@ func collectKeyPoints(items []domain.ArtifactEnvelope) []string {
 	return out
 }
 
+func preferredFinalAnswerReport(items []domain.ArtifactEnvelope) (domain.ArtifactEnvelope, bool) {
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		report, ok := reportFromEnvelope(item)
+		if !ok || isStarterClarifyArtifact(item) {
+			continue
+		}
+		if body := extractMeaningfulReportBody(report.RawOutput); body != "" {
+			return item, true
+		}
+		if summary := finalAnswerArtifactSummary(item); summary != "" {
+			return item, true
+		}
+	}
+	return domain.ArtifactEnvelope{}, false
+}
+
 func finalAnswerArtifactSummary(envelope domain.ArtifactEnvelope) string {
 	if report, ok := reportFromEnvelope(envelope); ok {
 		if summary := extractMeaningfulReportLine(report.RawOutput); summary != "" {
@@ -751,6 +796,11 @@ func finalAnswerArtifactSummary(envelope domain.ArtifactEnvelope) string {
 		}
 	}
 	return SummaryFromEnvelope(envelope)
+}
+
+func isStarterClarifyArtifact(envelope domain.ArtifactEnvelope) bool {
+	taskID := strings.TrimSpace(envelope.TaskID)
+	return strings.HasSuffix(taskID, "_starter_clarify")
 }
 
 func reportFromEnvelope(envelope domain.ArtifactEnvelope) (ReportPayload, bool) {
@@ -773,15 +823,34 @@ func reportFromEnvelope(envelope domain.ArtifactEnvelope) (ReportPayload, bool) 
 }
 
 func extractMeaningfulReportLine(output string) string {
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(stripANSIEscapeSequences(output), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := trimLine(lines[i])
-		if line == "" || ignoreReportLine(line) {
+		if line == "" || ignoreReportLine(line) || strings.HasPrefix(line, "- ") {
 			continue
 		}
 		return line
 	}
 	return ""
+}
+
+func extractMeaningfulReportBody(output string) string {
+	lines := strings.Split(stripANSIEscapeSequences(output), "\n")
+	out := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		line := trimLine(raw)
+		if line == "" || ignoreReportLine(line) || strings.HasPrefix(line, "ROMA_MERGE_") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\a]*\a`)
+
+func stripANSIEscapeSequences(text string) string {
+	return ansiEscapePattern.ReplaceAllString(text, "")
 }
 
 func ignoreReportLine(line string) bool {

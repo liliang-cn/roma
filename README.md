@@ -22,13 +22,15 @@ The result is not just "what one agent said" — it's the outcome of a structure
 **`romad`** is the kernel. It owns the queue, sessions, task states, policy checks, workspaces, artifacts, and recovery.
 **`roma`** is the client. You use it to run work, inspect progress, approve plans, and debug sessions.
 
-ROMA supports four execution modes:
+ROMA supports these execution modes:
 
 | Mode | Description |
 |------|-------------|
 | **Direct** | One agent, one task — fast and simple |
-| **Relay** | Caesar coordinates; delegate agents implement in parallel, Caesar reviews and merges |
-| **Curia** | Multi-agent senate: agents propose independently, anonymous peer voting produces a `DecisionPack` + `ExecutionPlan` |
+| **Fanout** | Starter clarifies once, then delegate agents execute in parallel. The starter does not implement code. This is the default multi-agent `run` mode. |
+| **Caesar** | Starter acts as an active coordinator and contributor: clarify, bootstrap, review rounds, follow-up delegation, and possible starter-side implementation. |
+| **Senate** | Multi-stage voting flow: agents propose plans, vote on the plan, implement against the accepted plan, then vote again on the implementations before merging the winner. |
+| **Curia** | Curia decision flow that produces a `DecisionPack` + `ExecutionPlan` for approval-oriented execution paths. |
 | **Graph** | DAG-based execution with explicit dependencies; any node can use any mode |
 
 ---
@@ -105,8 +107,17 @@ roma start
 # single agent — direct mode
 roma run --prompt "add input validation to the user registration handler" --agent claude
 
-# multi-agent — claude coordinates, codex implements
+# multi-agent — default fanout mode
 roma run --prompt "refactor the payment module and add unit tests" --agent claude --with codex
+
+# explicit fanout mode
+roma run --mode fanout --prompt "answer a repo question" --agent codex --with claude
+
+# starter participates, with bootstrap / review / follow-up
+roma run --mode caesar --prompt "build a feature across two agents" --agent codex --with gemini,claude
+
+# two-stage plan vote + implementation vote
+roma run --mode senate --prompt "build a feature and pick the best implementation" --agent codex --with gemini,claude
 ```
 
 ### 4. Inspect progress
@@ -141,8 +152,14 @@ Logs are written to `~/.roma/romad.log`. PID is stored in `~/.roma/romad.pid`.
 ### Running tasks
 
 ```sh
-roma run    --prompt "<prompt>" [--agent <id>] [--with <id,...>]   # run and wait
+roma run --prompt "<prompt>" [--mode <fanout|caesar|senate>] [--agent <id>] [--with <id,...>] [--cwd <dir>] [-d] [-f] [--verbose]
 ```
+
+Notes:
+- Default mode is `fanout`.
+- Default behavior is `-f`: submit, follow progress, and print the final result when the run completes.
+- Use `-d` to submit in the background and return immediately.
+- `--verbose` prints per-node execution details instead of only the main progress lines.
 
 ### Queue management
 

@@ -32,6 +32,7 @@ type Request struct {
 	GraphFile           string     `json:"graph_file,omitempty"`
 	Graph               *GraphSpec `json:"graph,omitempty"`
 	Prompt              string     `json:"prompt"`
+	Mode                string     `json:"mode,omitempty"`
 	StarterAgent        string     `json:"starter_agent"`
 	Delegates           []string   `json:"delegates,omitempty"`
 	WorkingDir          string     `json:"working_dir"`

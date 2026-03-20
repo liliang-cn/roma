@@ -30,10 +30,12 @@ import (
 // Request describes a user-triggered run.
 type Request struct {
 	Prompt         string
+	Mode           string
 	StarterAgent   string
 	WorkingDir     string
 	Delegates      []string
 	Verbose        bool
+	Detach         bool
 	SessionID      string
 	TaskID         string
 	PolicyOverride bool
@@ -123,7 +125,14 @@ func (s *Service) RunWithResult(ctx context.Context, req Request) (Result, error
 	}
 
 	if len(delegates) > 0 {
-		return s.runOrchestrated(ctx, req, profile, delegates, os.Stdout)
+		switch normalizedRunMode(req.Mode) {
+		case RunModeSenate:
+			return s.runSenate(ctx, req, profile, delegates, os.Stdout)
+		case RunModeCaesar:
+			return s.runCaesar(ctx, req, profile, delegates, os.Stdout)
+		default:
+			return s.runOrchestrated(ctx, req, profile, delegates, os.Stdout)
+		}
 	}
 
 	return s.runDirect(ctx, req, profile, os.Stdout, os.Stderr)

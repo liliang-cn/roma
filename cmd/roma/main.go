@@ -77,6 +77,11 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return runQueueCancel(ctx, args[1:])
+	case "check":
+		if handled, err := handleTopicHelp("check", args[1:]); handled {
+			return err
+		}
+		return runCheck(ctx, args[1:])
 	case "debug":
 		return runDebug(ctx, registry, args[1:])
 	case "agent", "agents":
@@ -342,6 +347,11 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 
 	if err := ensureDaemonAvailable(
 		func() bool { return api.NewClient(req.WorkingDir).Available() },
+		func() bool {
+			running, _ := daemonStatus()
+			return running
+		},
+		runStop,
 		func() error { return runStart(nil) },
 		5*time.Second,
 		100*time.Millisecond,
@@ -352,6 +362,7 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 	resp, err := api.NewClient(req.WorkingDir).Submit(ctx, api.SubmitRequest{
 		GraphFile:           "",
 		Prompt:              req.Prompt,
+		Mode:                req.Mode,
 		StarterAgent:        req.StarterAgent,
 		Delegates:           req.Delegates,
 		WorkingDir:          req.WorkingDir,
@@ -363,13 +374,38 @@ func runPrompt(ctx context.Context, registry *agents.Registry, args []string) er
 	if err != nil {
 		return err
 	}
-	fmt.Printf("submitted to daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+	if req.Detach {
+		fmt.Printf("submitted to daemon id=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+		return nil
+	}
+	fmt.Printf("job=%s agent=%s with=%s\n", resp.JobID, req.StarterAgent, strings.Join(req.Delegates, ","))
+	finalResp, err := followRunJob(ctx, api.NewClient(req.WorkingDir), resp.JobID, req.Verbose)
+	if err != nil {
+		return err
+	}
+	sessionID := strings.TrimSpace(finalResp.Job.SessionID)
+	if sessionID == "" && finalResp.Session != nil {
+		sessionID = strings.TrimSpace(finalResp.Session.ID)
+	}
+	if sessionID != "" {
+		resultResp, err := api.NewClient(req.WorkingDir).ResultShow(ctx, sessionID)
+		if err == nil {
+			return printResultShow(resultResp)
+		}
+	}
 	return nil
 }
 
-func ensureDaemonAvailable(check func() bool, start func() error, timeout, interval time.Duration) error {
+func ensureDaemonAvailable(check func() bool, isRunning func() bool, stop func() error, start func() error, timeout, interval time.Duration) error {
 	if check() {
 		return nil
+	}
+	if isRunning != nil && isRunning() {
+		if stop != nil {
+			if err := stop(); err != nil {
+				return err
+			}
+		}
 	}
 	if err := start(); err != nil {
 		return err
@@ -382,6 +418,39 @@ func ensureDaemonAvailable(check func() bool, start func() error, timeout, inter
 		time.Sleep(interval)
 	}
 	return fmt.Errorf("romad did not become ready within %s", timeout)
+}
+
+func followRunJob(ctx context.Context, client *api.Client, jobID string, raw bool) (api.QueueInspectResponse, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastLine string
+	var lastHeartbeat string
+	seenEvents := map[string]struct{}{}
+	for {
+		resp, err := client.QueueInspect(ctx, jobID, raw)
+		if err != nil {
+			return api.QueueInspectResponse{}, err
+		}
+		printQueueTailEvents(resp.Events, seenEvents, raw)
+		if line := formatQueueHeartbeatLine(resp); line != "" && line != lastHeartbeat {
+			fmt.Println(line)
+			lastHeartbeat = line
+		}
+		line := formatQueueTailLine(resp)
+		if line != lastLine {
+			fmt.Println(line)
+			lastLine = line
+		}
+		if resp.Job.Status != queue.StatusPending && resp.Job.Status != queue.StatusRunning {
+			return resp, nil
+		}
+		select {
+		case <-ctx.Done():
+			return api.QueueInspectResponse{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func runGraph(ctx context.Context, registry *agents.Registry, args []string) error {
@@ -667,6 +736,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		resp, err := client.Submit(ctx, api.SubmitRequest{
 			GraphFile:           "",
 			Prompt:              req.Prompt,
+			Mode:                req.Mode,
 			StarterAgent:        req.StarterAgent,
 			Delegates:           req.Delegates,
 			WorkingDir:          wd,
@@ -687,6 +757,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		ID:                  id,
 		GraphFile:           "",
 		Prompt:              req.Prompt,
+		Mode:                req.Mode,
 		StarterAgent:        req.StarterAgent,
 		Delegates:           req.Delegates,
 		WorkingDir:          wd,
@@ -858,6 +929,82 @@ func runQueue(ctx context.Context, args []string) error {
 	return fmt.Errorf("unknown queue subcommand %q", subcommand)
 }
 
+func runCheck(ctx context.Context, args []string) error {
+	raw := false
+	jobID := ""
+	for _, arg := range args {
+		switch arg {
+		case "--raw":
+			raw = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return fmt.Errorf("unknown check argument %q", arg)
+			}
+			if jobID != "" {
+				return fmt.Errorf("check accepts at most one job id")
+			}
+			jobID = arg
+		}
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	_ = syncWorkspace(ctx, wd)
+
+	client := api.NewClient(wd)
+	if jobID == "" {
+		if client.Available() {
+			requests, err := client.QueueList(ctx)
+			if err != nil {
+				return err
+			}
+			item, ok := latestQueueRequestForDir(requests, wd)
+			if !ok {
+				return fmt.Errorf("no queued jobs found")
+			}
+			jobID = item.ID
+		} else {
+			requests, err := preferredQueueStore(wd).List(ctx)
+			if err != nil {
+				return err
+			}
+			item, ok := latestQueueRequestForDir(requests, wd)
+			if !ok {
+				return fmt.Errorf("no queued jobs found")
+			}
+			jobID = item.ID
+		}
+	}
+
+	var finalResp api.QueueInspectResponse
+	if client.Available() {
+		finalResp, err = followQueueJob(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return client.QueueInspect(ctx, id, raw)
+		}, jobID, raw)
+		if err != nil {
+			return err
+		}
+	} else {
+		finalResp, err = followQueueJob(ctx, func(ctx context.Context, id string) (api.QueueInspectResponse, error) {
+			return inspectQueueLocal(ctx, wd, id, raw)
+		}, jobID, raw)
+		if err != nil {
+			return err
+		}
+	}
+
+	sessionID := strings.TrimSpace(finalResp.Job.SessionID)
+	if sessionID == "" && finalResp.Session != nil {
+		sessionID = strings.TrimSpace(finalResp.Session.ID)
+	}
+	if sessionID != "" {
+		return runResults(ctx, []string{"show", sessionID})
+	}
+	return nil
+}
+
 func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 	if approved {
 		if handled, err := handleTopicHelp("approve", args); handled {
@@ -970,6 +1117,11 @@ func runQueueDecision(ctx context.Context, approved bool, args []string) error {
 }
 
 func runQueueTail(ctx context.Context, inspect func(context.Context, string) (api.QueueInspectResponse, error), jobID string, raw bool) error {
+	_, err := followQueueJob(ctx, inspect, jobID, raw)
+	return err
+}
+
+func followQueueJob(ctx context.Context, inspect func(context.Context, string) (api.QueueInspectResponse, error), jobID string, raw bool) (api.QueueInspectResponse, error) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -979,7 +1131,7 @@ func runQueueTail(ctx context.Context, inspect func(context.Context, string) (ap
 	for {
 		resp, err := inspect(ctx, jobID)
 		if err != nil {
-			return err
+			return api.QueueInspectResponse{}, err
 		}
 		printQueueTailEvents(resp.Events, seenEvents, raw)
 		if line := formatQueueHeartbeatLine(resp); line != "" && line != lastHeartbeat {
@@ -992,11 +1144,11 @@ func runQueueTail(ctx context.Context, inspect func(context.Context, string) (ap
 			lastLine = line
 		}
 		if resp.Job.Status != queue.StatusPending && resp.Job.Status != queue.StatusRunning {
-			return nil
+			return resp, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return api.QueueInspectResponse{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -1341,6 +1493,38 @@ func findQueueRequestAcrossRoots(ctx context.Context, wd, jobID string) (queue.R
 func candidateQueueRoots(wd string) []string {
 	_ = wd
 	return []string{filepath.Clean(romapath.HomeDir())}
+}
+
+func latestQueueRequestForDir(requests []queue.Request, wd string) (queue.Request, bool) {
+	if len(requests) == 0 {
+		return queue.Request{}, false
+	}
+	wd = filepath.Clean(strings.TrimSpace(wd))
+	bestIdx := -1
+	bestMatch := false
+	for i, item := range requests {
+		match := filepath.Clean(strings.TrimSpace(item.WorkingDir)) == wd
+		if bestIdx == -1 {
+			bestIdx = i
+			bestMatch = match
+			continue
+		}
+		if match && !bestMatch {
+			bestIdx = i
+			bestMatch = true
+			continue
+		}
+		if match != bestMatch {
+			continue
+		}
+		if item.CreatedAt.After(requests[bestIdx].CreatedAt) {
+			bestIdx = i
+		}
+	}
+	if bestIdx == -1 {
+		return queue.Request{}, false
+	}
+	return requests[bestIdx], true
 }
 
 func applyQueueDecisionLocal(ctx context.Context, wd string, item queue.Request, approved bool) (bool, queue.Request, error) {
@@ -3204,6 +3388,19 @@ func parseRunArgs(args []string) (runsvc.Request, error) {
 			}
 		case "--continuous":
 			req.Continuous = true
+		case "--mode":
+			i++
+			if i >= len(args) {
+				return runsvc.Request{}, fmt.Errorf("--mode requires a value")
+			}
+			req.Mode = runsvc.NormalizeMode(args[i])
+			if req.Mode != "" && req.Mode != runsvc.RunModeFanout && req.Mode != runsvc.RunModeCaesar && req.Mode != runsvc.RunModeSenate {
+				return runsvc.Request{}, fmt.Errorf("unsupported run mode %q", args[i])
+			}
+		case "--detach", "-d":
+			req.Detach = true
+		case "--follow", "-f":
+			req.Detach = false
 		case "--verbose":
 			req.Verbose = true
 		case "--policy-override":
@@ -3250,8 +3447,9 @@ func printUsage() {
 	fmt.Println("")
 	fmt.Println("Core:")
 	fmt.Println("  roma --help")
+	fmt.Println("  roma check [job_id] [--raw]")
 	fmt.Println("  roma tui [--cwd <dir>]")
-	fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <id>]`)
+	fmt.Println(`  roma run --prompt "<prompt>" [--mode <fanout|caesar|senate>] [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [-d] [-f] [--verbose] [--policy-override] [--override-actor <id>]`)
 	fmt.Println("  roma status")
 	fmt.Println("  roma result show <session_id>")
 	fmt.Println("  roma <command> --help")
@@ -3278,11 +3476,15 @@ func printUsage() {
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  roma")
+	fmt.Println("  roma check")
 	fmt.Println("  roma queue --help")
 	fmt.Println("  roma agent --help")
 	fmt.Println("  roma tui")
 	fmt.Println(`  roma agent add my-codex "My Codex" /usr/bin/codex --arg exec --arg --full-auto --arg {prompt} --pty`)
 	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot`)
+	fmt.Println(`  roma run --mode caesar --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot`)
+	fmt.Println(`  roma run --mode senate --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot`)
+	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot -d`)
 	fmt.Println(`  roma run --prompt "build a feature" --agent my-codex --with my-gemini,my-copilot --verbose`)
 }
 
@@ -3502,15 +3704,18 @@ func printTopicUsage(topic string) {
 		fmt.Println(`  roma policy check --agent <id> --prompt "<prompt>" [--with <id,...>] [--cwd <dir>]`)
 	case "run":
 		fmt.Println("roma run usage:")
-		fmt.Println(`  roma run --prompt "<prompt>" [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [--verbose] [--policy-override] [--override-actor <name>]`)
+		fmt.Println(`  roma run --prompt "<prompt>" [--mode <fanout|caesar|senate>] [--agent <id>] [--with <id,...>] [--cwd <dir>] [--continuous] [--max-rounds <n>] [-d] [-f] [--verbose] [--policy-override] [--override-actor <name>]`)
 		fmt.Println("")
 		fmt.Println("Flags:")
 		fmt.Println("  --prompt <text>      task prompt (required)")
+		fmt.Println("  --mode <name>        orchestration mode: fanout, caesar, or senate")
 		fmt.Println("  --agent <id>         starter agent ID (default: first available)")
 		fmt.Println("  --with <id,...>      delegate agent IDs (comma-separated)")
 		fmt.Println("  --cwd <dir>          working directory (default: current directory)")
 		fmt.Println("  --continuous         run until completion or max rounds")
 		fmt.Println("  --max-rounds <n>     maximum number of refinement rounds")
+		fmt.Println("  -d, --detach         submit in background and return immediately")
+		fmt.Println("  -f, --follow         follow output until terminal status (default)")
 		fmt.Println("  --verbose            print per-node execution output")
 		fmt.Println("  --policy-override    override safety policies")
 		fmt.Println("  --override-actor <n> name of the actor performing the override")
@@ -3532,6 +3737,9 @@ func printTopicUsage(topic string) {
 	case "cancel":
 		fmt.Println("roma cancel usage:")
 		fmt.Println("  roma cancel <job_id>")
+	case "check":
+		fmt.Println("roma check usage:")
+		fmt.Println("  roma check [job_id] [--raw]")
 	case "start":
 		fmt.Println("roma start usage:")
 		fmt.Println("  roma start [--acp-port <port>]")

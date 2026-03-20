@@ -664,6 +664,208 @@ func TestRunOrchestratedStarterClarifiesThenDelegates(t *testing.T) {
 	}
 }
 
+func TestRunCaesarStarterParticipatesWithBootstrapAndFollowUp(t *testing.T) {
+	workDir := t.TempDir()
+	controlDir := t.TempDir()
+	initRunGitRepo(t, workDir)
+
+	starterScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "Starter prompt clarification"; then`,
+		`  printf 'clarified spec\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Starter Caesar coordination"; then`,
+		`  printf 'starter bootstrap\n' > starter.txt`,
+		`  printf 'bootstrap ready\nROMA_MERGE_BACK: direct_merge | starter bootstrap ready\nROMA_MERGE_FILE: starter.txt\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Caesar review round"; then`,
+		`  if printf '%s' "$prompt" | grep -q "second pass complete"; then`,
+		`    printf 'ROMA_DONE: all work is complete\n'`,
+		`  else`,
+		`    target=$(printf '%s\n' "$prompt" | sed -n 's/.*\(delegate_1\).*/\1/p' | head -n1)`,
+		`    if [ -z "$target" ]; then target=delegate_1; fi`,
+		`    printf 'ROMA_FOLLOWUP: delegate %s | second pass\n' "$target"`,
+		`  fi`,
+		`else`,
+		`  printf 'unexpected starter prompt\n' >&2`,
+		`  exit 9`,
+		`fi`,
+	}, "\n")
+	workerScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "second pass"; then`,
+		`  printf 'second\n' > second.txt`,
+		`  printf 'second pass complete\nROMA_MERGE_BACK: direct_merge | second pass ready\nROMA_MERGE_FILE: second.txt\n'`,
+		`else`,
+		`  printf 'first\n' > first.txt`,
+		`  printf 'first pass complete\nROMA_MERGE_BACK: direct_merge | first pass ready\nROMA_MERGE_FILE: first.txt\n'`,
+		`fi`,
+	}, "\n")
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{
+			ID:           "caesar",
+			DisplayName:  "Caesar",
+			Command:      "sh",
+			Args:         []string{"-c", starterScript, "starter", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+		domain.AgentProfile{
+			ID:           "worker",
+			DisplayName:  "Worker",
+			Command:      "sh",
+			Args:         []string{"-c", workerScript, "worker", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	svc.SetControlDir(controlDir)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "coordinate a low-risk sample file update",
+		Mode:         RunModeCaesar,
+		StarterAgent: "caesar",
+		Delegates:    []string{"worker"},
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+	starterContent, err := os.ReadFile(filepath.Join(workDir, "starter.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(starter.txt) error = %v", err)
+	}
+	if strings.TrimSpace(string(starterContent)) != "starter bootstrap" {
+		t.Fatalf("starter.txt = %q, want starter bootstrap", strings.TrimSpace(string(starterContent)))
+	}
+	secondContent, err := os.ReadFile(filepath.Join(workDir, "second.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(second.txt) error = %v", err)
+	}
+	if strings.TrimSpace(string(secondContent)) != "second" {
+		t.Fatalf("second.txt = %q, want second", strings.TrimSpace(string(secondContent)))
+	}
+}
+
+func TestRunSenateVotesOnPlanAndImplementationThenMergesWinner(t *testing.T) {
+	workDir := t.TempDir()
+	controlDir := t.TempDir()
+	initRunGitRepo(t, workDir)
+
+	starterScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "Senate plan proposal"; then`,
+		`  printf 'STARTER PLAN\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate plan vote"; then`,
+		`  printf 'starter abstains\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate plan tiebreak"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_plan_3\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | choose delegate two plan\n' "$target"`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation vote"; then`,
+		`  printf 'starter abstains\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation tiebreak"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_implementation_1\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | choose delegate one implementation\n' "$target"`,
+		`else`,
+		`  printf 'unexpected starter prompt\n' >&2`,
+		`  exit 9`,
+		`fi`,
+	}, "\n")
+	workerOneScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "Senate plan proposal"; then`,
+		`  printf 'PLAN ONE\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate plan vote"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_plan_2\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | vote for plan one\n' "$target"`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation candidate"; then`,
+		`  printf 'delegate one\n' > winner.txt`,
+		`  printf 'ROMA_MERGE_BACK: require_vote | candidate ready\nROMA_MERGE_FILE: winner.txt\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation vote"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_implementation_1\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | vote for implementation one\n' "$target"`,
+		`else`,
+		`  printf 'unexpected worker one prompt\n' >&2`,
+		`  exit 11`,
+		`fi`,
+	}, "\n")
+	workerTwoScript := strings.Join([]string{
+		`prompt="$1"`,
+		`if printf '%s' "$prompt" | grep -q "Senate plan proposal"; then`,
+		`  printf 'PLAN TWO\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate plan vote"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_plan_3\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | vote for plan two\n' "$target"`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation candidate"; then`,
+		`  printf 'delegate two\n' > loser.txt`,
+		`  printf 'ROMA_MERGE_BACK: require_vote | candidate ready\nROMA_MERGE_FILE: loser.txt\n'`,
+		`elif printf '%s' "$prompt" | grep -q "Senate implementation vote"; then`,
+		`  target=$(printf '%s\n' "$prompt" | sed -n 's/^- \(.*_implementation_2\)$/\1/p' | head -n1)`,
+		`  printf 'ROMA_PICK: %s | vote for implementation two\n' "$target"`,
+		`else`,
+		`  printf 'unexpected worker two prompt\n' >&2`,
+		`  exit 13`,
+		`fi`,
+	}, "\n")
+
+	registry, err := agents.NewRegistry(
+		domain.AgentProfile{
+			ID:           "starter",
+			DisplayName:  "Starter",
+			Command:      "sh",
+			Args:         []string{"-c", starterScript, "starter", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+		domain.AgentProfile{
+			ID:           "worker-one",
+			DisplayName:  "Worker One",
+			Command:      "sh",
+			Args:         []string{"-c", workerOneScript, "worker-one", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+		domain.AgentProfile{
+			ID:           "worker-two",
+			DisplayName:  "Worker Two",
+			Command:      "sh",
+			Args:         []string{"-c", workerTwoScript, "worker-two", "{prompt}"},
+			Availability: domain.AgentAvailabilityAvailable,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	svc := NewService(registry)
+	svc.SetControlDir(controlDir)
+	result, err := svc.RunWithResult(context.Background(), Request{
+		Prompt:       "implement a winner-takes-all senate flow",
+		Mode:         RunModeSenate,
+		StarterAgent: "starter",
+		Delegates:    []string{"worker-one", "worker-two"},
+		WorkingDir:   workDir,
+	})
+	if err != nil {
+		t.Fatalf("RunWithResult() error = %v", err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", result.Status)
+	}
+	content, err := os.ReadFile(filepath.Join(workDir, "winner.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(winner.txt) error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "delegate one" {
+		t.Fatalf("winner.txt = %q, want delegate one", strings.TrimSpace(string(content)))
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "loser.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected loser.txt absent after senate merge, stat err = %v", err)
+	}
+}
+
 func initRunGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	runGitCommand(t, dir, "init")

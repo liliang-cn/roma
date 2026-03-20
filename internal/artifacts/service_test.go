@@ -446,3 +446,60 @@ func TestBuildFinalAnswerPrefersMeaningfulReportLine(t *testing.T) {
 		t.Fatalf("summary = %q, want %q", payload.Summary, want)
 	}
 }
+
+func TestBuildFinalAnswerPrefersDelegateAnswerBodyOverStarterClarify(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	clarify, err := svc.BuildReport(context.Background(), BuildReportRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_1_starter_clarify",
+		RunID:     "run_clarify",
+		Agent: domain.AgentProfile{
+			ID:          "starter",
+			DisplayName: "Starter",
+		},
+		Result: "success",
+		Output: "Objective\n- figure out the repository language",
+	})
+	if err != nil {
+		t.Fatalf("BuildReport(clarify) error = %v", err)
+	}
+	delegate, err := svc.BuildReport(context.Background(), BuildReportRequest{
+		SessionID: "sess_1",
+		TaskID:    "task_1_delegate_1",
+		RunID:     "run_delegate",
+		Agent: domain.AgentProfile{
+			ID:          "claude",
+			DisplayName: "Claude",
+		},
+		Result: "success",
+		Output: "The project is primarily written in Go.",
+	})
+	if err != nil {
+		t.Fatalf("BuildReport(delegate) error = %v", err)
+	}
+
+	finalAnswer, err := svc.BuildFinalAnswer(context.Background(), BuildFinalAnswerRequest{
+		SessionID:    "sess_1",
+		TaskID:       "task_1",
+		RunID:        "run_final",
+		Status:       "succeeded",
+		Prompt:       "这个项目是用什么语言写的？",
+		StarterAgent: "starter",
+		Artifacts:    []domain.ArtifactEnvelope{clarify, delegate},
+	})
+	if err != nil {
+		t.Fatalf("BuildFinalAnswer() error = %v", err)
+	}
+	payload, ok := FinalAnswerFromEnvelope(finalAnswer)
+	if !ok {
+		t.Fatal("FinalAnswerFromEnvelope() = false")
+	}
+	if payload.Summary != "The project is primarily written in Go." {
+		t.Fatalf("summary = %q, want delegate answer summary", payload.Summary)
+	}
+	if payload.Answer != "The project is primarily written in Go." {
+		t.Fatalf("answer = %q, want delegate answer body", payload.Answer)
+	}
+}
