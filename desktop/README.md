@@ -51,15 +51,31 @@ Build the desktop app without platform packaging:
 
 ```sh
 cd desktop
-GOWORK=off wails build -nopackage
+GOWORK=off wails build -nopackage -tags webkit2_41
 ```
 
 ## Linux Notes
 
-The Go code for `desktop/` compiles as a normal module, but a real Wails desktop build on Linux also needs system WebKit/GTK development packages. In this environment, `wails build` failed until these were available:
+The Go code for `desktop/` compiles as a normal module, but a real Wails desktop build on Linux also needs system WebKit/GTK development packages.
+
+On Ubuntu 24.04, install them with:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y libgtk-3-dev libglib2.0-dev libwebkit2gtk-4.1-dev
+```
+
+This distro ships WebKitGTK 4.1, so use the `webkit2_41` build tag when invoking Wails:
+
+```sh
+cd desktop
+GOWORK=off wails build -nopackage -tags webkit2_41
+```
+
+Without that tag, Wails defaults to probing `webkit2gtk-4.0`, which does not exist on Noble. The missing `pkg-config` packages were:
 
 - `gtk+-3.0`
 - `gio-unix-2.0`
-- `webkit2gtk-4.0`
+- `webkit2gtk-4.1`
 
 Package names vary by distro. On Debian/Ubuntu this usually means installing the corresponding `-dev` packages before running `wails build`.

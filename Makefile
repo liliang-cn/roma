@@ -7,6 +7,7 @@ INSTALL_BIN_DIR ?= $(PREFIX)/bin
 .PHONY: all build build-roma build-romad build-romatui desktop-frontend-build desktop-build test install clean
 
 WAILS ?= $(shell $(GO) env GOPATH)/bin/wails
+DESKTOP_WAILS_TAGS ?= webkit2_41
 
 all: build
 
@@ -28,7 +29,7 @@ desktop-frontend-build:
 	cd desktop/frontend && npm install && npm run build
 
 desktop-build: desktop-frontend-build
-	cd desktop && GOWORK=off $(WAILS) build -nopackage -m -s
+	cd desktop && GOWORK=off $(WAILS) build -nopackage -m -s -tags "$(DESKTOP_WAILS_TAGS)"
 
 test:
 	$(GO_ENV) $(GO) test -count=1 ./...
