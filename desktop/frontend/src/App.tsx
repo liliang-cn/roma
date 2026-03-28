@@ -1,8 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react';
 import './App.css';
 import {
+  approvePlan,
   bootstrapApp,
   cancelJob,
+  inspectJob,
   listPlans,
   pickWorkingDir,
   previewPlan,
@@ -11,8 +13,6 @@ import {
   setWorkingDir,
   snapshotApp,
   submitRun,
-  inspectJob,
-  approvePlan,
 } from './api';
 import type {
   AgentProfile,
@@ -30,7 +30,7 @@ const modeOptions = [
   { value: 'fanout', label: 'Fanout' },
   { value: 'caesar', label: 'Caesar' },
   { value: 'senate', label: 'Senate' },
-];
+] as const;
 
 const emptyRunForm: RunSubmitRequest = {
   prompt: '',
@@ -43,6 +43,8 @@ const emptyRunForm: RunSubmitRequest = {
   policy_override: false,
 };
 
+type DetailTab = 'overview' | 'result' | 'plans';
+
 function App() {
   const [boot, setBoot] = useState<BootstrapResponse | null>(null);
   const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null);
@@ -52,6 +54,7 @@ function App() {
   const [result, setResult] = useState<ResultShowResponse | null>(null);
   const [plans, setPlans] = useState<PlanInboxEntry[]>([]);
   const [planPreview, setPlanPreview] = useState<PlanApplyResponse | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [delegatesText, setDelegatesText] = useState('');
   const [runForm, setRunForm] = useState<RunSubmitRequest>(emptyRunForm);
   const [busy, setBusy] = useState(false);
@@ -66,15 +69,7 @@ function App() {
           return;
         }
         setBoot(data);
-        setSnapshot({
-          working_dir: data.working_dir,
-          daemon_available: data.daemon_available,
-          embedded_daemon: data.embedded_daemon,
-          last_daemon_error: data.last_daemon_error,
-          status: data.status,
-          queue: data.queue,
-          acp: data.acp,
-        });
+        setSnapshot(toSnapshot(data));
         setAgents(data.agents);
         setRunForm((current) => ({
           ...current,
@@ -115,6 +110,9 @@ function App() {
   useEffect(() => {
     if (!selectedJobID) {
       setInspect(null);
+      setResult(null);
+      setPlans([]);
+      setPlanPreview(null);
       return;
     }
     let cancelled = false;
@@ -127,18 +125,16 @@ function App() {
         setInspect(jobInspect);
         setError('');
         const sessionID = jobInspect.job.session_id || jobInspect.session?.id || '';
-        if (sessionID) {
-          const [nextResult, nextPlans] = await Promise.all([
-            resultShow(sessionID),
-            listPlans(sessionID),
-          ]);
-          if (!cancelled) {
-            setResult(nextResult);
-            setPlans(nextPlans);
-          }
-        } else {
+        if (!sessionID) {
           setResult(null);
           setPlans([]);
+          setPlanPreview(null);
+          return;
+        }
+        const [nextResult, nextPlans] = await Promise.all([resultShow(sessionID), listPlans(sessionID)]);
+        if (!cancelled) {
+          setResult(nextResult);
+          setPlans(nextPlans);
         }
       } catch (err) {
         if (!cancelled) {
@@ -162,17 +158,13 @@ function App() {
       }
       const refreshed = await setWorkingDir(next);
       setBoot(refreshed);
-      setSnapshot({
-        working_dir: refreshed.working_dir,
-        daemon_available: refreshed.daemon_available,
-        embedded_daemon: refreshed.embedded_daemon,
-        last_daemon_error: refreshed.last_daemon_error,
-        status: refreshed.status,
-        queue: refreshed.queue,
-        acp: refreshed.acp,
-      });
+      setSnapshot(toSnapshot(refreshed));
       setAgents(refreshed.agents);
-      setRunForm((current) => ({ ...current, working_dir: refreshed.working_dir }));
+      setRunForm((current) => ({
+        ...current,
+        starter_agent: current.starter_agent || firstAvailableAgent(refreshed.agents),
+        working_dir: refreshed.working_dir,
+      }));
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -190,10 +182,11 @@ function App() {
       const response = await submitRun(payload);
       setMessage(`Submitted ${response.job_id}.`);
       setSelectedJobID(response.job_id);
+      setDetailTab('overview');
+      setPlanPreview(null);
       setRunForm((current) => ({ ...current, prompt: '' }));
       setDelegatesText('');
-      const next = await snapshotApp();
-      setSnapshot(next);
+      setSnapshot(await snapshotApp());
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -207,11 +200,9 @@ function App() {
     try {
       await cancelJob(jobID);
       setMessage(`Cancelled ${jobID}.`);
-      const next = await snapshotApp();
-      setSnapshot(next);
+      setSnapshot(await snapshotApp());
       if (selectedJobID === jobID) {
-        const detail = await inspectJob(jobID);
-        setInspect(detail);
+        setInspect(await inspectJob(jobID));
       }
       setError('');
     } catch (err) {
@@ -230,6 +221,7 @@ function App() {
         policy_override: false,
       });
       setPlanPreview(preview);
+      setDetailTab('plans');
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -260,115 +252,87 @@ function App() {
   const queueItems = snapshot?.queue ?? [];
   const live = inspect?.live;
   const selectedSessionID = inspect?.job.session_id || inspect?.session?.id || '';
+  const selectedPrompt = inspect?.job.prompt || '';
+  const stats = snapshot?.status;
 
   return (
     <div className="shell">
-      <header className="topbar">
+      <header className="masthead">
         <div>
-          <p className="eyebrow">Daemon-first desktop control</p>
-          <h1>ROMA Desktop</h1>
+          <p className="eyebrow">Local orchestration desk</p>
+          <h1>ROMA</h1>
+          <p className="masthead-copy">Run work, watch the queue, inspect one session at a time.</p>
         </div>
-        <div className="topbar-actions">
-          <div className={`badge ${boot?.embedded_daemon ? 'badge-embedded' : 'badge-external'}`}>
-            {boot?.embedded_daemon ? 'Embedded romad' : 'External romad'}
+        <div className="masthead-actions">
+          <div className={`connection-badge ${boot?.embedded_daemon ? 'connection-badge-embedded' : ''}`}>
+            {boot?.embedded_daemon ? 'embedded romad' : 'connected romad'}
           </div>
-          <button className="ghost-button" onClick={handlePickDirectory} type="button">
-            Choose Folder
+          <button className="secondary-button" onClick={handlePickDirectory} type="button">
+            Change folder
           </button>
         </div>
       </header>
 
-      <section className="workspace-strip">
-        <div>
-          <span className="workspace-label">Working directory</span>
+      <section className="summary-strip">
+        <div className="summary-item summary-item-wide">
+          <span>Working directory</span>
           <strong>{snapshot?.working_dir || boot?.working_dir || 'Not set'}</strong>
         </div>
-        <div className="workspace-meta">
-          <span>{boot?.agent_config_path || 'No agent config'}</span>
-          {snapshot?.acp?.enabled ? <span>ACP :{snapshot.acp.port}</span> : <span>ACP off</span>}
+        <div className="summary-item">
+          <span>Queue</span>
+          <strong>{stats?.queue_items ?? 0}</strong>
         </div>
-      </section>
-
-      <section className="status-grid">
-        <StatusCard label="Queue" value={snapshot?.status.queue_items ?? 0} accent="sand" />
-        <StatusCard label="Sessions" value={snapshot?.status.sessions ?? 0} accent="teal" />
-        <StatusCard label="Pending Approval" value={snapshot?.status.pending_approval_tasks ?? 0} accent="rust" />
-        <StatusCard label="Recoverable" value={snapshot?.status.recoverable_sessions ?? 0} accent="olive" />
+        <div className="summary-item">
+          <span>Approval</span>
+          <strong>{stats?.pending_approval_tasks ?? 0}</strong>
+        </div>
+        <div className="summary-item">
+          <span>Recoverable</span>
+          <strong>{stats?.recoverable_sessions ?? 0}</strong>
+        </div>
       </section>
 
       {(message || error) && (
-        <section className="banner-stack">
-          {message ? <div className="banner banner-info">{message}</div> : null}
-          {error ? <div className="banner banner-error">{error}</div> : null}
+        <section className="notice-stack">
+          {message ? <div className="notice notice-info">{message}</div> : null}
+          {error ? <div className="notice notice-error">{error}</div> : null}
         </section>
       )}
 
-      <main className="content-grid">
-        <aside className="panel queue-panel">
-          <div className="panel-header">
-            <div>
-              <p className="section-kicker">Activity</p>
-              <h2>Queue</h2>
-            </div>
-            <span className="panel-count">{queueItems.length}</span>
-          </div>
-          <div className="job-list">
-            {queueItems.length === 0 ? (
-              <p className="empty-state">No queued jobs yet.</p>
-            ) : (
-              queueItems.map((item) => (
-                <button
-                  className={`job-card ${selectedJobID === item.id ? 'job-card-active' : ''}`}
-                  key={item.id}
-                  onClick={() => setSelectedJobID(item.id)}
-                  type="button"
-                >
-                  <div className="job-card-header">
-                    <strong>{item.id}</strong>
-                    <span className={`pill pill-${item.status}`}>{item.status}</span>
-                  </div>
-                  <p>{trimText(item.prompt, 96)}</p>
-                  <div className="job-card-meta">
-                    <span>{item.starter_agent || 'no-agent'}</span>
-                    <span>{item.mode || 'fanout'}</span>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        <section className="main-stack">
-          <section className="panel run-panel">
-            <div className="panel-header">
+      <main className="workspace-grid">
+        <aside className="sidebar">
+          <section className="panel panel-quiet">
+            <div className="panel-head">
               <div>
-                <p className="section-kicker">Compose</p>
-                <h2>Run a task</h2>
+                <p className="section-kicker">Run</p>
+                <h2>New task</h2>
               </div>
             </div>
             <form className="run-form" onSubmit={handleSubmit}>
               <textarea
                 onChange={(event) => setRunForm((current) => ({ ...current, prompt: event.target.value }))}
-                placeholder="Describe the engineering task you want ROMA to run."
+                placeholder="What should ROMA work on?"
                 value={runForm.prompt}
               />
-              <div className="form-row">
-                <label>
-                  Starter
-                  <select
-                    onChange={(event) =>
-                      setRunForm((current) => ({ ...current, starter_agent: event.target.value }))
-                    }
-                    value={runForm.starter_agent}
-                  >
-                    {agents.length === 0 ? <option value="">No agents configured</option> : null}
-                    {agents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.display_name || agent.id} ({agent.availability})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+
+              <label>
+                Starter agent
+                <select
+                  onChange={(event) =>
+                    setRunForm((current) => ({ ...current, starter_agent: event.target.value }))
+                  }
+                  value={runForm.starter_agent}
+                >
+                  {agents.length === 0 ? <option value="">No agents configured</option> : null}
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.display_name || agent.id} ({agent.availability})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="inline-fields">
                 <label>
                   Mode
                   <select
@@ -383,7 +347,7 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  Max rounds
+                  Rounds
                   <input
                     min={1}
                     onChange={(event) =>
@@ -397,28 +361,29 @@ function App() {
                   />
                 </label>
               </div>
-              <div className="form-row">
-                <label className="grow">
-                  Delegates
-                  <input
-                    onChange={(event) => setDelegatesText(event.target.value)}
-                    placeholder="codex, claude, gemini"
-                    type="text"
-                    value={delegatesText}
-                  />
-                </label>
-                <label className="grow">
-                  Working dir
-                  <input
-                    onChange={(event) =>
-                      setRunForm((current) => ({ ...current, working_dir: event.target.value }))
-                    }
-                    type="text"
-                    value={runForm.working_dir}
-                  />
-                </label>
-              </div>
-              <div className="form-actions">
+
+              <label>
+                Delegates
+                <input
+                  onChange={(event) => setDelegatesText(event.target.value)}
+                  placeholder="claude, codex"
+                  type="text"
+                  value={delegatesText}
+                />
+              </label>
+
+              <label>
+                Working directory
+                <input
+                  onChange={(event) =>
+                    setRunForm((current) => ({ ...current, working_dir: event.target.value }))
+                  }
+                  type="text"
+                  value={runForm.working_dir}
+                />
+              </label>
+
+              <div className="form-foot">
                 <label className="checkbox">
                   <input
                     checked={runForm.continuous}
@@ -427,81 +392,138 @@ function App() {
                     }
                     type="checkbox"
                   />
-                  Continuous rounds
+                  Continuous
                 </label>
                 <button className="primary-button" disabled={busy || !runForm.prompt.trim()} type="submit">
-                  {busy ? 'Submitting...' : 'Submit to romad'}
+                  {busy ? 'Submitting...' : 'Submit'}
                 </button>
               </div>
             </form>
           </section>
 
-          <section className="detail-grid">
-            <section className="panel detail-panel">
-              <div className="panel-header">
-                <div>
-                  <p className="section-kicker">Selected job</p>
-                  <h2>{inspect?.job.id || 'Choose a job'}</h2>
-                </div>
-                {inspect?.job.id ? (
-                  <button className="ghost-button" onClick={() => handleCancel(inspect.job.id)} type="button">
-                    Cancel job
+          <section className="panel queue-panel">
+            <div className="panel-head">
+              <div>
+                <p className="section-kicker">Queue</p>
+                <h2>Recent runs</h2>
+              </div>
+              <span className="panel-count">{queueItems.length}</span>
+            </div>
+            <div className="job-list">
+              {queueItems.length === 0 ? (
+                <p className="empty-state">Nothing queued yet.</p>
+              ) : (
+                queueItems.map((item) => (
+                  <button
+                    className={`job-row ${selectedJobID === item.id ? 'job-row-active' : ''}`}
+                    key={item.id}
+                    onClick={() => {
+                      setSelectedJobID(item.id);
+                      setDetailTab('overview');
+                    }}
+                    type="button"
+                  >
+                    <div className="job-row-top">
+                      <strong>{trimText(item.prompt, 48) || item.id}</strong>
+                      <span className={`pill pill-${item.status}`}>{item.status}</span>
+                    </div>
+                    <div className="job-row-bottom">
+                      <span>{item.starter_agent || 'no-agent'}</span>
+                      <span>{item.mode || 'fanout'}</span>
+                      <span>{item.id}</span>
+                    </div>
                   </button>
-                ) : null}
+                ))
+              )}
+            </div>
+          </section>
+        </aside>
+
+        <section className="panel inspector">
+          <div className="inspector-head">
+            <div>
+              <p className="section-kicker">Session</p>
+              <h2>{selectedJobID ? 'Inspection' : 'No run selected'}</h2>
+            </div>
+            {inspect?.job.id ? (
+              <button className="secondary-button" onClick={() => handleCancel(inspect.job.id)} type="button">
+                Cancel
+              </button>
+            ) : null}
+          </div>
+
+          {inspect ? (
+            <>
+              <div className="hero-block">
+                <div className="hero-top">
+                  <span className={`pill pill-${inspect.job.status}`}>{inspect.job.status}</span>
+                  <span className="hero-id">{inspect.job.id}</span>
+                </div>
+                <h3>{selectedPrompt || 'Untitled run'}</h3>
+                <div className="hero-meta">
+                  <span>agent {inspect.job.starter_agent}</span>
+                  <span>session {selectedSessionID || 'pending'}</span>
+                  <span>{inspect.artifact_count || inspect.artifacts?.length || 0} artifacts</span>
+                  <span>{inspect.event_count || inspect.events?.length || 0} events</span>
+                </div>
               </div>
 
-              {inspect ? (
-                <>
-                  <div className="detail-hero">
-                    <div>
-                      <span className={`pill pill-${inspect.job.status}`}>{inspect.job.status}</span>
-                      <h3>{trimText(inspect.job.prompt, 180)}</h3>
-                    </div>
-                    <div className="detail-meta">
-                      <span>Agent: {inspect.job.starter_agent}</span>
-                      <span>Session: {selectedSessionID || 'pending'}</span>
-                      <span>Artifacts: {inspect.artifact_count || inspect.artifacts?.length || 0}</span>
-                      <span>Events: {inspect.event_count || inspect.events?.length || 0}</span>
-                    </div>
-                  </div>
+              <div className="tabbar">
+                <button
+                  className={detailTab === 'overview' ? 'tab-active' : ''}
+                  onClick={() => setDetailTab('overview')}
+                  type="button"
+                >
+                  Overview
+                </button>
+                <button
+                  className={detailTab === 'result' ? 'tab-active' : ''}
+                  onClick={() => setDetailTab('result')}
+                  type="button"
+                >
+                  Result
+                </button>
+                <button
+                  className={detailTab === 'plans' ? 'tab-active' : ''}
+                  onClick={() => setDetailTab('plans')}
+                  type="button"
+                >
+                  Plans {plans.length > 0 ? `(${plans.length})` : ''}
+                </button>
+              </div>
 
+              {detailTab === 'overview' ? (
+                <section className="content-stack">
                   {live ? (
-                    <div className="live-strip">
-                      <div>
-                        <span className="muted">Phase</span>
-                        <strong>{live.phase || live.state || 'unknown'}</strong>
-                      </div>
-                      <div>
-                        <span className="muted">Task</span>
-                        <strong>{live.current_task_title || live.current_task_id || 'n/a'}</strong>
-                      </div>
-                      <div>
-                        <span className="muted">Workspace</span>
-                        <strong>{live.workspace_mode || 'n/a'}</strong>
-                      </div>
-                      <div>
-                        <span className="muted">PID</span>
-                        <strong>{live.process_pid || 'n/a'}</strong>
-                      </div>
+                    <div className="overview-grid">
+                      <MetricCard label="Phase" value={live.phase || live.state || 'unknown'} />
+                      <MetricCard label="Task" value={live.current_task_title || live.current_task_id || 'n/a'} />
+                      <MetricCard label="Workspace" value={live.workspace_mode || 'n/a'} />
+                      <MetricCard label="PID" value={String(live.process_pid || 'n/a')} />
                     </div>
                   ) : null}
 
-                  <div className="detail-columns">
-                    <div>
+                  <div className="split-grid">
+                    <section>
                       <h4>Tasks</h4>
                       <div className="stack-list">
-                        {inspect.tasks?.map((task) => (
-                          <div className="stack-row" key={task.id}>
-                            <div>
-                              <strong>{task.title || task.id}</strong>
-                              <p>{task.agent_id || 'system'}</p>
+                        {inspect.tasks?.length ? (
+                          inspect.tasks.map((task) => (
+                            <div className="stack-row" key={task.id}>
+                              <div>
+                                <strong>{task.title || task.id}</strong>
+                                <p>{task.agent_id || 'system'}</p>
+                              </div>
+                              <span className={`pill pill-${task.state?.toLowerCase()}`}>{task.state}</span>
                             </div>
-                            <span className={`pill pill-${task.state?.toLowerCase()}`}>{task.state}</span>
-                          </div>
-                        ))}
+                          ))
+                        ) : (
+                          <p className="empty-state">No task records yet.</p>
+                        )}
                       </div>
-                    </div>
-                    <div>
+                    </section>
+
+                    <section>
                       <h4>Workspaces</h4>
                       <div className="stack-list">
                         {inspect.workspaces?.length ? (
@@ -518,7 +540,7 @@ function App() {
                           <p className="empty-state">No workspace metadata yet.</p>
                         )}
                       </div>
-                    </div>
+                    </section>
                   </div>
 
                   {live?.last_output_preview ? (
@@ -527,94 +549,97 @@ function App() {
                       <pre>{live.last_output_preview}</pre>
                     </div>
                   ) : null}
-                </>
-              ) : (
-                <p className="empty-state">Select a queue item to inspect its live state.</p>
-              )}
-            </section>
+                </section>
+              ) : null}
 
-            <section className="side-stack">
-              <section className="panel result-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="section-kicker">Outcome</p>
-                    <h2>Result</h2>
-                  </div>
-                </div>
-                {result ? (
-                  result.pending ? (
-                    <div className="text-block">
-                      <h4>Pending</h4>
-                      <p>{result.message || 'Result artifact is not available yet.'}</p>
-                    </div>
-                  ) : (
-                    <div className="text-block">
-                      <h4>{result.artifact.kind || 'artifact'}</h4>
-                      <pre>{prettyJSON(result.artifact.payload)}</pre>
-                    </div>
-                  )
-                ) : (
-                  <p className="empty-state">No result loaded.</p>
-                )}
-              </section>
-
-              <section className="panel plans-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="section-kicker">Approval</p>
-                    <h2>Plans inbox</h2>
-                  </div>
-                  <span className="panel-count">{plans.length}</span>
-                </div>
-                <div className="stack-list">
-                  {plans.length ? (
-                    plans.map((entry) => (
-                      <div className="plan-card" key={entry.artifact_id}>
-                        <div className="job-card-header">
-                          <strong>{entry.task_id}</strong>
-                          <span className={`pill pill-${entry.status}`}>{entry.status}</span>
-                        </div>
-                        <p>{entry.goal || entry.artifact_id}</p>
-                        <div className="plan-actions">
-                          <button className="ghost-button" onClick={() => handlePlanPreview(entry)} type="button">
-                            Preview
-                          </button>
-                          <button className="ghost-button" onClick={() => handlePlanDecision('approve', entry.artifact_id)} type="button">
-                            Approve
-                          </button>
-                          <button className="ghost-button" onClick={() => handlePlanDecision('reject', entry.artifact_id)} type="button">
-                            Reject
-                          </button>
-                        </div>
+              {detailTab === 'result' ? (
+                <section className="content-stack">
+                  {result ? (
+                    result.pending ? (
+                      <div className="text-block">
+                        <h4>Pending</h4>
+                        <p>{result.message || 'Result artifact is not available yet.'}</p>
                       </div>
-                    ))
+                    ) : (
+                      <div className="text-block">
+                        <h4>{result.artifact.kind || 'artifact'}</h4>
+                        <pre>{prettyJSON(result.artifact.payload)}</pre>
+                      </div>
+                    )
+                  ) : (
+                    <p className="empty-state">No result available for this run yet.</p>
+                  )}
+                </section>
+              ) : null}
+
+              {detailTab === 'plans' ? (
+                <section className="content-stack">
+                  {plans.length ? (
+                    <div className="stack-list">
+                      {plans.map((entry) => (
+                        <div className="plan-row" key={entry.artifact_id}>
+                          <div className="job-row-top">
+                            <strong>{entry.task_id}</strong>
+                            <span className={`pill pill-${entry.status}`}>{entry.status}</span>
+                          </div>
+                          <p>{entry.goal || entry.artifact_id}</p>
+                          <div className="plan-actions">
+                            <button className="secondary-button" onClick={() => handlePlanPreview(entry)} type="button">
+                              Preview
+                            </button>
+                            <button className="secondary-button" onClick={() => handlePlanDecision('approve', entry.artifact_id)} type="button">
+                              Approve
+                            </button>
+                            <button className="secondary-button" onClick={() => handlePlanDecision('reject', entry.artifact_id)} type="button">
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <p className="empty-state">No pending execution plans.</p>
                   )}
-                </div>
 
-                {planPreview ? (
-                  <div className="text-block">
-                    <h4>Preview</h4>
-                    <pre>{prettyJSON(planPreview)}</pre>
-                  </div>
-                ) : null}
-              </section>
-            </section>
-          </section>
+                  {planPreview ? (
+                    <div className="text-block">
+                      <h4>Preview</h4>
+                      <pre>{prettyJSON(planPreview)}</pre>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <div className="empty-view">
+              <p>Select a run from the queue, or submit a new task on the left.</p>
+            </div>
+          )}
         </section>
       </main>
     </div>
   );
 }
 
-function StatusCard(props: { label: string; value: number; accent: string }) {
+function MetricCard(props: { label: string; value: string }) {
   return (
-    <div className={`status-card status-card-${props.accent}`}>
+    <div className="metric-card">
       <span>{props.label}</span>
       <strong>{props.value}</strong>
     </div>
   );
+}
+
+function toSnapshot(data: BootstrapResponse): SnapshotResponse {
+  return {
+    working_dir: data.working_dir,
+    daemon_available: data.daemon_available,
+    embedded_daemon: data.embedded_daemon,
+    last_daemon_error: data.last_daemon_error,
+    status: data.status,
+    queue: data.queue,
+    acp: data.acp,
+  };
 }
 
 function firstAvailableAgent(agents: AgentProfile[]) {

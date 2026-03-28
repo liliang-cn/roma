@@ -6,28 +6,27 @@
 }
 
 :root {
-  --paper: #f4efe6;
-  --paper-deep: #ece2d0;
-  --ink: #2d241d;
-  --ink-soft: #7b5f49;
-  --teal-deep: #1b6c70;
-  --green-deep: #2b6958;
-  --sand-deep: #9f6d2e;
-  --rust: #ad522f;
-  --olive: #647140;
+  --paper: #f3efe7;
+  --panel: rgba(250, 247, 241, 0.88);
+  --ink: #2a2520;
+  --ink-soft: #6f6252;
+  --ink-muted: #90806b;
+  --teal: #1f6666;
+  --green: #2d624a;
+  --rust: #984d31;
+  --gold: #8a6420;
 }
 
 html {
   background:
-    radial-gradient(circle at top left, rgba(27, 108, 112, 0.16), transparent 28%),
-    radial-gradient(circle at top right, rgba(159, 109, 46, 0.18), transparent 28%),
-    linear-gradient(180deg, #f6f0e3 0%, #efe6d6 100%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0) 28%),
+    linear-gradient(180deg, #f7f3eb 0%, #ede5d8 100%);
   color: var(--ink);
 }
 
 body {
   color: var(--ink);
-  font-family: "Nunito", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Nunito", "Segoe UI", sans-serif;
   margin: 0;
   min-height: 100vh;
 }
