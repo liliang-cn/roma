@@ -227,6 +227,28 @@ The TUI starts an embedded `romad` automatically and stops it on exit. Available
 
 ---
 
+## Desktop UI
+
+A first Wails desktop UI now lives under [`desktop/`](./desktop).
+
+It keeps the same daemon-first model as the CLI and TUI:
+
+- desktop UI is presentation only
+- `romad` remains execution truth
+- the desktop app connects to an existing daemon or starts an embedded one
+
+Current desktop MVP covers:
+
+- daemon status
+- run submission
+- queue inspection
+- result view
+- plans inbox
+
+See [`desktop/README.md`](./desktop/README.md) for build and platform notes.
+
+---
+
 ## How Merge-Back Works
 
 Agents run in isolated git worktrees under `~/.roma/workspaces/`. When an agent finishes and emits:

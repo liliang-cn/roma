@@ -4,7 +4,9 @@ BIN_DIR ?= bin
 PREFIX ?= $(HOME)/.local
 INSTALL_BIN_DIR ?= $(PREFIX)/bin
 
-.PHONY: all build build-roma build-romad build-romatui test install clean
+.PHONY: all build build-roma build-romad build-romatui desktop-frontend-build desktop-build test install clean
+
+WAILS ?= $(shell $(GO) env GOPATH)/bin/wails
 
 all: build
 
@@ -21,6 +23,12 @@ build-romad: | $(BIN_DIR)
 
 build-romatui: | $(BIN_DIR)
 	$(GO_ENV) $(GO) build -o $(BIN_DIR)/romatui ./cmd/romatui
+
+desktop-frontend-build:
+	cd desktop/frontend && npm install && npm run build
+
+desktop-build: desktop-frontend-build
+	cd desktop && GOWORK=off $(WAILS) build -nopackage -m -s
 
 test:
 	$(GO_ENV) $(GO) test -count=1 ./...

@@ -1,0 +1,458 @@
+.shell {
+  min-height: 100vh;
+  padding: 28px 28px 36px;
+}
+
+.topbar {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.eyebrow,
+.section-kicker,
+.workspace-label,
+.muted {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.topbar h1,
+.panel h2,
+.detail-hero h3 {
+  font-family: "Nunito", "Avenir Next", "Trebuchet MS", sans-serif;
+  margin: 0;
+}
+
+.topbar h1 {
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  letter-spacing: -0.04em;
+}
+
+.topbar-actions,
+.workspace-meta,
+.panel-header,
+.job-card-header,
+.job-card-meta,
+.form-row,
+.form-actions,
+.detail-meta,
+.live-strip,
+.plan-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.topbar-actions {
+  flex-wrap: wrap;
+}
+
+.badge,
+.pill {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 700;
+  gap: 8px;
+  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+}
+
+.badge-embedded {
+  background: rgba(42, 108, 90, 0.16);
+  color: var(--green-deep);
+}
+
+.badge-external {
+  background: rgba(20, 72, 115, 0.12);
+  color: var(--teal-deep);
+}
+
+.workspace-strip,
+.panel,
+.status-card {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 250, 241, 0.82);
+  border: 1px solid rgba(123, 95, 73, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 18px 48px rgba(112, 74, 36, 0.08);
+}
+
+.workspace-strip {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px 20px;
+}
+
+.workspace-strip strong {
+  display: block;
+  font-size: 1rem;
+  margin-top: 4px;
+}
+
+.workspace-meta {
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  justify-content: flex-end;
+}
+
+.status-grid,
+.content-grid,
+.detail-grid,
+.detail-columns,
+.side-stack,
+.banner-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.status-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.status-card {
+  padding: 18px 20px;
+}
+
+.status-card span {
+  color: var(--ink-soft);
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.status-card strong {
+  display: block;
+  font-size: clamp(1.8rem, 3vw, 2.6rem);
+  line-height: 1;
+}
+
+.status-card-sand strong {
+  color: var(--sand-deep);
+}
+
+.status-card-teal strong {
+  color: var(--teal-deep);
+}
+
+.status-card-rust strong {
+  color: var(--rust);
+}
+
+.status-card-olive strong {
+  color: var(--olive);
+}
+
+.banner-stack {
+  margin-bottom: 18px;
+}
+
+.banner {
+  border-radius: 18px;
+  padding: 12px 16px;
+}
+
+.banner-info {
+  background: rgba(28, 114, 119, 0.11);
+  color: var(--teal-deep);
+}
+
+.banner-error {
+  background: rgba(173, 82, 47, 0.13);
+  color: var(--rust);
+}
+
+.content-grid {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.panel {
+  padding: 18px 20px;
+}
+
+.queue-panel,
+.side-stack {
+  min-height: 0;
+}
+
+.queue-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel-count {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.job-list,
+.stack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-list {
+  max-height: calc(100vh - 310px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.job-card,
+.stack-row,
+.plan-card {
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(123, 95, 73, 0.1);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+
+.job-card {
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.job-card:hover,
+.ghost-button:hover,
+.primary-button:hover {
+  transform: translateY(-1px);
+}
+
+.job-card-active {
+  background: rgba(225, 237, 231, 0.84);
+  border-color: rgba(42, 108, 90, 0.28);
+}
+
+.job-card p,
+.plan-card p,
+.stack-row p,
+.empty-state,
+.text-block p {
+  color: var(--ink-soft);
+  margin: 8px 0 0;
+}
+
+.job-card-meta,
+.detail-meta,
+.plan-actions {
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  margin-top: 10px;
+}
+
+.main-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.run-form,
+.text-block {
+  display: grid;
+  gap: 14px;
+}
+
+.run-form textarea,
+.run-form input,
+.run-form select {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(123, 95, 73, 0.16);
+  border-radius: 16px;
+  color: var(--ink);
+  font: inherit;
+  padding: 12px 14px;
+}
+
+.run-form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.form-row {
+  align-items: stretch;
+}
+
+.form-row label,
+.checkbox {
+  color: var(--ink-soft);
+  display: grid;
+  font-size: 0.9rem;
+  gap: 6px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.form-actions {
+  justify-content: space-between;
+}
+
+.checkbox {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.primary-button,
+.ghost-button {
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 11px 16px;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, var(--teal-deep), var(--green-deep));
+  color: white;
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.ghost-button {
+  background: rgba(91, 74, 57, 0.08);
+  color: var(--ink);
+}
+
+.detail-grid {
+  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
+}
+
+.side-stack {
+  align-content: start;
+}
+
+.detail-hero {
+  border-bottom: 1px solid rgba(123, 95, 73, 0.12);
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+}
+
+.live-strip {
+  background: rgba(224, 236, 235, 0.72);
+  border-radius: 18px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+  padding: 14px 16px;
+}
+
+.live-strip div {
+  display: grid;
+  gap: 4px;
+}
+
+.detail-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.stack-row {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.text-block pre {
+  background: rgba(46, 39, 33, 0.95);
+  border-radius: 18px;
+  color: #f9ecd8;
+  font-family: "Iosevka", "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plan-card {
+  display: grid;
+  gap: 10px;
+}
+
+.pill-running {
+  background: rgba(24, 112, 118, 0.12);
+  color: var(--teal-deep);
+}
+
+.pill-succeeded {
+  background: rgba(42, 108, 90, 0.14);
+  color: var(--green-deep);
+}
+
+.pill-failed,
+.pill-failedterminal,
+.pill-failedrecoverable,
+.pill-rejected {
+  background: rgba(173, 82, 47, 0.13);
+  color: var(--rust);
+}
+
+.pill-awaiting_approval,
+.pill-awaitingapproval {
+  background: rgba(197, 145, 52, 0.17);
+  color: #7a5605;
+}
+
+.pill-pending,
+.pill-ready,
+.pill-neutral,
+.pill-blockedbypolicy,
+.pill-paused,
+.pill-cancelled {
+  background: rgba(91, 74, 57, 0.1);
+  color: var(--ink-soft);
+}
+
+@media (max-width: 1240px) {
+  .status-grid,
+  .content-grid,
+  .detail-grid,
+  .detail-columns,
+  .live-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .job-list {
+    max-height: none;
+  }
+
+  .workspace-strip,
+  .topbar,
+  .form-row,
+  .form-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -17,6 +17,76 @@ Continue evolving ROMA from a local prototype into a daemon-first multi-agent or
 - Direct, delegated, and graph runs can now opt into `--continuous` multi-round execution with `--max-rounds`.
 - ROMA control-plane state is now anchored at `$HOME/.roma`, while repository-targeted task execution keeps `--cwd` semantics separate from ROMA home.
 
+## Session Plan: Wails UI (2026-03-28)
+
+### Goal
+
+Add a Wails-based desktop UI that sits on top of `romad` and the existing local API, without moving execution truth into the frontend.
+
+### Scope Decisions
+
+- Reuse `romad` as the only execution/control-plane authority.
+- Reuse `internal/api` client calls instead of re-implementing orchestration in the desktop layer.
+- Start with polling-based live refresh; do not block MVP on a new push transport.
+- Preserve `WorkingDir` as an explicit per-run context; desktop state must not collapse repo scope into `$HOME/.roma`.
+
+### Phases
+
+#### Phase W1: Desktop Architecture Baseline
+Status: complete
+
+- [x] Confirm current UI surface is Bubble Tea only; there is no Wails app yet
+- [x] Confirm current daemon API already exposes enough endpoints for a desktop MVP
+- [x] Confirm embedded-daemon startup pattern already exists and can be adapted from TUI
+
+#### Phase W2: Wails Shell and Backend Bindings
+Status: pending
+
+- [ ] Add Wails dependency and app scaffold under a dedicated desktop entrypoint
+- [ ] Create a desktop backend service that wraps `internal/api.Client`
+- [ ] Expose minimal commands:
+  - status
+  - queue list / inspect / cancel
+  - submit run
+  - result show
+  - session inspect
+  - plans inbox / approve / reject
+  - agent list
+- [ ] Reuse embedded `romad` startup when no daemon is reachable
+
+#### Phase W3: MVP Screens
+Status: pending
+
+- [ ] Dashboard: daemon health, queue counts, recovery/approval counters
+- [ ] Run composer: prompt, mode, starter agent, delegates, cwd
+- [ ] Queue/session detail: live task, workspace, events summary, artifacts summary
+- [ ] Result view: final answer or pending state
+- [ ] Plans inbox: preview, approve, reject
+- [ ] Settings: agent registry path, ROMA home, current repo/cwd picker
+
+#### Phase W4: Live UX and Interaction Model
+Status: pending
+
+- [ ] Poll daemon status and selected job/session on a short interval
+- [ ] Normalize summary DTOs for frontend consumption instead of rendering raw API payloads directly
+- [ ] Add optimistic UI only for non-destructive actions; refresh from daemon after every mutation
+- [ ] Keep long transcripts/tails as on-demand views, not always-on background streams
+
+#### Phase W5: Packaging and Validation
+Status: pending
+
+- [ ] Add desktop build targets and developer docs
+- [ ] Verify macOS and Linux desktop startup with embedded daemon
+- [ ] Add backend tests for desktop binding methods
+- [ ] Add one smoke path covering submit -> inspect -> result
+
+### Recommended Initial Slice
+
+1. Ship Wails shell + backend bindings only.
+2. Build three screens first: Dashboard, Run, Job Detail.
+3. Add Plans Inbox only after the run/inspect/result path is stable.
+4. Leave ACP/gateway and rich Curia visualizations for a later pass.
+
 ## Phases
 
 ### Phase 1: Queue and Execution Truth Consolidation

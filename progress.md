@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-03-28
+
+- Planned a Wails desktop UI track instead of starting implementation blind.
+- Confirmed the repository currently has:
+  - daemon-first backend (`romad`)
+  - local JSON API
+  - Bubble Tea TUI
+  - no Wails dependency or desktop scaffold yet
+- Confirmed the existing TUI startup path can be reused as the desktop bootstrap pattern:
+  - connect to existing daemon when present
+  - otherwise start embedded `romad`
+- Wrote a staged Wails plan into `task_plan.md` covering:
+  - shell/bindings
+  - MVP screens
+  - polling/live UX
+  - packaging/test validation
+- Recorded the main architecture constraint for later implementation:
+  - Wails must stay a presentation layer over `romad`, not a parallel execution path
+
 ## 2026-03-11
 
 - Added PTY provider abstraction and Unix implementation with `github.com/creack/pty`.

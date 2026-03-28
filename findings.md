@@ -1,5 +1,29 @@
 # Findings
 
+## 2026-03-28: Wails UI Planning
+
+- There is no existing Wails code in the repository; the only shipped interactive UI is the Bubble Tea TUI.
+- The TUI already proves the right desktop control pattern:
+  - connect to daemon through `internal/api.Client`
+  - if unavailable, start an embedded `romad`
+  - keep execution truth in daemon state, not UI memory
+- The daemon API already covers the core Wails MVP surface:
+  - `/status`
+  - `/submit`
+  - `/queue-inspect/{id}`
+  - `/results/{session}`
+  - `/plans/inbox`
+  - `/sessions/{id}`
+  - `/workspaces`
+- `api.QueueInspectResponse`, `api.SessionInspectResponse`, and `api.ResultShowResponse` are already UI-oriented enough to back a desktop MVP without new orchestration endpoints.
+- Live inspection is polling-centric today. A Wails MVP should poll rather than invent a websocket/event-stream layer first.
+- Control-plane state is rooted in `$HOME/.roma`, while execution scope still depends on the selected repository `WorkingDir`. A desktop UI must expose cwd/repo selection explicitly.
+- The safest architecture is:
+  - Wails frontend renders state
+  - Wails Go backend wraps `internal/api`
+  - `romad` remains the only owner of queue/session/task/artifact/policy/recovery truth
+- The current TUI code is useful as a behavior reference, but its Bubble Tea state model should not be ported directly into the Wails frontend.
+
 ## Runtime
 
 - `codex` now executes successfully under real PTY when run by `romad`.
