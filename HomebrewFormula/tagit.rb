@@ -7,22 +7,22 @@ class Tagit < Formula
   on_macos do
     on_arm do
       url "https://github.com/liliang-cn/tagit/releases/download/v0.1.0/tagit_darwin_arm64.tar.gz"
-      sha256 "e621fc698366985b90dd008b81e31da04f5552836d89b5e9c9ae46efc1f83edf"
+      sha256 "244fa2e096dab88cff315418e02f8ff12dcdcdd803f39472e8b61f827d53fdca"
     end
     on_intel do
       url "https://github.com/liliang-cn/tagit/releases/download/v0.1.0/tagit_darwin_amd64.tar.gz"
-      sha256 "5013a57cf9303357ee5c4a31dc16f5b80982b54d5b5c9447bef9e24a205f65a0"
+      sha256 "495241f3eacd244a0d671bce44049ef40792127d642cf8848b1898eabdcab09f"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/liliang-cn/tagit/releases/download/v0.1.0/tagit_linux_arm64.tar.gz"
-      sha256 "8712f2d90c0a2d6967a843a8bc7b13acc4942bda66365472e321b5c9694def71"
+      sha256 "d57db4c45c643b0e662ff659baf83531a60ea332e66e3346885d7c6ec1df2aa8"
     end
     on_intel do
       url "https://github.com/liliang-cn/tagit/releases/download/v0.1.0/tagit_linux_amd64.tar.gz"
-      sha256 "be7ee48aab05ffd435e1257af685c60ef98538ae73f37c173fb81e8d4c9d47c5"
+      sha256 "90cc0168ad744e8e05da9c21b9e76f039e14bcdb8060836ea89d7e9bc76f8cac"
     end
   end
 
