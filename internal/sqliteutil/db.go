@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/liliang-cn/tagit/internal/tagitpath"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no CGO) — registers driver name "sqlite"
@@ -16,9 +17,28 @@ func DBPath(workDir string) string {
 	return tagitpath.Join(workDir, "tagit.db")
 }
 
-// Open opens the workspace SQLite database and applies the base schema.
+// A *sql.DB is a connection pool meant to be long-lived and shared. Callers open
+// a store per operation (recovery loop, per-request handlers, per-run); opening a
+// fresh pool each time and never closing it leaks one db + one -wal file
+// descriptor per call, which took the daemon down after ~1 day of uptime. So we
+// hand out a single shared, process-lived pool per database path. Nothing closes
+// it; process exit reclaims the handles.
+var (
+	dbCacheMu sync.Mutex
+	dbCache   = make(map[string]*sql.DB)
+)
+
+// Open returns a shared SQLite handle for the workspace, applying the base schema
+// on first open. Subsequent opens of the same path reuse the cached pool.
 func Open(workDir string) (*sql.DB, error) {
 	dbPath := DBPath(workDir)
+
+	dbCacheMu.Lock()
+	defer dbCacheMu.Unlock()
+	if db, ok := dbCache[dbPath]; ok {
+		return db, nil
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create sqlite directory: %w", err)
 	}
@@ -178,6 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_leases_status_updated ON scheduler_leas
 			return nil, fmt.Errorf("migrate scheduler_leases.pending_approval_task_ids_json: %w", err)
 		}
 	}
+	dbCache[dbPath] = db
 	return db, nil
 }
 
