@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.7
 	github.com/liliang-cn/agent-go/v2 v2.95.0
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/slack-go/slack v0.27.0
 	modernc.org/sqlite v1.38.2
 )
@@ -21,7 +22,6 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/liliang-cn/cortexdb/v2 v2.24.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.6.1 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.1.3 // indirect

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/liliang-cn/tagit/internal/agents"
 	"github.com/liliang-cn/tagit/internal/api"
 	"github.com/liliang-cn/tagit/internal/artifacts"
@@ -18,6 +20,8 @@ import (
 	"github.com/liliang-cn/tagit/internal/domain"
 	"github.com/liliang-cn/tagit/internal/events"
 	"github.com/liliang-cn/tagit/internal/history"
+	"github.com/liliang-cn/tagit/internal/mcpserver"
+	"github.com/liliang-cn/tagit/internal/memory"
 	"github.com/liliang-cn/tagit/internal/plans"
 	"github.com/liliang-cn/tagit/internal/policy"
 	"github.com/liliang-cn/tagit/internal/queue"
@@ -119,6 +123,11 @@ func run(ctx context.Context, args []string) error {
 		return runQueueDecision(ctx, false, args[1:])
 	case "acp":
 		return runAcp(ctx, args[1:])
+	case "mcp":
+		if handled, err := handleTopicHelp("mcp", args[1:]); handled {
+			return err
+		}
+		return runMCP(ctx, args[1:])
 	case "start":
 		if handled, err := handleTopicHelp("start", args[1:]); handled {
 			return err
@@ -2183,6 +2192,79 @@ func runAcp(ctx context.Context, args []string) error {
 	return nil
 }
 
+// mcpOptions configures `tagit mcp`.
+type mcpOptions struct {
+	workingDir string
+	readOnly   bool
+	withMemory bool
+}
+
+func parseMCPOptions(args []string, cwd string) (mcpOptions, error) {
+	opts := mcpOptions{workingDir: cwd, withMemory: true}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--cwd":
+			i++
+			if i >= len(args) {
+				return mcpOptions{}, fmt.Errorf("--cwd requires a value")
+			}
+			opts.workingDir = args[i]
+		case "--read-only":
+			opts.readOnly = true
+		case "--no-memory":
+			opts.withMemory = false
+		default:
+			return mcpOptions{}, fmt.Errorf("unknown flag %q for tagit mcp", args[i])
+		}
+	}
+	if !filepath.IsAbs(opts.workingDir) {
+		opts.workingDir = filepath.Join(cwd, opts.workingDir)
+	}
+	opts.workingDir = filepath.Clean(opts.workingDir)
+	return opts, nil
+}
+
+// runMCP serves TagIt over the Model Context Protocol on stdio, so any MCP
+// client (OpenClaw, Claude Code, Codex, ...) can drive the daemon as a tool.
+// Everything goes through the tagitd HTTP API, so the daemon must be running.
+func runMCP(ctx context.Context, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	opts, err := parseMCPOptions(args, cwd)
+	if err != nil {
+		return err
+	}
+
+	client := api.NewClient(opts.workingDir)
+	if !client.Available() {
+		return fmt.Errorf("tagitd is not running; start it with \"tagit start\" before serving MCP")
+	}
+
+	serverOpts := mcpserver.Options{
+		Daemon:            client,
+		ReadOnly:          opts.readOnly,
+		DefaultWorkingDir: opts.workingDir,
+	}
+	// Cross-agent memory shares the daemon's store; failing to open it only
+	// costs the two memory tools, so never fail the server for it.
+	if opts.withMemory {
+		memPath := filepath.Join(tagitpath.HomeDir(), "memory", "cortex.db")
+		if err := os.MkdirAll(filepath.Dir(memPath), 0o755); err == nil {
+			if mem, err := memory.NewAgentGo(memPath); err == nil {
+				serverOpts.Memory = mem
+			} else {
+				fmt.Fprintf(os.Stderr, "[mcp] memory tools disabled (init failed): %v\n", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[mcp] memory tools disabled (mkdir failed): %v\n", err)
+		}
+	}
+
+	return mcpserver.NewServer(serverOpts).Run(ctx, &mcp.StdioTransport{})
+}
+
 func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope) *api.CuriaSummary {
 	var latestDebate *artifacts.DebateLogPayload
 	var latestDecision *artifacts.DecisionPackPayload
@@ -3557,6 +3639,7 @@ func printUsage() {
 	fmt.Println("  tagit start [--acp-port <port>]")
 	fmt.Println("  tagit stop")
 	fmt.Println("  tagit acp status")
+	fmt.Println("  tagit mcp [--cwd <dir>] [--read-only] [--no-memory]")
 	fmt.Println("")
 	fmt.Println("Management:")
 	fmt.Println("  agent       manage coding-agent profiles")
@@ -3596,6 +3679,17 @@ func printTopicUsage(topic string) {
 	case "acp status":
 		fmt.Println("tagit acp status usage:")
 		fmt.Println("  tagit acp status")
+	case "mcp":
+		fmt.Println("tagit mcp usage:")
+		fmt.Println("  tagit mcp [--cwd <dir>] [--read-only] [--no-memory]")
+		fmt.Println("")
+		fmt.Println("Serves TagIt over the Model Context Protocol on stdio so any MCP client")
+		fmt.Println("(OpenClaw, Claude Code, Codex, ...) can submit and watch runs as tools.")
+		fmt.Println("Requires a running daemon (tagit start).")
+		fmt.Println("")
+		fmt.Println("  --cwd <dir>    default repository for calls that omit one")
+		fmt.Println("  --read-only    expose only inspection tools (no submit/cancel/note)")
+		fmt.Println("  --no-memory    do not expose the cross-agent memory tools")
 	case "agent", "agents":
 		fmt.Println("tagit agent usage:")
 		fmt.Println("  tagit agent list")

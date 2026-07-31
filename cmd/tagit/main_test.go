@@ -1009,3 +1009,67 @@ func TestResolveQueueClientRootUsesFoundHomeJob(t *testing.T) {
 		t.Fatalf("resolveQueueClientRoot() = %q, want %q", got, home)
 	}
 }
+
+func TestParseMCPOptionsDefaultsToTheCurrentDirectory(t *testing.T) {
+	wd := t.TempDir()
+
+	opts, err := parseMCPOptions(nil, wd)
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if opts.workingDir != wd {
+		t.Errorf("workingDir = %q, want %q", opts.workingDir, wd)
+	}
+	if opts.readOnly {
+		t.Error("readOnly must default to false")
+	}
+	if !opts.withMemory {
+		t.Error("memory must be enabled by default")
+	}
+}
+
+func TestParseMCPOptionsHonoursFlags(t *testing.T) {
+	wd := t.TempDir()
+	repo := t.TempDir()
+
+	opts, err := parseMCPOptions([]string{"--cwd", repo, "--read-only", "--no-memory"}, wd)
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if opts.workingDir != repo {
+		t.Errorf("workingDir = %q, want %q", opts.workingDir, repo)
+	}
+	if !opts.readOnly {
+		t.Error("--read-only must set readOnly")
+	}
+	if opts.withMemory {
+		t.Error("--no-memory must disable memory")
+	}
+}
+
+func TestParseMCPOptionsResolvesRelativeCwd(t *testing.T) {
+	wd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wd, "sub"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	opts, err := parseMCPOptions([]string{"--cwd", "sub"}, wd)
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if want := filepath.Join(wd, "sub"); opts.workingDir != want {
+		t.Errorf("workingDir = %q, want %q", opts.workingDir, want)
+	}
+}
+
+func TestParseMCPOptionsRejectsUnknownFlags(t *testing.T) {
+	if _, err := parseMCPOptions([]string{"--nope"}, t.TempDir()); err == nil {
+		t.Fatal("parseMCPOptions() error = nil, want an error for an unknown flag")
+	}
+}
+
+func TestParseMCPOptionsRequiresAValueForCwd(t *testing.T) {
+	if _, err := parseMCPOptions([]string{"--cwd"}, t.TempDir()); err == nil {
+		t.Fatal("parseMCPOptions() error = nil, want an error for a missing --cwd value")
+	}
+}
