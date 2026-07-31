@@ -6,7 +6,7 @@ Like Anthropic's **Claude Tag**, TagIt lets you **@mention a coding agent in a g
 
 - **Open-source & self-hosted** — your code and chat never leave your machine
 - **Multi-model** — Claude Code, Codex, or any CLI agent (not one vendor)
-- **Multi-platform** — Feishu (飞书) and Slack, no public URL needed (long-connection / Socket Mode)
+- **Multi-platform** — Feishu (飞书), Slack, and — via OpenClaw — WeChat, Telegram, iMessage. No public URL needed
 - **Multiplayer + memory** — one shared agent per channel that remembers past runs in the repo
 - **Auditable** — every action is an event in a local store; agents work in isolated `git worktrees`; policy gates
 
@@ -110,6 +110,7 @@ It acks (**收到，开始干 🛠️**), works in an isolated `git worktree`, s
 
 - **Feishu**: a self-built app subscribing `im.message.receive_v1` over **long connection** — no public URL. Full walkthrough: **[docs/feishu-setup.md](docs/feishu-setup.md)**.
 - **Slack**: an app in **Socket Mode** (`xapp-` + `xoxb-` tokens) subscribing `app_mention`, with a native `/tagit` slash command (autocompletes — `/tagit bind <repo>`, `/tagit status`, …). `@TagIt /bind …` still works as a fallback. Full walkthrough: **[docs/slack-setup.md](docs/slack-setup.md)**.
+- **WeChat / Telegram / iMessage / … via OpenClaw**: TagIt speaks [OpenClaw](https://github.com/openclaw/openclaw)'s MCP bridge, so every channel OpenClaw already carries becomes a TagIt channel. Drop a `~/.tagit/openclaw.json` in place and the daemon spawns `openclaw mcp serve` for you. Full walkthrough: **[docs/openclaw-setup.md](docs/openclaw-setup.md)**.
 
 ### 4. Drive it from another agent (MCP)
 

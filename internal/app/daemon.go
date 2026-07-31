@@ -21,6 +21,7 @@ import (
 	"github.com/liliang-cn/tagit/internal/gateway"
 	"github.com/liliang-cn/tagit/internal/history"
 	"github.com/liliang-cn/tagit/internal/memory"
+	"github.com/liliang-cn/tagit/internal/openclaw"
 	"github.com/liliang-cn/tagit/internal/plans"
 	"github.com/liliang-cn/tagit/internal/queue"
 	"github.com/liliang-cn/tagit/internal/run"
@@ -155,7 +156,7 @@ func NewDaemonWithOptions(opts DaemonOptions) (*Daemon, error) {
 	}
 	server.SetQueueCanceler(daemon)
 
-	// Chat bots (Feishu / Slack): best-effort; absent config => disabled, daemon unaffected.
+	// Chat bots (Feishu / Slack / OpenClaw): best-effort; absent config => disabled, daemon unaffected.
 	startChatBot := func(name string, start func(context.Context) error) {
 		go func() {
 			if err := start(context.Background()); err != nil {
@@ -175,6 +176,14 @@ func NewDaemonWithOptions(opts DaemonOptions) (*Daemon, error) {
 		log.Printf("slack: disabled (%v)", err)
 	} else if enabled {
 		startChatBot("slack", slack.NewBot(scfg, slackPath, chatAPIClient).Start)
+	}
+	openclawPath := filepath.Join(tagitpath.HomeDir(), "openclaw.json")
+	if ocfg, enabled, err := openclaw.Load(openclawPath); err != nil {
+		log.Printf("openclaw: disabled (%v)", err)
+	} else if enabled {
+		startChatBot("openclaw", func(ctx context.Context) error {
+			return openclaw.Serve(ctx, ocfg, openclawPath, chatAPIClient)
+		})
 	}
 
 	return daemon, nil
