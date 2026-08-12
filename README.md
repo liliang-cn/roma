@@ -143,4 +143,20 @@ Every call goes through the same daemon pipeline as the CLI, so runs stay in the
 
 ---
 
+## Deploy it for someone else
+
+TagIt is **per-machine**: one `tagitd` per user account, with its own `~/.tagit/`. There is no shared server to stand up — each person installs it on the box that holds their repos and their already-logged-in agent CLIs.
+
+The only hard prerequisite is that **the coding agents must be installed and authenticated on that machine** — TagIt drives `claude` / `codex` / … as local CLIs and never handles their credentials.
+
+```sh
+brew install liliang-cn/tap/tagit          # macOS/Linux, prebuilt — no Go needed
+tagit agent add claude "Claude" $(which claude)
+brew services start tagit                  # keep the daemon running across logins
+```
+
+Without Homebrew: grab a `tagit_<os>_<arch>.tar.gz` from [Releases](https://github.com/liliang-cn/tagit/releases) (darwin/linux × arm64/amd64, `CGO_ENABLED=0`, no runtime deps), drop both binaries on `PATH`, and use the `systemd --user` unit or launchd agent in [`deploy/`](deploy/). Full per-platform walkthrough incl. Windows Task Scheduler: **[docs/running-tagitd.md](docs/running-tagitd.md)**.
+
+To give a **team** one shared bot, only one person needs to deploy: they run the daemon, bind each chat channel to a repo, and everyone else just talks to it in chat.
+
 State lives in `~/.tagit/` (SQLite + git worktrees). Target repos are separate — pick per run with `--cwd`, or run from inside the repo.
