@@ -737,7 +737,8 @@ func buildRageForemanPrompt(originalPrompt, workerOutput string, round int) stri
 	b.WriteString("No completion claim is valid without concrete file changes and verification.\n")
 	b.WriteString("Resume execution now and remove the blocker for real.\n")
 	b.WriteString("You, the foreman, are the final authority on whether the task is done.\n")
-	b.WriteString("Only leave `Next:` empty if the task is truly complete and verified.\n")
+	b.WriteString("When the task is genuinely complete and verified, write exactly `Next: DONE` — that word alone, nothing after it.\n")
+	b.WriteString("`Next: DONE` is the ONLY way to stop the run. Describing the field instead — `Next: (empty)`, `Next: nothing left to do` — reads as work still pending and pushes the worker into another round.\n")
 	b.WriteString("A worker-side `TAGIT_DONE:` marker is only a claim until you confirm it.\n")
 	b.WriteString(fmt.Sprintf("Review round: %d\n\n", round))
 	b.WriteString("Original task:\n")
@@ -752,7 +753,7 @@ func foremanDeterminesDone(review domain.ArtifactEnvelope) bool {
 	if !ok {
 		return false
 	}
-	if strings.TrimSpace(payload.Next) != "" {
+	if !rageNextSignalsDone(payload.Next) {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(payload.PlanOnly), "yes") {
@@ -762,6 +763,49 @@ func foremanDeterminesDone(review domain.ArtifactEnvelope) bool {
 		return false
 	}
 	return strings.TrimSpace(payload.Progress) != ""
+}
+
+// rageNextSignalsDone reports whether the foreman's `Next:` line means "stop"
+// rather than "here is the next step".
+//
+// The run used to end only on a literally empty `Next:`, which asked a model to
+// signal completion by writing nothing — and models do not do that. A verified,
+// finished one-line task came back six rounds in a row with
+//
+//	Next: (empty — task complete and verified)
+//
+// every round: the foreman had confirmed the work, described the field instead
+// of leaving it blank, and the run kept pushing the worker until it ran out of
+// rounds. Four minutes of a five-minute run were spent re-verifying a file that
+// was already correct, and the extra rounds are what eventually walked the run
+// into an unrelated network error.
+//
+// So the prompt now asks for an affirmative `Next: DONE`, and this function also
+// accepts the ways a model describes an empty field. Matching is exact after
+// normalisation, never a prefix: "none of the tests pass" is not "none".
+func rageNextSignalsDone(value string) bool {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return true
+	}
+	// A wholly parenthetical answer is the model narrating the field rather
+	// than filling it; there is no instruction hiding inside one.
+	if strings.HasPrefix(v, "(") && strings.HasSuffix(v, ")") {
+		inner := strings.ToLower(v)
+		for _, marker := range []string{"empty", "complete", "none", "nothing", "n/a"} {
+			if strings.Contains(inner, marker) {
+				return true
+			}
+		}
+	}
+	switch strings.ToLower(strings.Trim(v, " .`*_-—–")) {
+	// Trimming can empty the value outright — a bare "-" or "—" is the other
+	// way a model writes "this field has nothing in it".
+	case "", "done", "none", "nothing", "n/a", "na", "nil", "empty", "complete", "task complete":
+		return true
+	default:
+		return false
+	}
 }
 
 func rageReviewSignalsMissingProof(value string) bool {

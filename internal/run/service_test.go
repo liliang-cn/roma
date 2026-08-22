@@ -154,7 +154,7 @@ func TestBuildRageForemanPromptDemandsExecutionProof(t *testing.T) {
 		"No completion claim is valid without concrete file changes and verification.",
 		"Resume execution now and remove the blocker for real.",
 		"You, the foreman, are the final authority on whether the task is done.",
-		"Only leave `Next:` empty if the task is truly complete and verified.",
+		"write exactly `Next: DONE`",
 		"Review round: 3",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -194,6 +194,85 @@ func TestForemanDeterminesDone(t *testing.T) {
 	}
 	if foremanDeterminesDone(notDone) {
 		t.Fatal("foremanDeterminesDone(notDone) = true, want false")
+	}
+}
+
+// The run used to stop only on a literally empty `Next:` — i.e. it asked a model
+// to signal completion by writing nothing. A finished one-line task came back
+// six rounds running with `Next: (empty — task complete and verified)`: the
+// foreman had confirmed the work every single round, and the loop kept pushing
+// the worker because the field was not blank.
+func TestForemanDoneWhenNextDescribesAnEmptyField(t *testing.T) {
+	t.Parallel()
+
+	for _, next := range []string{
+		"",
+		"DONE",
+		"done",
+		"None",
+		"nothing",
+		"N/A",
+		"-",
+		"(empty — task complete and verified)", // observed verbatim, 2026-08-22
+		"(empty — task complete)",
+		"(none)",
+	} {
+		review := domain.ArtifactEnvelope{
+			Kind: domain.ArtifactKindRageReview,
+			Payload: artifacts.RageReviewPayload{
+				Progress: "verified: the line is in README.md and git diff confirms it",
+				Next:     next,
+				Files:    "confirmed",
+				Verify:   "confirmed",
+				PlanOnly: "no",
+				Blockers: "none",
+			},
+		}
+		if !foremanDeterminesDone(review) {
+			t.Errorf("Next: %q should end the run", next)
+		}
+	}
+}
+
+// Anything that actually names work has to keep the loop running — including
+// the words that only look like the empty markers.
+func TestForemanNotDoneWhenNextNamesWork(t *testing.T) {
+	t.Parallel()
+
+	for _, next := range []string{
+		"Add a test for the append",
+		"none of the tests pass — fix them",
+		"nothing is verified yet, run the suite",
+		"(continue with the remaining files)",
+		"Done? No — re-run the linter first",
+	} {
+		review := domain.ArtifactEnvelope{
+			Kind: domain.ArtifactKindRageReview,
+			Payload: artifacts.RageReviewPayload{
+				Progress: "partial",
+				Next:     next,
+				Files:    "confirmed",
+				Verify:   "confirmed",
+				PlanOnly: "no",
+				Blockers: "none",
+			},
+		}
+		if foremanDeterminesDone(review) {
+			t.Errorf("Next: %q should keep the run going", next)
+		}
+	}
+}
+
+// The completion channel has to be affirmative, so the prompt has to ask for it.
+func TestForemanPromptAsksForAnAffirmativeDoneToken(t *testing.T) {
+	t.Parallel()
+
+	prompt := buildRageForemanPrompt("append a line", "worker said TAGIT_DONE", 1)
+	if !strings.Contains(prompt, "`Next: DONE`") {
+		t.Error("the foreman is never told how to signal completion")
+	}
+	if strings.Contains(prompt, "Only leave `Next:` empty") {
+		t.Error("the prompt still asks for completion to be signalled by an absence")
 	}
 }
 
