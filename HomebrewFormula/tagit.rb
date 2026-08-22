@@ -1,28 +1,28 @@
 class Tagit < Formula
   desc "Daemon-first orchestrator for coding-agent CLIs (claude, codex, ...)"
   homepage "https://github.com/liliang-cn/tagit"
-  version "0.3.0"
+  version "0.4.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/liliang-cn/tagit/releases/download/v0.3.0/tagit_darwin_arm64.tar.gz"
-      sha256 "0a77804e7c1a0eb3baa83abc9742c6c27ab41a3b80c3ed8f954010d551ddc940"
+      url "https://github.com/liliang-cn/tagit/releases/download/v0.4.0/tagit_darwin_arm64.tar.gz"
+      sha256 "231089a89ef96d6d5f4d62f8a88379a2bed933659399d27ffc56f940deaf2b18"
     end
     on_intel do
-      url "https://github.com/liliang-cn/tagit/releases/download/v0.3.0/tagit_darwin_amd64.tar.gz"
-      sha256 "5ceb9f5465625b69916ee077b9e2f523c7fee34f11a622f8d7e80e2643b27d06"
+      url "https://github.com/liliang-cn/tagit/releases/download/v0.4.0/tagit_darwin_amd64.tar.gz"
+      sha256 "36aed50bc08cfed3854d09cac740cb7ea9398f8c93d0f47177c0f13513925a4e"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/liliang-cn/tagit/releases/download/v0.3.0/tagit_linux_arm64.tar.gz"
-      sha256 "d606949405c612bd2d23876eb69eca86438cf7e1a69cf39e00b4573efe271ab4"
+      url "https://github.com/liliang-cn/tagit/releases/download/v0.4.0/tagit_linux_arm64.tar.gz"
+      sha256 "158bbbd709d99bca80f61775a4494fe6a795d48368ff2bfa90a7c8f81089eb64"
     end
     on_intel do
-      url "https://github.com/liliang-cn/tagit/releases/download/v0.3.0/tagit_linux_amd64.tar.gz"
-      sha256 "859435e35a63cf2981fb3bdcb15e8cfd094ac867c7ff6a0015c1229deb587245"
+      url "https://github.com/liliang-cn/tagit/releases/download/v0.4.0/tagit_linux_amd64.tar.gz"
+      sha256 "94fa7b771e9192ace0601462151155a40ae2a17e8bde6cbc8ce4347a00ae3ed3"
     end
   end
 
