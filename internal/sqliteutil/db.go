@@ -50,6 +50,12 @@ func Open(workDir string) (*sql.DB, error) {
 	if _, err := db.Exec(`
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
+-- Without a busy timeout SQLite gives up the instant another writer holds the
+-- lock, and the caller sees "database is locked (5)" rather than a short wait.
+-- TagIt writes events and artifacts from every agent in a run, so parallel and
+-- senate modes have several writers by design: a run would fail on contention
+-- that lasts milliseconds.
+PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS event_records (
   id TEXT PRIMARY KEY,
   session_id TEXT,

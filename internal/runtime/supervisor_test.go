@@ -206,6 +206,45 @@ func TestRunCapturedContinuous(t *testing.T) {
 	}
 }
 
+// The last line an agent prints is the one that matters — TAGIT_DONE,
+// TAGIT_MERGE_BACK, TAGIT_PICK all arrive at the end. os/exec closes both pipes
+// inside Wait as soon as the process exits, so reaping before draining drops
+// whatever was still buffered, and a finished run merges nothing with no error
+// anywhere. A lot of output before the marker makes the window wide enough that
+// the bug shows up rather than depending on which goroutine happens to win.
+func TestRunCapturedKeepsTheFinalLineAfterALotOfOutput(t *testing.T) {
+	t.Parallel()
+
+	supervisor := NewSupervisor(ProfileAdapter{})
+	result, err := supervisor.RunCaptured(context.Background(), StartRequest{
+		Profile: domain.AgentProfile{
+			ID:      "chatty",
+			Command: "sh",
+			Args: []string{
+				"-c",
+				// ~256 KiB of noise, then the line the caller actually reads.
+				"i=0; while [ $i -lt 4096 ]; do printf '%064d\\n' $i; i=$((i+1)); done; " +
+					"printf 'TAGIT_MERGE_BACK: direct_merge | the last line\\n'",
+			},
+		},
+		Prompt:     "noise then a marker",
+		WorkingDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("RunCaptured() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "TAGIT_MERGE_BACK: direct_merge | the last line") {
+		tail := result.Stdout
+		if len(tail) > 200 {
+			tail = tail[len(tail)-200:]
+		}
+		t.Fatalf("final line was truncated; got %d bytes ending in %q", len(result.Stdout), tail)
+	}
+	if lines := strings.Count(result.Stdout, "\n"); lines < 4097 {
+		t.Errorf("output lost lines: got %d, want at least 4097", lines)
+	}
+}
+
 func TestShouldUsePTYDisablesPTYForCodexPromptStdin(t *testing.T) {
 	t.Parallel()
 

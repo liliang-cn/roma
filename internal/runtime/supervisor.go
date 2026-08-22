@@ -248,8 +248,15 @@ func (s *Supervisor) runCapturedSingle(ctx context.Context, req StartRequest) (R
 		s.streamOutput(req, execID, stderrPipe, &stderr, "stderr")
 	}()
 
-	waitErr := command.Wait()
+	// Drain first, then reap. os/exec closes both pipes inside Wait as soon as it
+	// sees the process exit, so calling Wait while the readers are still going
+	// truncates whatever was still buffered — and what an agent buffers last is
+	// its final line: TAGIT_DONE, TAGIT_MERGE_BACK, TAGIT_PICK. Losing those
+	// turns a finished run into one that merged nothing and picked nobody, with
+	// no error anywhere. Which side wins is pure scheduling: this passed on macOS
+	// and failed on Linux under -race for months.
 	copyWG.Wait()
+	waitErr := command.Wait()
 	if waitErr != nil {
 		s.markFinished(execID, req.Profile, ExecutionStateFailed)
 		return Result{
