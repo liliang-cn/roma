@@ -179,3 +179,7 @@ Without Homebrew: grab a `tagit_<os>_<arch>.tar.gz` from [Releases](https://gith
 To give a **team** one shared bot, only one person needs to deploy: they run the daemon, bind each chat channel to a repo, and everyone else just talks to it in chat.
 
 State lives in `~/.tagit/` (SQLite + git worktrees). Target repos are separate — pick per run with `--cwd`, or run from inside the repo.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
