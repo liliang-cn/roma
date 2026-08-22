@@ -327,6 +327,12 @@ func (s *Supervisor) resolveCommand(ctx context.Context, req StartRequest) (*exe
 	for _, adapter := range s.adapters {
 		if adapter.Supports(req.Profile) {
 			command, err := adapter.BuildCommand(ctx, req)
+			// Every launch goes through here, so this is the one place the
+			// agent's environment can be given the user's PATH — see userpath.go
+			// for why a daemon's own PATH is not enough.
+			if command != nil {
+				command.Env = withUserPath(command.Env)
+			}
 			return command, adapter, err
 		}
 	}
@@ -594,7 +600,6 @@ func (s *Supervisor) runAttachedPTY(req StartRequest, execID string, command *ex
 func (s *Supervisor) runCapturedPTY(req StartRequest, execID string, command *exec.Cmd) (Result, error) {
 	ensurePTYEnv(command)
 	stdinSource := command.Stdin
-	log.Printf("[DEBUG] runCapturedPTY: command=%s, dir=%s, env=%v", command.Path, command.Dir, command.Env)
 	session, err := s.pty.Start(command)
 	if err != nil {
 		return Result{}, fmt.Errorf("start PTY for %s: %w", req.Profile.ID, err)
