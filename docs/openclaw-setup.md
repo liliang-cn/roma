@@ -115,6 +115,51 @@ OpenClaw routes have **no @mention concept and no threads**. Consequences:
 - **The bot ignores anything whose `role` is not `user`**, which is what stops
   it reacting to its own replies and looping.
 
+## The other direction: OpenClaw calls TagIt
+
+Everything above is TagIt reading OpenClaw's channels. The reverse — OpenClaw's
+own agent deciding to hand a coding task to TagIt — is a plain MCP server
+registration, and it does not need `~/.tagit/openclaw.json` at all.
+
+It matters when the two live on different hosts, which is the normal case:
+OpenClaw's gateway runs on a server (or a small HA cluster), while the coding
+agents are logged in on a laptop. Only the laptop can run `claude`, so TagIt has
+to stay there and the gateway has to dial out to it.
+
+On the laptop, serve MCP over HTTP instead of stdio:
+
+```sh
+tagit start
+TAGIT_MCP_TOKEN=$(openssl rand -hex 32) tagit mcp --http 0.0.0.0:43821 --cwd /path/to/repo --read-only
+```
+
+Start with `--read-only`: the gateway can then inspect jobs but not submit them,
+which is enough to prove the link before a chat message can start a coding agent
+on your machine. Drop the flag once you trust the path.
+
+On the gateway:
+
+```sh
+openclaw mcp add tagit --url http://<laptop>:43821/mcp \
+  --transport streamable-http --header "Authorization=Bearer <token>"
+openclaw mcp probe          # lists the tagit_* tools
+openclaw mcp tools tagit --include "tagit_job_*,tagit_result"   # optional narrower surface
+```
+
+Two reasons this beats `--command ssh --arg … "tagit mcp"`:
+
+- **Failover.** A gateway that moves between hosts carries its config with it,
+  but not the SSH keys in its home directory. One URL works from every host; SSH
+  needs a key authorized per host, and the missing one only shows up after a
+  failover.
+- **Blast radius.** An SSH login is a shell on the laptop. The HTTP endpoint is
+  the tool surface and nothing else, narrowable further with `mcp tools`.
+
+Watch the direction if you run both: TagIt reading a conversation *and* OpenClaw
+calling TagIt from that same conversation can feed each other. The bot already
+ignores non-`user` roles, which breaks the obvious loop, but do not bind a
+conversation whose agent also holds the `tagit_submit` tool.
+
 ## Limits worth knowing
 
 - OpenClaw's event queue is **live-only**: it starts when the bridge process

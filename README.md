@@ -127,6 +127,25 @@ Any client that takes an `mcpServers` config:
 { "mcpServers": { "tagit": { "command": "tagit", "args": ["mcp", "--cwd", "/path/to/repo"] } } }
 ```
 
+**When the client is on another machine**, stdio is the wrong transport — it
+would have to spawn `tagit` over SSH on every host it might run from. Serve
+streamable HTTP instead, and let the client dial in:
+
+```sh
+TAGIT_MCP_TOKEN=$(openssl rand -hex 32) tagit mcp --http 0.0.0.0:43821 --cwd /path/to/repo
+```
+
+The token is **required** — these tools run coding agents on the machine that
+serves them, so there is no unauthenticated mode, not even on loopback. Pass it
+through the environment rather than `--token`, which is visible in `ps`.
+`GET /healthz` needs no token, so a monitor can check liveness without holding
+the key. Point any HTTP-capable client at `http://<host>:43821/mcp`, e.g.:
+
+```sh
+openclaw mcp add tagit --url http://<host>:43821/mcp \
+  --transport streamable-http --header "Authorization=Bearer $TAGIT_MCP_TOKEN"
+```
+
 Tools it exposes:
 
 | Tool | What it does |

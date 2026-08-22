@@ -2197,6 +2197,11 @@ type mcpOptions struct {
 	workingDir string
 	readOnly   bool
 	withMemory bool
+	// httpAddr, when set, serves streamable HTTP on that address instead of
+	// stdio — for clients that cannot spawn this process (a gateway on another
+	// host, or one that fails over between hosts).
+	httpAddr  string
+	httpToken string
 }
 
 func parseMCPOptions(args []string, cwd string) (mcpOptions, error) {
@@ -2213,9 +2218,30 @@ func parseMCPOptions(args []string, cwd string) (mcpOptions, error) {
 			opts.readOnly = true
 		case "--no-memory":
 			opts.withMemory = false
+		case "--http":
+			i++
+			if i >= len(args) {
+				return mcpOptions{}, fmt.Errorf("--http requires an address, e.g. --http :43821")
+			}
+			opts.httpAddr = args[i]
+		case "--token":
+			i++
+			if i >= len(args) {
+				return mcpOptions{}, fmt.Errorf("--token requires a value")
+			}
+			opts.httpToken = args[i]
 		default:
 			return mcpOptions{}, fmt.Errorf("unknown flag %q for tagit mcp", args[i])
 		}
+	}
+	// A token on the command line is visible in `ps` to every user on the box,
+	// so the environment is the documented way in; the flag stays for scripts
+	// that already hold the secret.
+	if opts.httpToken == "" {
+		opts.httpToken = strings.TrimSpace(os.Getenv("TAGIT_MCP_TOKEN"))
+	}
+	if opts.httpToken != "" && opts.httpAddr == "" {
+		return mcpOptions{}, fmt.Errorf("--token is only meaningful with --http")
 	}
 	if !filepath.IsAbs(opts.workingDir) {
 		opts.workingDir = filepath.Join(cwd, opts.workingDir)
@@ -2262,7 +2288,18 @@ func runMCP(ctx context.Context, args []string) error {
 		}
 	}
 
-	return mcpserver.NewServer(serverOpts).Run(ctx, &mcp.StdioTransport{})
+	server := mcpserver.NewServer(serverOpts)
+	if opts.httpAddr != "" {
+		return mcpserver.ServeStreamableHTTP(ctx, server, mcpserver.HTTPOptions{
+			Addr:  opts.httpAddr,
+			Token: opts.httpToken,
+			Announce: func(addr string) {
+				fmt.Fprintf(os.Stderr, "[mcp] streamable HTTP on http://%s%s (bearer token required)\n",
+					addr, mcpserver.DefaultHTTPPath)
+			},
+		})
+	}
+	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
 func summarizeCuriaArtifactsCLI(workDir string, items []domain.ArtifactEnvelope) *api.CuriaSummary {
@@ -3682,14 +3719,20 @@ func printTopicUsage(topic string) {
 	case "mcp":
 		fmt.Println("tagit mcp usage:")
 		fmt.Println("  tagit mcp [--cwd <dir>] [--read-only] [--no-memory]")
+		fmt.Println("  tagit mcp --http <addr> [--token <token>] [--cwd <dir>] [--read-only]")
 		fmt.Println("")
-		fmt.Println("Serves TagIt over the Model Context Protocol on stdio so any MCP client")
+		fmt.Println("Serves TagIt over the Model Context Protocol so any MCP client")
 		fmt.Println("(OpenClaw, Claude Code, Codex, ...) can submit and watch runs as tools.")
 		fmt.Println("Requires a running daemon (tagit start).")
 		fmt.Println("")
-		fmt.Println("  --cwd <dir>    default repository for calls that omit one")
-		fmt.Println("  --read-only    expose only inspection tools (no submit/cancel/note)")
-		fmt.Println("  --no-memory    do not expose the cross-agent memory tools")
+		fmt.Println("  --cwd <dir>     default repository for calls that omit one")
+		fmt.Println("  --read-only     expose only inspection tools (no submit/cancel/note)")
+		fmt.Println("  --no-memory     do not expose the cross-agent memory tools")
+		fmt.Println("  --http <addr>   serve streamable HTTP on <addr> instead of stdio, for")
+		fmt.Println("                  clients on another host that cannot spawn this process")
+		fmt.Println("  --token <tok>   bearer token for --http; prefer $TAGIT_MCP_TOKEN, since a")
+		fmt.Println("                  token on the command line is visible in ps. Required:")
+		fmt.Println("                  these tools run coding agents on this machine.")
 	case "agent", "agents":
 		fmt.Println("tagit agent usage:")
 		fmt.Println("  tagit agent list")

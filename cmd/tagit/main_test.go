@@ -1062,6 +1062,62 @@ func TestParseMCPOptionsResolvesRelativeCwd(t *testing.T) {
 	}
 }
 
+func TestParseMCPOptionsTakesTheTokenFromTheEnvironment(t *testing.T) {
+	// A token passed as a flag is visible in `ps` to every user on the host, so
+	// the environment is the documented path and has to work on its own.
+	t.Setenv("TAGIT_MCP_TOKEN", "from-env")
+
+	opts, err := parseMCPOptions([]string{"--http", ":43821"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if opts.httpAddr != ":43821" {
+		t.Errorf("httpAddr = %q, want :43821", opts.httpAddr)
+	}
+	if opts.httpToken != "from-env" {
+		t.Errorf("httpToken = %q, want the value from TAGIT_MCP_TOKEN", opts.httpToken)
+	}
+}
+
+func TestParseMCPOptionsPrefersAnExplicitTokenOverTheEnvironment(t *testing.T) {
+	t.Setenv("TAGIT_MCP_TOKEN", "from-env")
+
+	opts, err := parseMCPOptions([]string{"--http", ":43821", "--token", "explicit"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if opts.httpToken != "explicit" {
+		t.Errorf("httpToken = %q, want the explicit flag to win", opts.httpToken)
+	}
+}
+
+// A token with no --http reads like "this is protected" while stdio quietly
+// ignores it. Say so instead.
+func TestParseMCPOptionsRejectsATokenWithoutHTTP(t *testing.T) {
+	if _, err := parseMCPOptions([]string{"--token", "secret"}, t.TempDir()); err == nil {
+		t.Fatal("parseMCPOptions() error = nil, want an error for --token without --http")
+	}
+}
+
+func TestParseMCPOptionsRequiresAValueForHTTP(t *testing.T) {
+	t.Setenv("TAGIT_MCP_TOKEN", "")
+	if _, err := parseMCPOptions([]string{"--http"}, t.TempDir()); err == nil {
+		t.Fatal("parseMCPOptions() error = nil, want an error for a missing --http value")
+	}
+}
+
+// stdio stays the default: nothing about the new flags changes the local path.
+func TestParseMCPOptionsDefaultsToStdio(t *testing.T) {
+	t.Setenv("TAGIT_MCP_TOKEN", "")
+	opts, err := parseMCPOptions(nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("parseMCPOptions() error = %v", err)
+	}
+	if opts.httpAddr != "" || opts.httpToken != "" {
+		t.Errorf("want stdio by default, got addr=%q token set=%v", opts.httpAddr, opts.httpToken != "")
+	}
+}
+
 func TestParseMCPOptionsRejectsUnknownFlags(t *testing.T) {
 	if _, err := parseMCPOptions([]string{"--nope"}, t.TempDir()); err == nil {
 		t.Fatal("parseMCPOptions() error = nil, want an error for an unknown flag")
