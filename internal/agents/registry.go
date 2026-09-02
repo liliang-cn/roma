@@ -334,7 +334,14 @@ func normalizeProfile(profile domain.AgentProfile) domain.AgentProfile {
 		profile.UsePTY = true
 		profile.PromptTransport = domain.PromptTransportStdin
 	case "gemini":
-		profile.Args = []string{"-p", "{prompt}", "--approval-mode", "auto_edit"}
+		// --skip-trust for the same reason the others get their bypass flag, and
+		// it is NOT about git: Gemini keeps a list of directories a person has
+		// trusted interactively, and refuses in any other with "not running in a
+		// trusted directory" before doing any work. TagIt runs every agent in a
+		// freshly created worktree, which by definition has never been trusted,
+		// so without this every headless gemini run is refused. (Measured
+		// 2026-09-02: it refuses inside a brand-new git repo too.)
+		profile.Args = []string{"-p", "{prompt}", "--approval-mode", "auto_edit", "--skip-trust"}
 		profile.UsePTY = true
 		profile.PromptTransport = domain.PromptTransportArgv
 	case "copilot":
