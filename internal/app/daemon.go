@@ -145,7 +145,7 @@ func NewDaemonWithOptions(opts DaemonOptions) (*Daemon, error) {
 		api:       server,
 		acp:       acp,
 		store:     mem,
-		gateway:   gateway.NewService(mem, planService, gateway.NewLogAdapter(domain.GatewayEndpointTypeWebhook)),
+		gateway:   gateway.NewService(mem, planService, gateway.NewWebhookAdapter()),
 		history:   historyBackend,
 		queue:     queueBackend,
 		runner:    runner,
@@ -184,6 +184,28 @@ func NewDaemonWithOptions(opts DaemonOptions) (*Daemon, error) {
 		startChatBot("openclaw", func(ctx context.Context) error {
 			return openclaw.Serve(ctx, ocfg, openclawPath, chatAPIClient)
 		})
+	}
+
+	// Outbound webhooks: best-effort like the chat bots — absent config means
+	// no endpoints, and a broken one is logged rather than failing daemon
+	// start, since notifications are a side channel and the queue still works
+	// without them.
+	gatewayPath := filepath.Join(tagitpath.HomeDir(), "gateway.json")
+	if gcfg, enabled, err := gateway.Load(gatewayPath); err != nil {
+		log.Printf("gateway: disabled (%v)", err)
+	} else if enabled {
+		regs, err := gcfg.Registrations()
+		if err != nil {
+			log.Printf("gateway: disabled (%v)", err)
+		} else {
+			for _, reg := range regs {
+				if err := daemon.gateway.RegisterEndpoint(context.Background(), reg.Endpoint, reg.Subscription); err != nil {
+					log.Printf("gateway: endpoint %s not registered: %v", reg.Endpoint.ID, err)
+					continue
+				}
+				log.Printf("gateway: endpoint %s -> %s (enabled=%v)", reg.Endpoint.ID, reg.Endpoint.Target, reg.Endpoint.Enabled)
+			}
+		}
 	}
 
 	return daemon, nil
@@ -316,10 +338,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("append bootstrap ready event: %w", err)
 	}
 
+	// Scaffolding endpoint: it records that the gateway is wired without
+	// sending anything. Enabled would mean POSTing every bootstrap session to a
+	// placeholder URL that answers nothing. Real endpoints come from
+	// ~/.tagit/gateway.json.
 	if err := d.gateway.RegisterEndpoint(ctx, domain.GatewayEndpoint{
 		ID:             "gw_bootstrap_webhook",
 		Type:           domain.GatewayEndpointTypeWebhook,
-		Enabled:        true,
+		Enabled:        false,
 		Target:         "http://localhost/bootstrap",
 		AllowedActions: []domain.RemoteCommandAction{domain.RemoteCommandActionApprove, domain.RemoteCommandActionReject},
 	}, domain.RemoteSubscription{

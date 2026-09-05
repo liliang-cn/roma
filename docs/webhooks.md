@@ -1,0 +1,112 @@
+# Webhooks
+
+`tagitd` POSTs a JSON notification to your endpoints when a job changes state.
+
+## Configure
+
+`~/.tagit/gateway.json`. Create it, then restart the daemon (`tagit stop && tagit start`).
+
+```json
+{
+  "endpoints": [
+    {
+      "id": "ci",
+      "target": "https://example.com/tagit-hook",
+      "secret": "env:TAGIT_HOOK_SECRET",
+      "events": ["task_succeeded", "task_failed"],
+      "severity": "low",
+      "actions": ["approve", "reject"]
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Unique name; appears in delivery events |
+| `target` | yes | URL to POST to |
+| `secret` | no | Signing key. `env:NAME` reads that environment variable; anything else is the key itself |
+| `events` | no | Event types to receive. Omit for all |
+| `severity` | no | `low` (default), `medium`, `high`. Anything below the threshold is skipped |
+| `sessions` | no | Only these session ids. Omit for all |
+| `actions` | no | Remote commands this endpoint may send back |
+| `type` | no | `webhook` (default), `wss`, `telegram` |
+| `disabled` | no | `true` keeps the entry but stops delivery |
+
+A malformed entry disables the whole file and logs why. An endpoint silently dropped is a page silently not sent.
+
+## Events
+
+| Type | Severity |
+|---|---|
+| `session_started` | low |
+| `task_succeeded` | low |
+| `task_failed` | high |
+| `approval_required` | high |
+| `approval_rejected` | medium |
+| `task_cancelled` | medium |
+
+## Request
+
+```
+POST /your-path
+Content-Type: application/json
+X-TagIt-Event: task_succeeded
+X-TagIt-Notification-Id: notif_job_123_succeeded
+X-TagIt-Timestamp: 1788575140
+X-TagIt-Signature: sha256=<hex>
+```
+
+```json
+{
+  "id": "notif_job_123_succeeded",
+  "type": "task_succeeded",
+  "severity": "low",
+  "session_id": "sess_123",
+  "task_id": "task_123",
+  "title": "TagIt task succeeded",
+  "summary": "Job job_123 completed with 2 artifact(s).",
+  "artifact_refs": ["artifact://art_1", "artifact://art_2"],
+  "created_at": "2026-09-05T02:26:42.832Z"
+}
+```
+
+Any 2xx is success. TagIt retries 429 and 5xx three times with doubling backoff; other 4xx are not retried.
+
+## Verify the signature
+
+The signature covers `<timestamp>.<body>`, so an old capture cannot be replayed against you. Reject anything whose timestamp is outside your own window.
+
+```python
+import hmac, hashlib, time
+
+def verify(secret: str, headers, body: bytes, max_age=300) -> bool:
+    ts = headers["X-TagIt-Timestamp"]
+    if abs(time.time() - int(ts)) > max_age:
+        return False
+    want = "sha256=" + hmac.new(
+        secret.encode(), ts.encode() + b"." + body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(want, headers["X-TagIt-Signature"])
+```
+
+```go
+func verify(secret, timestamp, signature string, body []byte) bool {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(want), []byte(signature))
+}
+```
+
+Without a `secret` no signature header is sent.
+
+## Audit
+
+Every attempt is an event in the store, delivered or not:
+
+```sh
+tagit debug events | grep gateway
+```
