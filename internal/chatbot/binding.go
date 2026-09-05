@@ -6,6 +6,9 @@ type Binding struct {
 	Repo   string `json:"repo"`
 	Agent  string `json:"agent,omitempty"`
 	Mode   string `json:"mode,omitempty"`
+	// Routes sends "@name ..." to a specific agent, so one channel can hold
+	// several named teammates. Agent stays the default for anything unrouted.
+	Routes Routes `json:"routes,omitempty"`
 }
 
 // Bindings is a lookup set.

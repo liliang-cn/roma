@@ -98,6 +98,14 @@ func (h *Handler) Handle(ctx context.Context, msg IncomingMessage) {
 		return
 	}
 
+	// "@dev-agent fix the login bug" runs on the agent bound to dev-agent;
+	// anything unrouted runs on the channel's default agent.
+	agent, task := ResolveAgent(binding, msg.Text)
+	if strings.TrimSpace(task) == "" {
+		h.reply(ctx, msg.ChatID, root, "That's just a name — tell me what to do after it.")
+		return
+	}
+
 	// Engage this thread so later replies in it continue the conversation
 	// without another @mention.
 	h.engageThread(root)
@@ -112,18 +120,18 @@ func (h *Handler) Handle(ctx context.Context, msg IncomingMessage) {
 		mode = "rage"
 	}
 
-	prompt := msg.Text
+	prompt := task
 	if h.ctxProv != nil {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		cxt := h.ctxProv.RecentContext(cctx, msg.ChatID, msg.ThreadID, msg.MessageID)
 		cancel()
-		prompt = composePrompt(cxt, msg.Text)
+		prompt = composePrompt(cxt, task)
 	}
 
 	jobID, err := h.enq.Submit(ctx, SubmitArgs{
 		Repo:   binding.Repo,
 		Prompt: prompt,
-		Agent:  binding.Agent,
+		Agent:  agent,
 		Mode:   mode,
 	})
 	if err != nil {

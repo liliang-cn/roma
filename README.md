@@ -106,6 +106,16 @@ Drop bot credentials into `~/.tagit/feishu.json` (or `slack.json`):
 @TagIt add input validation to the signup handler
 ```
 
+Give one channel several named teammates with `/route`, and each `@name` runs on its own agent:
+
+```
+@TagIt /route @dev-agent codex
+@TagIt /route @qa-agent gemini
+@TagIt @qa-agent run the test suite and report failures
+```
+
+No extra bot users needed — you @mention TagIt as usual and the second name is plain text it reads, so this works the same on every platform. Full details: **[docs/routing.md](docs/routing.md)**.
+
 It acks (**收到，开始干 🛠️**), works in an isolated `git worktree`, streams progress, and posts **✅ Done** in the thread.
 
 - **Feishu**: a self-built app subscribing `im.message.receive_v1` over **long connection** — no public URL. Full walkthrough: **[docs/feishu-setup.md](docs/feishu-setup.md)**.
@@ -161,6 +171,25 @@ Flags: `--cwd <dir>` sets the repo used when a call omits one · `--read-only` e
 Every call goes through the same daemon pipeline as the CLI, so runs stay in the event store and risky work still stops at `awaiting_approval` for a human. `tagit_submit` has **no** policy-override argument: an MCP caller can never bypass the policy broker.
 
 ---
+
+### 5. Get called back when a job finishes (webhooks)
+
+Drop endpoints into `~/.tagit/gateway.json` and `tagitd` POSTs each job outcome to them:
+
+```json
+{
+  "endpoints": [
+    {
+      "id": "ci",
+      "target": "https://example.com/tagit-hook",
+      "secret": "env:TAGIT_HOOK_SECRET",
+      "events": ["task_succeeded", "task_failed"]
+    }
+  ]
+}
+```
+
+Deliveries are HMAC-signed over `<timestamp>.<body>`, retried on 429/5xx, and audited as events either way. Event list, payload shape and signature verification: **[docs/webhooks.md](docs/webhooks.md)**.
 
 ## Deploy it for someone else
 

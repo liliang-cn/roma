@@ -10,7 +10,10 @@ const helpText = "Commands:\n" +
 	"/help — show this help\n" +
 	"/status — show this chat's repo binding\n" +
 	"/bind <repo-path> — link this chat to a repo\n" +
-	"/agent <id> — set the agent for this chat\n" +
+	"/agent <id> — set the default agent for this chat\n" +
+	"/route <@name> <agent-id> — send \"@name …\" to that agent\n" +
+	"/route rm <@name> — remove a route\n" +
+	"/route — list routes\n" +
 	"/mode <rage|collab|senate> — set the run mode\n" +
 	"/unbind — unlink this chat"
 
@@ -37,6 +40,8 @@ func (h *Handler) Command(ctx context.Context, chatID, text string) string {
 		return h.cmdBind(chatID, arg)
 	case "agent":
 		return h.cmdAgent(chatID, arg)
+	case "route", "routes":
+		return h.cmdRoute(chatID, arg)
 	case "mode":
 		return h.cmdMode(chatID, arg)
 	case "unbind":
@@ -59,7 +64,61 @@ func (h *Handler) cmdStatus(chatID string) string {
 	if mode == "" {
 		mode = "rage"
 	}
-	return "📍 repo: " + b.Repo + "\nagent: " + agent + "\nmode: " + mode
+	out := "📍 repo: " + b.Repo + "\nagent: " + agent + "\nmode: " + mode
+	if len(b.Routes) > 0 {
+		out += "\nroutes:"
+		for _, mention := range b.Routes.Mentions() {
+			out += "\n  @" + mention + " → " + b.Routes[mention]
+		}
+	}
+	return out
+}
+
+func (h *Handler) cmdRoute(chatID, arg string) string {
+	b, ok := h.store.For(chatID)
+	if !ok {
+		return "Bind a repo first: /bind <repo-path>."
+	}
+	fields := strings.Fields(strings.TrimSpace(arg))
+
+	if len(fields) == 0 {
+		if len(b.Routes) == 0 {
+			return "No routes yet. Add one with /route <@name> <agent-id>."
+		}
+		out := "Routes:"
+		for _, mention := range b.Routes.Mentions() {
+			out += "\n@" + mention + " → " + b.Routes[mention]
+		}
+		return out
+	}
+
+	if strings.EqualFold(fields[0], "rm") || strings.EqualFold(fields[0], "remove") {
+		if len(fields) < 2 {
+			return "Usage: /route rm <@name>"
+		}
+		mention := NormalizeMention(fields[1])
+		if !b.Routes.Delete(mention) {
+			return "No route for @" + mention + "."
+		}
+		if err := h.store.Set(b); err != nil {
+			return "Failed to save: " + err.Error()
+		}
+		return "✅ Removed route @" + mention + "."
+	}
+
+	if len(fields) < 2 {
+		return "Usage: /route <@name> <agent-id>"
+	}
+	mention := NormalizeMention(fields[0])
+	if mention == "" {
+		return "Usage: /route <@name> <agent-id>"
+	}
+	agent := strings.TrimSpace(fields[1])
+	b.Routes = b.Routes.Set(mention, agent)
+	if err := h.store.Set(b); err != nil {
+		return "Failed to save: " + err.Error()
+	}
+	return "✅ @" + mention + " → " + agent + "."
 }
 
 func (h *Handler) cmdBind(chatID, path string) string {
