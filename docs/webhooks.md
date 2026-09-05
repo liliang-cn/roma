@@ -126,7 +126,16 @@ Without a `secret` no signature header is sent.
 }
 ```
 
-with `TAGIT_HOOKRELAY_AUTH=Bearer <token>` in the daemon's environment. hookrelay answers 202 once it has queued the message, which counts as delivered here. A named token there labels every TagIt message with its sender, which is better than the `X-Hookrelay-Source` header above; that header is the fallback for a shared token.
+with the credential in the daemon's environment. hookrelay answers 202 once it has queued the message, which counts as delivered here. Give TagIt its own named token there: the sender label then comes from the credential, and it can be revoked without touching the other senders. The `X-Hookrelay-Source` header is only the fallback for a shared token.
+
+If the daemon reads its environment from a file that a shell sources, **quote any value containing a space**:
+
+```sh
+TAGIT_HOOKRELAY_AUTH="Bearer 9f86d081..."   # right
+TAGIT_HOOKRELAY_AUTH=Bearer 9f86d081...     # wrong
+```
+
+Unquoted, the shell runs the token as a command. The variable ends up empty, every delivery is a 401, and the token lands in the log as `command not found` — treat one written that way as leaked and rotate it.
 
 ## Audit
 
