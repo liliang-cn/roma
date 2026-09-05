@@ -137,6 +137,10 @@ TAGIT_HOOKRELAY_AUTH=Bearer 9f86d081...     # wrong
 
 Unquoted, the shell runs the token as a command. The variable ends up empty, every delivery is a 401, and the token lands in the log as `command not found` — treat one written that way as leaked and rotate it.
 
+### macOS: a LAN target needs local-network permission
+
+If the target is a `192.168.x` / `10.x` address and delivery fails with `no route to host` while the same request from a terminal succeeds, this is macOS local-network privacy, not the network. The permission is granted per executable, and a `launchd` job cannot answer the prompt, so it is simply denied. Two ways out: run the daemon from a path that already holds the grant, or give the receiver a public name so it stops being a local-network access at all.
+
 ## Audit
 
 Every attempt is an event in the store, delivered or not:
