@@ -29,9 +29,12 @@
 | `events` | no | Event types to receive. Omit for all |
 | `severity` | no | `low` (default), `medium`, `high`. Anything below the threshold is skipped |
 | `sessions` | no | Only these session ids. Omit for all |
+| `headers` | no | Extra headers per delivery. Values take `env:NAME` too |
 | `actions` | no | Remote commands this endpoint may send back |
 | `type` | no | `webhook` (default), `wss`, `telegram` |
 | `disabled` | no | `true` keeps the entry but stops delivery |
+
+`headers` is for a receiver that authenticates the sender instead of verifying the signature. The whole value is resolved, so write `"env:RELAY_AUTH"` with `RELAY_AUTH=Bearer xyz`, not `"Bearer env:RELAY_AUTH"`. The headers TagIt sets itself cannot be overridden; naming one fails the load.
 
 A malformed entry disables the whole file and logs why. An endpoint silently dropped is a page silently not sent.
 
@@ -102,6 +105,28 @@ func verify(secret, timestamp, signature string, body []byte) bool {
 ```
 
 Without a `secret` no signature header is sent.
+
+## Fan out to chat with hookrelay
+
+[hookrelay](https://github.com/liliang-cn/hookrelay) turns one webhook into Telegram, WeCom, Bark and ntfy. It reads `title` and `summary` out of the envelope directly, so no translation is needed — point an endpoint at it and give it the bearer token:
+
+```json
+{
+  "endpoints": [
+    {
+      "id": "hookrelay",
+      "target": "http://192.168.123.64:47600/hook",
+      "headers": {
+        "Authorization": "env:TAGIT_HOOKRELAY_AUTH",
+        "X-Hookrelay-Source": "tagit"
+      },
+      "events": ["task_succeeded", "task_failed", "approval_required"]
+    }
+  ]
+}
+```
+
+with `TAGIT_HOOKRELAY_AUTH=Bearer <token>` in the daemon's environment. hookrelay answers 202 once it has queued the message, which counts as delivered here. A named token there labels every TagIt message with its sender, which is better than the `X-Hookrelay-Source` header above; that header is the fallback for a shared token.
 
 ## Audit
 

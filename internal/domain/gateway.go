@@ -48,11 +48,16 @@ const (
 
 // GatewayEndpoint describes a remote endpoint.
 type GatewayEndpoint struct {
-	ID             string                `json:"id"`
-	Type           GatewayEndpointType   `json:"type"`
-	Enabled        bool                  `json:"enabled"`
-	Target         string                `json:"target"`
-	SecretRef      string                `json:"secret_ref,omitempty"`
+	ID        string              `json:"id"`
+	Type      GatewayEndpointType `json:"type"`
+	Enabled   bool                `json:"enabled"`
+	Target    string              `json:"target"`
+	SecretRef string              `json:"secret_ref,omitempty"`
+	// Headers are sent with every delivery. A receiver that authenticates its
+	// senders rather than verifying a signature — a relay behind a bearer
+	// token, an API gateway wanting a key — is reached this way. Values may be
+	// "env:NAME" so the credential need not sit in the config file.
+	Headers        map[string]string     `json:"headers,omitempty"`
 	AllowedActions []RemoteCommandAction `json:"allowed_actions,omitempty"`
 }
 

@@ -132,3 +132,33 @@ func TestLoadRejectsMalformedJSON(t *testing.T) {
 		t.Fatal("Load() error = nil for malformed JSON")
 	}
 }
+
+func TestRegistrationsHeaders(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Endpoints: []EndpointConfig{{
+		ID: "relay", Target: "https://relay.example/hook",
+		Headers: map[string]string{"Authorization": "env:RELAY_AUTH"},
+	}}}
+	regs, err := cfg.Registrations()
+	if err != nil {
+		t.Fatalf("Registrations() error = %v", err)
+	}
+	if regs[0].Endpoint.Headers["Authorization"] != "env:RELAY_AUTH" {
+		t.Fatalf("headers = %v", regs[0].Endpoint.Headers)
+	}
+}
+
+func TestRegistrationsRejectsReservedHeaders(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"X-TagIt-Signature", "x-tagit-signature", "Content-Type"} {
+		cfg := Config{Endpoints: []EndpointConfig{{
+			ID: "a", Target: "https://x", Headers: map[string]string{name: "forged"},
+		}}}
+		// A config able to overwrite the signature could forge a delivery.
+		if _, err := cfg.Registrations(); err == nil {
+			t.Fatalf("Registrations() error = nil for reserved header %q", name)
+		}
+	}
+}

@@ -25,6 +25,12 @@ type EndpointConfig struct {
 	Sessions []string `json:"sessions,omitempty"` // empty = every session
 	Actions  []string `json:"actions,omitempty"`  // remote commands this endpoint may send back
 	Disabled bool     `json:"disabled,omitempty"`
+	// Headers are sent with every delivery, for a receiver that authenticates
+	// the sender instead of verifying the signature. Values take "env:NAME"
+	// too, e.g. {"Authorization": "Bearer env:HOOKRELAY_TOKEN"} is wrong and
+	// {"Authorization": "env:HOOKRELAY_AUTH"} is right — the whole value is
+	// resolved, not a substring of it.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Registration is one endpoint paired with its subscription, ready to hand to
@@ -86,12 +92,18 @@ func (c Config) Registrations() ([]Registration, error) {
 			return nil, fmt.Errorf("endpoint %s: %w", id, err)
 		}
 
+		headers, err := parseHeaders(ep.Headers)
+		if err != nil {
+			return nil, fmt.Errorf("endpoint %s: %w", id, err)
+		}
+
 		endpoint := domain.GatewayEndpoint{
 			ID:             id,
 			Type:           endpointType,
 			Enabled:        !ep.Disabled,
 			Target:         strings.TrimSpace(ep.Target),
 			SecretRef:      strings.TrimSpace(ep.Secret),
+			Headers:        headers,
 			AllowedActions: actions,
 		}
 		if err := domain.ValidateGatewayEndpoint(endpoint); err != nil {
@@ -124,6 +136,35 @@ func parseSeverity(raw string) (domain.NotificationSeverity, error) {
 	default:
 		return "", fmt.Errorf("unknown severity %q (want low|medium|high)", raw)
 	}
+}
+
+// parseHeaders trims header names and rejects the ones TagIt sets itself. A
+// config that could overwrite X-TagIt-Signature could forge a delivery, and one
+// that could overwrite Content-Type would make the body unreadable — both fail
+// at load rather than at 3am.
+func parseHeaders(raw map[string]string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	reserved := map[string]struct{}{
+		"content-type":            {},
+		"x-tagit-event":           {},
+		"x-tagit-notification-id": {},
+		"x-tagit-timestamp":       {},
+		"x-tagit-signature":       {},
+	}
+	out := make(map[string]string, len(raw))
+	for name, value := range raw {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, fmt.Errorf("header with an empty name")
+		}
+		if _, bad := reserved[strings.ToLower(name)]; bad {
+			return nil, fmt.Errorf("header %q is set by TagIt and cannot be overridden", name)
+		}
+		out[name] = strings.TrimSpace(value)
+	}
+	return out, nil
 }
 
 func parseActions(raw []string) ([]domain.RemoteCommandAction, error) {

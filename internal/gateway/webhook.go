@@ -111,7 +111,7 @@ func (a *WebhookAdapter) Deliver(ctx context.Context, endpoint domain.GatewayEnd
 			wait *= 2
 		}
 
-		retryable, err := a.post(ctx, target, secret, body, notification)
+		retryable, err := a.post(ctx, target, secret, endpoint.Headers, body, notification)
 		if err == nil {
 			return nil
 		}
@@ -126,10 +126,17 @@ func (a *WebhookAdapter) Deliver(ctx context.Context, endpoint domain.GatewayEnd
 // post makes one delivery attempt and reports whether a failure is worth
 // retrying. A 4xx other than 429 means the receiver understood us and said no,
 // so repeating it only makes the same complaint again.
-func (a *WebhookAdapter) post(ctx context.Context, target, secret string, body []byte, notification domain.NotificationEnvelope) (retryable bool, err error) {
+func (a *WebhookAdapter) post(ctx context.Context, target, secret string, headers map[string]string, body []byte, notification domain.NotificationEnvelope) (retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return false, fmt.Errorf("build request: %w", err)
+	}
+	// Caller headers go on first so TagIt's own can never be overwritten: an
+	// endpoint config must not be able to forge or strip the signature.
+	for name, value := range headers {
+		if v := resolveSecret(value); v != "" {
+			req.Header.Set(name, v)
+		}
 	}
 	timestamp := strconv.FormatInt(a.now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")

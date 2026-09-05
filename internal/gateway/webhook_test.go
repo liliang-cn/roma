@@ -222,3 +222,46 @@ func TestWebhookAdapterTypeIsWebhook(t *testing.T) {
 		t.Fatalf("Type() = %q", got)
 	}
 }
+
+func TestWebhookSendsConfiguredHeaders(t *testing.T) {
+	got := make(chan http.Header, 4)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		got <- r.Header.Clone()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	t.Setenv("TAGIT_TEST_RELAY_AUTH", "Bearer relay-token")
+	err := NewWebhookAdapter().Deliver(context.Background(), domain.GatewayEndpoint{
+		ID: "gw_1", Type: domain.GatewayEndpointTypeWebhook, Enabled: true, Target: srv.URL,
+		SecretRef: "s3cret",
+		Headers: map[string]string{
+			"Authorization":      "env:TAGIT_TEST_RELAY_AUTH",
+			"X-Hookrelay-Source": "tagit",
+		},
+	}, testNotification())
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	h := <-got
+	// This is what reaches a relay that authenticates its senders rather than
+	// verifying the signature; without it every delivery is a 401.
+	if h.Get("Authorization") != "Bearer relay-token" {
+		t.Fatalf("Authorization = %q", h.Get("Authorization"))
+	}
+	if h.Get("X-Hookrelay-Source") != "tagit" {
+		t.Fatalf("X-Hookrelay-Source = %q", h.Get("X-Hookrelay-Source"))
+	}
+	// TagIt's own headers still win, so a config cannot strip the signature.
+	if h.Get("X-TagIt-Signature") == "" || h.Get("X-TagIt-Event") != "task_succeeded" {
+		t.Fatalf("TagIt headers lost: %v", h)
+	}
+	// 202 counts as delivered: a relay that queues is the normal case, and
+	// retrying it would duplicate every notification hookrelay accepts.
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("attempts = %d, want 1 (202 must not be retried)", n)
+	}
+}
